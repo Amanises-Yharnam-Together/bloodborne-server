@@ -90,7 +90,6 @@
  "Button icons": "Ícones de botões",
  "Automatic": "Automático",
  "Keyboard and mouse": "Teclado e mouse",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "Os botões que o jogo mostra na tela. Teclado e mouse mostra as teclas atribuídas abaixo. Automático segue o controle conectado ao iniciar (ícones de Xbox para Xbox ou outro controle, de PlayStation para um controle PlayStation, suas teclas sem nenhum). Aplica-se após reiniciar.",
  "Mouse camera": "Câmera com mouse",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "O mouse gira a câmera enquanto a janela do jogo está em foco; os botões e a roda dele podem ser atribuídos abaixo. Insert ou Alt+Tab liberam o mouse.",
  "Mouse sensitivity": "Sensibilidade do mouse",
@@ -355,5 +354,6 @@
  "%d (game)": "%d (jogo)",
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Campo de visão vertical em graus; a câmera do jogo tem 43. Todas as câmeras são ampliadas na mesma medida. Vale depois de reiniciar o jogo.",
  "Mute in the background": "Sem som em segundo plano",
- "The game is silent while its window is not the active one.": "O jogo fica em silêncio enquanto a janela dele não for a ativa."
+ "The game is silent while its window is not the active one.": "O jogo fica em silêncio enquanto a janela dele não for a ativa.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Os botões que o jogo mostra na tela. Automático segue o que você usa: as teclas atribuídas abaixo enquanto você usa teclado e mouse, os botões do controle (PlayStation, Xbox ou Switch) enquanto usa um, e muda quando você muda. Uma alteração aqui vale depois de reiniciar."
 }

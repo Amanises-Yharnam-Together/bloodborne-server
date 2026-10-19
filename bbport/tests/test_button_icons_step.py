@@ -41,9 +41,11 @@ class EnvironmentTests(unittest.TestCase):
         (self.game / 'dvdroot_ps4/menu/common.tpf.dcx').write_bytes(b'x')
         self.layer = self.root / 'out/icons/layer'
         self.ensure = mock.Mock(return_value=(self.layer, True, 0))
-        patch = mock.patch.object(bbport_icons, 'ensure_layer', self.ensure)
-        patch.start()
-        self.addCleanup(patch.stop)
+        self.prompts = mock.Mock(return_value=(self.root / 'out/icons/prompts-1.bin', True))
+        for patch in (mock.patch.object(bbport_icons, 'ensure_layer', self.ensure),
+                      mock.patch.object(bbport_icons, 'ensure_prompt_sets', self.prompts)):
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def environment(self, ini, pads=None):
         return button_icons.environment(self.game, self.root / 'out', ini, self.root / 'mods', self.root / 'mods.json',
@@ -56,17 +58,25 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(self.ensure.call_args.args[2], 'keyboard')
         self.assertEqual(self.ensure.call_args.args[3], ini)  # the glyphs follow the bindings
 
-    def test_automatic_without_a_controller_is_the_keyboard(self):
-        self.environment({}, pads=[])
-        self.assertEqual(self.ensure.call_args.args[2], 'keyboard')
+    def test_automatic_follows_the_device_in_use_from_the_prompt_sets(self):
+        # No layer: the game's own icons are swapped while it runs (bbport_prompts.cpp), whatever is connected.
+        env = self.environment({'key.cross': 'F'}, pads=[])
+        self.assertEqual(env['BB_PROMPT_SETS'], str(self.root / 'out/icons/prompts-1.bin'))
+        self.assertNotIn('BB_ICONS_DIR', env)
+        self.ensure.assert_not_called()
+        self.assertEqual(self.prompts.call_args.args[2], {'key.cross': 'F'})  # the keyboard set follows bindings
+        self.assertIn('follow the device', env['BB_ICONS_NOTE'])
+
+    def test_switch_draws_its_layer(self):
+        self.environment({'button_icons': 'switch'})
+        self.assertEqual(self.ensure.call_args.args[2], 'switch')
 
     def test_playstation_is_the_game_s_own(self):
         self.assertEqual(self.environment({'button_icons': 'playstation'}), {})
         self.ensure.assert_not_called()
 
     def test_an_unknown_choice_is_automatic(self):
-        self.environment({'button_icons': 'nintendo'}, pads=[])
-        self.assertEqual(self.ensure.call_args.args[2], 'keyboard')
+        self.assertIn('BB_PROMPT_SETS', self.environment({'button_icons': 'nintendo'}, pads=[]))
 
     def test_a_failure_leaves_the_game_s_icons_with_the_reason(self):
         self.ensure.side_effect = RuntimeError('broken atlas')
@@ -87,14 +97,17 @@ class RunPyTests(unittest.TestCase):
         playstation = [('030000004c050000c405000000006800', 'Wireless Controller')]
         self.assertEqual(button_icons.icon_set({'button_icons': 'keyboard'}), 'keyboard')
         self.assertEqual(button_icons.icon_set({'button_icons': 'xbox'}), 'xbox')
-        self.assertEqual(button_icons.icon_set({}, gamepads=lambda: xbox), 'xbox')
-        self.assertEqual(button_icons.icon_set({}, gamepads=lambda: playstation), 'playstation')
-        self.assertEqual(button_icons.icon_set({}, gamepads=lambda: []), 'keyboard')
-        self.assertEqual(button_icons.icon_set({}), 'playstation', 'pads unknown: the game\'s own')
+        self.assertEqual(button_icons.icon_set({'button_icons': 'switch'}), 'switch')
+        # Automatic: the overlay follows the device in use, as the game's icons do.
+        self.assertEqual(button_icons.icon_set({}, gamepads=lambda: xbox), 'auto')
+        self.assertEqual(button_icons.icon_set({}, gamepads=lambda: playstation), 'auto')
+        self.assertEqual(button_icons.icon_set({}), 'auto')
 
     def test_the_launcher_s_choice_is_taken_out_of_the_environment(self):
         self.assertIn("env.pop('BB_ICONS_DIR', None)", self.source)
         self.assertIn("env.pop('BB_ICONS_NOTE', None)", self.source)
+        self.assertIn("env.pop('BB_PROMPT_SETS', None)", self.source)
+        self.assertIn("env['BB_PROMPT_SETS'] = prompt_sets", self.source)
 
     def test_without_it_run_py_asks_the_icon_step(self):
         self.assertIn('button_icons.environment(', self.source)

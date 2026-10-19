@@ -47,8 +47,9 @@ def list_gamepads(tool):
 
 
 def icon_set(ini, gamepad='', gamepads=None):
-    """'playstation', 'xbox' or 'keyboard': the button icons of this start (as environment() picks them), for the
-    overlay's glyphs. gamepads: as for environment(), asked only for the automatic choice."""
+    """'playstation', 'xbox', 'keyboard', 'switch', or 'auto' when they follow the device in use: the button icons of
+    this start (as environment() picks them), for the overlay's glyphs. gamepads: as for environment(), asked only
+    for the automatic choice when its prompt sets cannot be used."""
     try:
         import bbport_controls
     except ImportError:
@@ -56,8 +57,9 @@ def icon_set(ini, gamepad='', gamepads=None):
     choice = ini.get('button_icons', bbport_controls.ICON_DEFAULT)
     if choice not in [value for value, _text in bbport_controls.ICON_CHOICES]:
         choice = bbport_controls.ICON_DEFAULT
-    pads = gamepads() if choice == 'auto' and gamepads else None
-    return bbport_controls.resolve_icon_set(choice, pads, str(gamepad).strip())
+    if choice == 'auto':
+        return 'auto'
+    return bbport_controls.resolve_icon_set(choice, None, str(gamepad).strip())
 
 
 def environment(game, out_dir, ini, mods_dir, mods_config, mods_enabled, gamepad='', gamepads=None):
@@ -76,6 +78,23 @@ def environment(game, out_dir, ini, mods_dir, mods_config, mods_enabled, gamepad
     game = Path(game)
     if choice == 'playstation' or not (game / 'dvdroot_ps4' / 'menu' / 'common.tpf.dcx').is_file():
         return {}
+    if choice == 'auto':
+        # The icons follow the device in use while the game runs (gpu/shim/bbport_prompts.cpp): no layer, the
+        # game's own icons are swapped in memory from the prompt sets (Supermedo's bbport 615841c, c804508).
+        try:
+            import bbport_icons
+            import mods
+        except ImportError as error:  # a source tree without Pillow
+            return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
+        try:
+            note = mods.icons_note(mods.user_layers(game, mods_dir, mods_config, mods_enabled))
+            if note:
+                return {'BB_ICONS_NOTE': note}
+            path, built = bbport_icons.ensure_prompt_sets(game, Path(out_dir), ini)
+        except Exception as error:  # nothing about the icons may stop the game from starting
+            return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
+        return {'BB_PROMPT_SETS': str(path),
+                'BB_ICONS_NOTE': f'Button icons: follow the device in use ({"made" if built else "from the cache"})'}
     pads = gamepads() if choice == 'auto' and gamepads else []
     icon_set = bbport_controls.resolve_icon_set(choice, pads, str(gamepad).strip())
     if icon_set == 'playstation':

@@ -428,7 +428,7 @@ class AutoResolutionTests(unittest.TestCase):
         self.assertEqual(controls.resolve_icon_set('auto', None), 'playstation')
 
     def test_the_choices_are_the_four_the_setting_takes(self):
-        self.assertEqual([value for value, _text in controls.ICON_CHOICES], ['auto', 'playstation', 'xbox', 'keyboard'])
+        self.assertEqual([value for value, _text in controls.ICON_CHOICES], ['auto', 'playstation', 'xbox', 'keyboard', 'switch'])
         self.assertEqual(controls.ICON_DEFAULT, 'auto')
 
 

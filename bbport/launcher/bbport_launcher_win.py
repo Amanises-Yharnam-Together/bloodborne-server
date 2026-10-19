@@ -1023,6 +1023,7 @@ def game_environment(s, frame_generation=None):
     env['BB_MODS_ENABLED'] = '1' if s['mods_enabled'] else '0'
     env.pop('BB_ICONS_DIR', None)  # only this launch's choice counts, not one inherited from an earlier run
     env.pop('BB_ICONS_NOTE', None)
+    env.pop('BB_PROMPT_SETS', None)
     env.update(icons_environment(s, ini))
     env['BB_PATCHES_DIR'] = s['patches_dir'] or str(DATA_DIR / 'patches')
     env['BB_PATCHES_CONFIG'] = str(DATA_DIR / 'patches.json')
@@ -4240,14 +4241,13 @@ class Launcher:
 
         f = self.card(page, _('Button icons', 'Значки кнопок'))
         self.row(f, _('Button icons', 'Значки кнопок'), self.choice(f, 'button_icons', 'ini', bbport_controls.ICON_CHOICES))
-        self.note(f, _('The buttons the game shows on screen. Automatic follows the controller connected when the game '
-                       'starts: Xbox icons for an Xbox or other controller, PlayStation icons for a PlayStation one, '
-                       'your keys and mouse buttons when none is connected. Changing controllers in the game keeps '
-                       'the icons until the next start. A mod with its own menu/common.tpf.dcx keeps priority.',
-                       'Кнопки, которые игра показывает на экране. «Автоматически» следует за контроллером, '
-                       'подключённым при запуске игры: значки Xbox для контроллера Xbox или другого, значки '
-                       'PlayStation для контроллера PlayStation, ваши клавиши и кнопки мыши, если контроллера нет. '
-                       'Смена контроллера в игре сохраняет значки до следующего запуска. Мод со своим '
+        self.note(f, _('The buttons the game shows on screen. Automatic follows what you play with while the game '
+                       'runs: your keys and mouse buttons while you use the keyboard and mouse, the controller\'s '
+                       'own buttons (PlayStation, Xbox or Switch) while you use one. A mod with its own '
+                       'menu/common.tpf.dcx keeps priority.',
+                       'Кнопки, которые игра показывает на экране. «Автоматически» следует за тем, чем вы играете: '
+                       'ваши клавиши и кнопки мыши, пока вы за клавиатурой и мышью, кнопки контроллера '
+                       '(PlayStation, Xbox или Switch), пока в руках контроллер. Мод со своим '
                        'menu/common.tpf.dcx имеет приоритет.'), top=4)
 
         f = self.card(page, _('Mouse', 'Мышь'))

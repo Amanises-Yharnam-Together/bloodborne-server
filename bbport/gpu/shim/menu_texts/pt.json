@@ -90,7 +90,6 @@
  "Button icons": "Ícones dos botões",
  "Automatic": "Automático",
  "Keyboard and mouse": "Teclado e rato",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "Os botões que o jogo mostra no ecrã. Teclado e rato mostra as teclas atribuídas abaixo. Automático segue o comando ligado no arranque (ícones Xbox para um comando Xbox ou outro, PlayStation para um comando PlayStation, as tuas teclas sem comando). Aplica-se após reiniciar.",
  "Mouse camera": "Câmara com rato",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "O rato roda a câmara enquanto a janela do jogo está em foco; os botões e a roda podem ser atribuídos abaixo. Insert ou Alt+Tab liberta o rato.",
  "Mouse sensitivity": "Sensibilidade do rato",
@@ -355,5 +354,6 @@
  "%d (game)": "%d (jogo)",
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Campo de visão vertical em graus; a câmara do jogo tem 43. Todas as câmaras são alargadas na mesma medida. Aplica-se depois de reiniciar o jogo.",
  "Mute in the background": "Sem som em segundo plano",
- "The game is silent while its window is not the active one.": "O jogo fica em silêncio enquanto a sua janela não for a ativa."
+ "The game is silent while its window is not the active one.": "O jogo fica em silêncio enquanto a sua janela não for a ativa.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Os botões que o jogo mostra no ecrã. Automático segue aquilo com que jogas: as teclas atribuídas abaixo enquanto usas teclado e rato, os botões do comando (PlayStation, Xbox ou Switch) enquanto usas um, e muda quando mudas. Uma alteração aqui aplica-se depois de reiniciar."
 }

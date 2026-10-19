@@ -90,7 +90,6 @@
  "Button icons": "按鈕圖示",
  "Automatic": "自動",
  "Keyboard and mouse": "鍵盤與滑鼠",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "遊戲在畫面上顯示的按鈕。「鍵盤與滑鼠」顯示下方設定的按鍵。「自動」依啟動時連接的控制器（Xbox 或其他控制器顯示 Xbox 圖示，PlayStation 控制器顯示 PlayStation 圖示，無控制器則顯示您的按鍵）。重新啟動後生效。",
  "Mouse camera": "滑鼠鏡頭",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "遊戲視窗取得焦點時，滑鼠可轉動鏡頭；其按鍵與滾輪可在下方設定。按 Insert 或 Alt+Tab 可釋放滑鼠。",
  "Mouse sensitivity": "滑鼠靈敏度",
@@ -355,5 +354,6 @@
  "%d (game)": "%d (遊戲)",
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "垂直視野角度；遊戲的鏡頭為 43。所有鏡頭按相同幅度放寬。重新啟動遊戲後生效。",
  "Mute in the background": "背景時靜音",
- "The game is silent while its window is not the active one.": "遊戲視窗不是使用中的視窗時，遊戲不發出聲音。"
+ "The game is silent while its window is not the active one.": "遊戲視窗不是使用中的視窗時，遊戲不發出聲音。",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "遊戲在畫面上顯示的按鍵。自動會跟隨你正在使用的裝置：使用鍵盤和滑鼠時顯示下方綁定的按鍵，使用手把時顯示手把自己的按鍵（PlayStation、Xbox 或 Switch），切換裝置時隨之切換。此處的變更在重新啟動後生效。"
 }

@@ -12,6 +12,7 @@
 #include "bbport_free_check.h"
 #include "bbport_memory_hash.h"
 #include "bbport_portraits.h"
+#include "bbport_prompts.h"
 #include "bbport_settings.h"
 #include "../bbcoop.h"
 #include "common/assert.h"
@@ -1147,6 +1148,11 @@ void TextureCache::RefreshImage(Image& image) {
     if (RefreshPortraitSlot(image)) {
         return;
     }
+    // bbport: the game's button pictures, for icons that follow the device in use
+    // (bbport_prompts.cpp, which writes them from the window thread).
+    BbPrompts::OnUpload(image.info.guest_address, image.info.mips_layout[0].size,
+                        image.info.size.width, image.info.size.height, image.info.resources.levels,
+                        image.info.num_bits);
 
     const u32 num_layers = image.info.resources.layers;
     const u32 num_mips = image.info.resources.levels;

@@ -90,7 +90,6 @@
  "Button icons": "Knapikoner",
  "Automatic": "Automatisk",
  "Keyboard and mouse": "Tastatur og mus",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "Knapperne, som spillet viser på skærmen. Tastatur og mus viser tasterne, der er tildelt nedenfor. Automatisk følger den controller, der er tilsluttet ved start (Xbox-ikoner for en Xbox- eller anden controller, PlayStation-ikoner for en PlayStation-controller, dine taster uden controller). Træder i kraft efter genstart.",
  "Mouse camera": "Musekamera",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "Musen drejer kameraet, når spilvinduet har fokus; dens knapper og hjul kan tildeles nedenfor. Insert eller Alt+Tab slipper musen.",
  "Mouse sensitivity": "Musefølsomhed",
@@ -355,5 +354,6 @@
  "%d (game)": "%d (spillet)",
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Lodret synsfelt i grader; spillets kamera har 43. Hvert kamera udvides lige meget. Træder i kraft, når spillet genstartes.",
  "Mute in the background": "Lydløs i baggrunden",
- "The game is silent while its window is not the active one.": "Spillet er stille, mens dets vindue ikke er det aktive."
+ "The game is silent while its window is not the active one.": "Spillet er stille, mens dets vindue ikke er det aktive.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Knapperne, spillet viser på skærmen. Automatisk følger det, du spiller med: tasterne nedenfor, mens du bruger tastatur og mus, controllerens egne knapper (PlayStation, Xbox eller Switch), mens du bruger en, og skifter undervejs. En ændring her træder i kraft efter en genstart."
 }

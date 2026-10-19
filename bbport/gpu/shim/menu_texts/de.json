@@ -90,7 +90,6 @@
  "Button icons": "Tastensymbole",
  "Automatic": "Automatisch",
  "Keyboard and mouse": "Tastatur und Maus",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "Die Tasten, die das Spiel auf dem Bildschirm zeigt. Tastatur und Maus zeigt die unten belegten Tasten. Automatisch folgt dem beim Start verbundenen Controller (Xbox-Symbole für Xbox- oder andere Controller, PlayStation-Symbole für PlayStation-Controller, ohne Controller die eigenen Tasten). Gilt nach einem Neustart.",
  "Mouse camera": "Mauskamera",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "Die Maus dreht die Kamera, solange das Spielfenster im Fokus ist; ihre Tasten und das Mausrad lassen sich unten belegen. Insert oder Alt+Tab gibt die Maus frei.",
  "Mouse sensitivity": "Mausempfindlichkeit",
@@ -355,5 +354,6 @@
  "%d (game)": "%d (Spiel)",
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Vertikales Sichtfeld in Grad; die Kamera des Spiels hat 43. Jede Kamera wird um denselben Betrag erweitert. Gilt nach einem Neustart des Spiels.",
  "Mute in the background": "Im Hintergrund stumm",
- "The game is silent while its window is not the active one.": "Das Spiel ist still, solange sein Fenster nicht das aktive ist."
+ "The game is silent while its window is not the active one.": "Das Spiel ist still, solange sein Fenster nicht das aktive ist.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Die Tasten, die das Spiel auf dem Bildschirm zeigt. Automatisch folgt dem, womit du spielst: den unten belegten Tasten, solange du Tastatur und Maus benutzt, den Tasten des Controllers (PlayStation, Xbox oder Switch), solange du einen benutzt, und wechselt mit. Eine Änderung hier gilt nach einem Neustart."
 }

@@ -90,7 +90,6 @@
  "Button icons": "Painikekuvakkeet",
  "Automatic": "Automaattinen",
  "Keyboard and mouse": "Näppäimistö ja hiiri",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "Painikkeet, jotka peli näyttää ruudulla. Näppäimistö ja hiiri näyttää alla määritetyt näppäimet. Automaattinen seuraa käynnistyksessä liitettyä ohjainta (Xbox-kuvakkeet Xbox- tai muulle ohjaimelle, PlayStation-kuvakkeet PlayStation-ohjaimelle, omat näppäimesi ilman ohjainta). Tulee voimaan uudelleenkäynnistyksen jälkeen.",
  "Mouse camera": "Hiirikamera",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "Hiiri kääntää kameraa, kun peli-ikkuna on aktiivinen; sen painikkeet ja rullan voi määrittää alla. Insert tai Alt+Tab vapauttaa hiiren.",
  "Mouse sensitivity": "Hiiren herkkyys",
@@ -355,5 +354,6 @@
  "%d (game)": "%d (peli)",
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Pystysuora näkökenttä asteina; pelin kamerassa on 43. Jokaista kameraa laajennetaan yhtä paljon. Tulee voimaan, kun peli käynnistetään uudelleen.",
  "Mute in the background": "Mykistä taustalla",
- "The game is silent while its window is not the active one.": "Peli on hiljaa, kun sen ikkuna ei ole aktiivinen."
+ "The game is silent while its window is not the active one.": "Peli on hiljaa, kun sen ikkuna ei ole aktiivinen.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Pelin ruudulla näyttämät painikkeet. Automaattinen seuraa sitä, millä pelaat: alla määritetyt näppäimet, kun käytät näppäimistöä ja hiirtä, ohjaimen omat painikkeet (PlayStation, Xbox tai Switch), kun käytät ohjainta, ja vaihtuu kesken pelin. Muutos tässä tulee voimaan uudelleenkäynnistyksen jälkeen."
 }

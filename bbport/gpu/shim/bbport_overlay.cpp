@@ -22,6 +22,7 @@
 #include <SDL3/SDL.h>
 #include "../bbcoop.h"
 #include "bbport_game_art.h"
+#include "bbport_prompts.h"
 #include "bbport_coop_art.h"
 #include "bbport_key_guide.h"
 #include "bbport_map_3d.h"
@@ -534,6 +535,9 @@ std::optional<Piece> KeyIcon(std::string_view texture) {
 }
 
 ImTextureData* textures[PieceCount] = {};
+/// button_icons=auto: the key guide pieces in the other sets (bbport_prompts.h), shown while the
+/// game's own icons show that set.
+ImTextureData* set_textures[BbPromptSets::SetCount][PieceCount] = {};
 ImFont* font = nullptr; // the game's menu font
 bool tried = false;
 
@@ -583,6 +587,22 @@ void Load() {
         std::memcpy(textures[i]->GetPixels(), image->rgba.data(), image->rgba.size());
         ImGui::RegisterUserTexture(textures[i]);
         ++loaded;
+        for (int set = BbPromptSets::Xbox; set < BbPromptSets::SetCount; ++set) {
+            const auto glyph = BbPrompts::Glyph(source.texture, BbPromptSets::Set(set));
+            if (glyph.size() != 1024 || image->width != 32 || image->height != 32) {
+                continue;
+            }
+            const auto blocks = BbGameArt::DeswizzleBlocks(glyph, 8, 8, 16);
+            const auto rgba = BbGameArt::DecodeBc7Rect(blocks, 32, {0, 0, 32, 32});
+            if (rgba.size() != image->rgba.size()) {
+                continue;
+            }
+            auto*& texture = set_textures[set][i];
+            texture = IM_NEW(ImTextureData)();
+            texture->Create(ImTextureFormat_RGBA32, 32, 32);
+            std::memcpy(texture->GetPixels(), rgba.data(), rgba.size());
+            ImGui::RegisterUserTexture(texture);
+        }
     }
     if (const auto ttf = BbGameArt::TtfFromGfxFont(ReadGameFile("menu/engus/font.gfx"))) {
         void* data = IM_ALLOC(ttf->size());
@@ -650,7 +670,9 @@ ImU32 Tint(float alpha, ImU32 tint = IM_COL32_WHITE) {
 /// `piece` (its source pixels [s0, s1]) stretched into [p0, p1].
 void Part(ImDrawList* draw, Piece piece, ImVec2 p0, ImVec2 p1, ImVec2 s0, ImVec2 s1, ImU32 color) {
     const ImVec2 size = SizeOf(piece);
-    draw->AddImage(textures[piece]->GetTexRef(), p0, p1, ImVec2(s0.x / size.x, s0.y / size.y),
+    ImTextureData* texture = set_textures[BbPrompts::Shown()][piece];
+    draw->AddImage((texture ? texture : textures[piece])->GetTexRef(), p0, p1,
+                   ImVec2(s0.x / size.x, s0.y / size.y),
                    ImVec2(s1.x / size.x, s1.y / size.y), color);
 }
 
@@ -943,15 +965,19 @@ ImU32 Dim(float alpha = 1.0f) {
 /// Texts name a button as {L1} ("Hold {Circle} to give up"); translations keep the names.
 namespace Keys {
 
-/// The icon set of this start (run.py's BB_ICONS_SET, as the game's own icons): 'p'layStation,
-/// 'x'box or 'k'eyboard.
+/// The icon set the game's own icons show (run.py's BB_ICONS_SET): 'p'layStation, 'x'box,
+/// 'k'eyboard or 's'witch; with "auto" the device used last (bbport_prompts.h).
 char IconSet() {
     static const char set = [] {
         const char* value = std::getenv("BB_ICONS_SET");
         const std::string_view name = value ? value : "playstation";
-        return name == "xbox" ? 'x' : name == "keyboard" ? 'k' : 'p';
+        return name == "xbox"       ? 'x'
+               : name == "keyboard" ? 'k'
+               : name == "switch"   ? 's'
+               : name == "auto"     ? 'a'
+                                    : 'p';
     }();
-    return set;
+    return set == 'a' ? BbPromptSets::Letter(BbPrompts::Shown()) : set;
 }
 
 /// A button as texts name it (BbGameArt::KeyGuideTextureNamed): the game's icon of it, and what
@@ -1970,28 +1996,31 @@ float MouseSensitivity() {
 }
 
 void ControlsTab() {
-    static const char* const icon_values[] = {"auto", "playstation", "xbox", "keyboard"};
+    static const char* const icon_values[] = {"auto", "playstation", "xbox", "keyboard", "switch"};
+    constexpr int icon_count = int(std::size(icon_values));
     const std::string icons = BbSettings::Line("button_icons").value_or("auto");
     int icon = 0;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < icon_count; ++i) {
         if (icons == icon_values[i]) {
             icon = i;
         }
     }
-    Choice("icons", T("Button icons", "Значки кнопок"), icon, 4,
+    Choice("icons", T("Button icons", "Значки кнопок"), icon, icon_count,
            [](int i) {
                return i == 0   ? T("Automatic", "Автоматически")
                       : i == 1 ? "PlayStation"
                       : i == 2 ? "Xbox"
-                               : T("Keyboard and mouse", "Клавиатура и мышь");
+                      : i == 3 ? T("Keyboard and mouse", "Клавиатура и мышь")
+                               : "Nintendo Switch";
            },
            [](int) { return true; },
-           T("The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic "
-             "follows the controller connected at start (Xbox icons for an Xbox or other controller, "
-             "PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.",
-             "Кнопки, которые игра показывает на экране. «Клавиатура и мышь» показывает назначенные ниже "
-             "клавиши. «Автоматически» — по контроллеру при запуске (Xbox для Xbox и прочих, PlayStation для "
-             "PlayStation, ваши клавиши без контроллера). Применяется после перезапуска."),
+           T("The buttons the game shows on screen. Automatic follows what you play with: the keys bound "
+             "below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or "
+             "Switch) while you use one, switching as you change. A change here applies after a restart.",
+             "Кнопки, которые игра показывает на экране. «Автоматически» — по тому, чем вы играете: "
+             "назначенные ниже клавиши, пока вы за клавиатурой и мышью, кнопки контроллера (PlayStation, "
+             "Xbox или Switch), пока в руках контроллер, и меняется на ходу. Изменение здесь применяется "
+             "после перезапуска."),
            true, [](int i) {
                BbSettings::SetLine("button_icons", std::string(icon_values[i]));
                SaveControls();
@@ -3833,6 +3862,9 @@ const char* ShoulderLabel(const std::string& pad) {
         return nullptr;
     }
     const bool right = pad.rfind("right", 0) == 0, trigger = pad.find("trigger") != std::string::npos;
+    if (IconSet() == 's') {
+        return right ? (trigger ? "ZR" : "R") : (trigger ? "ZL" : "L");
+    }
     return IconSet() == 'x' ? (right ? (trigger ? "RT" : "RB") : (trigger ? "LT" : "LB"))
                             : (right ? (trigger ? "R2" : "R1") : (trigger ? "L2" : "L1"));
 }

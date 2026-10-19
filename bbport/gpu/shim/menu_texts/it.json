@@ -90,7 +90,6 @@
  "Button icons": "Icone dei tasti",
  "Automatic": "Automatico",
  "Keyboard and mouse": "Tastiera e mouse",
- "The buttons the game shows on screen. Keyboard and mouse shows the keys bound below. Automatic follows the controller connected at start (Xbox icons for an Xbox or other controller, PlayStation ones for a PlayStation controller, your keys with none). Applies after a restart.": "I tasti che il gioco mostra sullo schermo. Tastiera e mouse mostra i tasti assegnati qui sotto. Automatico segue il controller collegato all'avvio (icone Xbox per un controller Xbox o altro, PlayStation per un controller PlayStation, i tuoi tasti senza controller). Si applica dopo un riavvio.",
  "Mouse camera": "Telecamera con mouse",
  "The mouse turns the camera while the game window has focus; its buttons and wheel can be bound below. Insert or Alt+Tab lets go of the mouse.": "Il mouse ruota la telecamera mentre la finestra del gioco è attiva; i suoi tasti e la rotella si possono assegnare qui sotto. Insert o Alt+Tab rilasciano il mouse.",
  "Mouse sensitivity": "Sensibilità mouse",
@@ -355,5 +354,6 @@
  "%d (game)": "%d (gioco)",
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Campo visivo verticale in gradi; la telecamera del gioco ne ha 43. Ogni telecamera viene allargata della stessa misura. Si applica dopo il riavvio del gioco.",
  "Mute in the background": "Muto in background",
- "The game is silent while its window is not the active one.": "Il gioco resta in silenzio finché la sua finestra non è quella attiva."
+ "The game is silent while its window is not the active one.": "Il gioco resta in silenzio finché la sua finestra non è quella attiva.",
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "I pulsanti che il gioco mostra a schermo. Automatico segue ciò con cui giochi: i tasti assegnati qui sotto mentre usi tastiera e mouse, i pulsanti del controller (PlayStation, Xbox o Switch) mentre ne usi uno, e cambia quando cambi tu. Una modifica qui si applica dopo il riavvio."
 }
