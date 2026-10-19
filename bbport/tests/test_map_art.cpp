@@ -419,6 +419,35 @@ int main() {
         assert(west && east && west[0] > west[2] + 40 && east[2] > east[0] + 40);
     }
 
+    // Kaniel 2026-10-19 ("can we prerender it?"): the 3D view's sides. Side 1 looks north: east
+    // is to the right, what lies further north or higher is further up the picture, and what is
+    // higher or further south is nearer. Side 3 looks south: east is to the left.
+    {
+        const ObliqueView north = ViewOf(1), south = ViewOf(3);
+        const auto a = ToView(north, 10.0f, 0.0f, 0.0f), b = ToView(north, 0.0f, 0.0f, 10.0f),
+                   c = ToView(north, 0.0f, 10.0f, 0.0f);
+        assert(std::abs(a[0] - 10.0f) < 1e-3f && std::abs(a[1]) < 1e-3f);
+        assert(b[1] > 1.0f && b[2] < -1.0f); // north: up the picture, further away
+        assert(c[1] > 1.0f && c[2] > 1.0f);  // up: up the picture, nearer
+        assert(ToView(south, 10.0f, 0.0f, 0.0f)[0] < -9.9f);
+        assert(ViewOf(2).yaw > 1.5f && ViewOf(4).yaw > 4.7f && ViewOf(9).yaw == ViewOf(4).yaw);
+        // A tall block drawn from side 1: its top shows above its foot, and the wall facing south
+        // (toward the viewer) shows between them.
+        Canvas side(PlayArea{-20, 20, -20, 30, 100}, 2.0f, 4096);
+        side.SetOblique();
+        std::vector<float> box{-5, 0, -5, 5, 0, -5, -5, 10, -5, 5, 0, -5, 5, 10, -5, -5, 10, -5,     // south wall
+                               -5, 10, -5, 5, 10, -5, -5, 10, 5, 5, 10, -5, 5, 10, 5, -5, 10, 5}; // roof
+        for (std::size_t i = 0; i + 3 <= box.size(); i += 3) {
+            const auto t = ToView(north, box[i], box[i + 1], box[i + 2]);
+            box[i] = t[0], box[i + 1] = t[2], box[i + 2] = t[1];
+        }
+        side.Add(box);
+        const Chart drawn = side.Finish();
+        const auto roof_at = ToView(north, 0.0f, 10.0f, 0.0f), wall_at = ToView(north, 0.0f, 5.0f, -5.0f);
+        assert(PixelAt(drawn, roof_at[0], roof_at[1]) && PixelAt(drawn, roof_at[0], roof_at[1])[3] == 255);
+        assert(PixelAt(drawn, wall_at[0], wall_at[1]) && PixelAt(drawn, wall_at[0], wall_at[1])[3] == 255);
+    }
+
     // Kaniel 2026-10-19 (torches glowing): a light file's point lights (version 2, the lights after
     // the names, 200 bytes each), the spotlights left out.
     {

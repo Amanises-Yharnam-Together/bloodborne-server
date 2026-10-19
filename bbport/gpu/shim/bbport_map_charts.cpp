@@ -66,8 +66,10 @@ std::vector<std::uint8_t> ReadGameRange(const std::string& relative, std::uint64
     return bytes;
 }
 
-std::filesystem::path CachePath(std::uint32_t packed_map) {
-    return std::filesystem::path("user") / "map" / (BbMapArt::MapNameOf(packed_map) + ".bbmap");
+std::filesystem::path CachePath(std::uint32_t key) {
+    const int view = int(key & 7u);
+    const std::string suffix = view > 0 ? "_v" + std::to_string(view) : "";
+    return std::filesystem::path("user") / "map" / (BbMapArt::MapNameOf(key & ~7u) + suffix + ".bbmap");
 }
 
 std::mutex mutex;
@@ -77,10 +79,13 @@ std::set<std::uint32_t> failed, asked;
 std::deque<std::uint32_t> queue;
 bool worker_started = false;
 
-std::shared_ptr<const BbMapArt::Chart> Make(std::uint32_t packed_map) {
-    const auto cache = CachePath(packed_map);
+std::shared_ptr<const BbMapArt::Chart> Make(std::uint32_t key) {
+    const std::uint32_t packed_map = key & ~7u;
+    const int view = int(key & 7u);
+    const auto cache = CachePath(key);
     if (auto kept = BbMapArt::Load(ReadFile(cache))) {
-        std::printf("Map: read %s from %s\n", BbMapArt::MapNameOf(packed_map).c_str(), cache.string().c_str());
+        std::printf("Map: read %s%s from %s\n", BbMapArt::MapNameOf(packed_map).c_str(),
+                    view > 0 ? (" view " + std::to_string(view)).c_str() : "", cache.string().c_str());
         return std::make_shared<const BbMapArt::Chart>(std::move(*kept));
     }
     const auto start = std::chrono::steady_clock::now();
@@ -88,13 +93,15 @@ std::shared_ptr<const BbMapArt::Chart> Make(std::uint32_t packed_map) {
     // Kaniel 2026-10-18 ("sharper close-up"), 2026-10-19 ("it generally should be sharper"): 6
     // pixels a metre.
     // Kaniel 2026-10-19 ("it looks much better this way"): in the game's own textures.
-    auto drawn = BbMapArt::ChartArea(packed_map, ReadGameFile, 6.0f, 6144, threads, ReadGameRange, true);
+    // Kaniel 2026-10-19 ("can we prerender it?"): the 3D view's sides at 4 pixels a metre.
+    auto drawn = view > 0 ? BbMapArt::ChartArea(packed_map, ReadGameFile, 4.0f, 4096, threads, ReadGameRange, true, view)
+                          : BbMapArt::ChartArea(packed_map, ReadGameFile, 6.0f, 6144, threads, ReadGameRange, true);
     if (!drawn) {
         std::printf("Map: no picture of %s in the game's files\n", BbMapArt::MapNameOf(packed_map).c_str());
         return nullptr;
     }
-    std::printf("Map: drew %s (%dx%d) in %.1f s\n", BbMapArt::MapNameOf(packed_map).c_str(), drawn->width,
-                drawn->height,
+    std::printf("Map: drew %s%s (%dx%d) in %.1f s\n", BbMapArt::MapNameOf(packed_map).c_str(),
+                view > 0 ? (" view " + std::to_string(view)).c_str() : "", drawn->width, drawn->height,
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
     std::error_code error;
     std::filesystem::create_directories(cache.parent_path(), error);

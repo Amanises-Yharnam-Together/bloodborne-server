@@ -217,6 +217,8 @@ public:
     /// A light whose warm glow Finish lays on the surfaces round it (the warm, small ones: torches,
     /// lamps, candles).
     void AddLight(const PointLight& light) { lights.push_back(light); }
+    /// An oblique picture (ChartAreas' view): no shadows from above.
+    void SetOblique() { oblique = true; }
     /// The game's colour grade for the picture (ReadColorGrade); none: the materials' own colours.
     void SetGrade(std::vector<std::uint8_t> grade) { this->grade = std::move(grade); }
     static constexpr float Reach = 12.0f;
@@ -247,6 +249,7 @@ private:
     bool has_walk = false;
     std::function<std::shared_ptr<const Surface>(std::uint32_t)> texture_of;
     std::vector<PointLight> lights;
+    bool oblique = false;
     bool textured = false; // colours are the textures' own pixels: kept as they are
     std::vector<std::uint8_t> grade;
 };
@@ -269,14 +272,27 @@ std::string MapNameOf(std::uint32_t packed_map);
 using ReadFile = std::function<std::vector<std::uint8_t>(const std::string& relative)>;
 using ReadRange =
     std::function<std::vector<std::uint8_t>(const std::string& relative, std::uint64_t offset, std::uint64_t size)>;
-/// `textured`: the pictures in the game's own textures (else one colour a material).
+/// Kaniel 2026-10-19 ("can we prerender it?"): the 3D view's pictures, the place seen from an
+/// angle from four sides. View 1 looks north, 2 west, 3 south, 4 east (`yaw` turns as the map
+/// screen's does: u = x cos - z sin to the right, v = x sin + z cos ahead), from `pitch` above the
+/// ground. Such a picture's frame is in (u, w), w = v sin(pitch) + y cos(pitch) upward: Chart x0
+/// is the u of its left edge, z1 the w of its top.
+struct ObliqueView {
+    float yaw = 0, pitch = 0;
+};
+ObliqueView ViewOf(int view);
+/// A world spot's (u, w) and its nearness to the viewer in an oblique view.
+std::array<float, 3> ToView(const ObliqueView& view, float x, float y, float z);
+
+/// `textured`: the pictures in the game's own textures (else one colour a material); `view`
+/// 1 to 4: the oblique picture (ViewOf) instead of the one from above.
 std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm = 3.0f,
                                int max_side = 3072, int threads = 1, const ReadRange& read_range = {},
-                               bool textured = false);
+                               bool textured = false, int view = 0);
 /// Several areas in one picture, each placed by its own MSB's coordinates (the blocks of one
 /// area, m24_00 to m24_02, share them).
 std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, const ReadFile& read, float ppm = 3.0f,
                                 int max_side = 3072, int threads = 1, const ReadRange& read_range = {},
-                                bool textured = false);
+                                bool textured = false, int view = 0);
 
 } // namespace BbMapArt

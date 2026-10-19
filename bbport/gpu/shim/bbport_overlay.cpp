@@ -258,6 +258,8 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_M: return ImGuiKey_M;
     case SDLK_F: return ImGuiKey_F;
     case SDLK_V: return ImGuiKey_V;
+    case SDLK_Z: return ImGuiKey_Z;
+    case SDLK_X: return ImGuiKey_X;
     case SDLK_EQUALS: return ImGuiKey_Equal;
     case SDLK_MINUS: return ImGuiKey_Minus;
     default: return ImGuiKey_None;
@@ -4253,7 +4255,11 @@ struct State {
     // from an angle (L3 or V): turned `yaw` radians from north, tilted `pitch` from the ground
     // (pi/2 straight down), round the height `cy` of the middle.
     bool three_d = false;
-    float yaw = 0.0f, pitch = 0.95f, cy = NAN;
+    float yaw = 0.0f, pitch = 0.87f, cy = NAN;
+    // Kaniel 2026-10-19 ("can we prerender it?"): the side the 3D view is seen from
+    // (BbMapArt::ViewOf, 1 to 4), and the one it is turning from (its picture fades out).
+    int side = 1, turning_from = 0;
+    double turned_at = 0;
 };
 State state;
 bool three_d_kept = false; // the 3D view stays on the next time the map opens
@@ -4267,6 +4273,9 @@ struct ChartTexture {
 /// Kaniel 2026-10-17 ("one big map"), 2026-10-19 ("every map should be just one picture"): the
 /// pictures of every area the screen goes through, drawn so far, on one atlas (AtlasOffset).
 std::map<uint32_t, ChartTexture> charts;
+/// Kaniel 2026-10-19 ("can we prerender it?"): the 3D view's pictures of those areas from the
+/// side it is seen from (and the side it turns from), by `map | side`.
+std::map<uint32_t, ChartTexture> sides;
 std::vector<ImTextureData*> dying;
 
 /// The shown area's picture once it is there; the areas drawn with it (WorldAreas, below).
@@ -4485,6 +4494,41 @@ void Refresh() {
         Fogged(*chart, map, static_cast<std::uint8_t*>(slot.texture->GetPixels()));
         ImGui::RegisterUserTexture(slot.texture);
     }
+    // The 3D view's pictures: of the areas drawn above, from its side and the one it turns from;
+    // the others go.
+    for (auto it = sides.begin(); it != sides.end();) {
+        const int side = int(it->first & 7u);
+        const bool wanted = state.three_d && charts.contains(it->first & ~7u) &&
+                            (side == state.side || side == state.turning_from);
+        if (!wanted) {
+            if (it->second.texture != nullptr) {
+                it->second.texture->WantDestroyNextFrame = true;
+                dying.push_back(it->second.texture);
+            }
+            it = sides.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (state.three_d) {
+        for (const uint32_t map : order) {
+            for (const int side : {state.side, state.turning_from}) {
+                const uint32_t key = map | uint32_t(side);
+                if (map == 0 || side <= 0 || !charts.contains(map) || sides.contains(key)) {
+                    continue;
+                }
+                auto chart = BbMapCharts::Get(key);
+                if (!chart) {
+                    continue;
+                }
+                ChartTexture& slot = sides[key];
+                slot = {map, chart, IM_NEW(ImTextureData)()};
+                slot.texture->Create(ImTextureFormat_RGBA32, chart->width, chart->height);
+                std::memcpy(slot.texture->GetPixels(), chart->rgba.data(), chart->rgba.size());
+                ImGui::RegisterUserTexture(slot.texture);
+            }
+        }
+    }
 }
 
 const ChartTexture* Shown() {
@@ -4570,7 +4614,7 @@ struct Frame {
         const float dx = x - state.cx, dz = z - state.cz;
         const float c = std::cos(state.yaw), s = std::sin(state.yaw);
         const float u = dx * c - dz * s, v = dx * s + dz * c; // right, ahead
-        const float up = std::isnan(y) || std::isnan(state.cy) ? 0.0f : y - state.cy;
+        const float up = std::isnan(y) ? 0.0f : y - (std::isnan(state.cy) ? 0.0f : state.cy);
         return ImVec2(m.x + u * state.zoom,
                       m.y - (v * std::sin(state.pitch) + up * std::cos(state.pitch)) * state.zoom);
     }
@@ -4942,7 +4986,48 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
             draw->AddImage(c.texture->GetTexRef(), a, b, ImVec2(0, 0), ImVec2(1, 1), Party::Rgba(tone, tone, tone, 1.0f));
         };
         ImDrawList* const parent = draw;
+        // Kaniel 2026-10-19 ("can we prerender it?"): each area's picture from the side the 3D
+        // view is seen from, placed by the view's own frame (BbMapArt::ToView) and its world's
+        // place on the atlas; the side it turns from fades out over it.
+        const auto side_picture = [&](int side, float alpha) {
+            const BbMapArt::ObliqueView seen = BbMapArt::ViewOf(side);
+            const float c = std::cos(seen.yaw), s = std::sin(seen.yaw), sp = std::sin(seen.pitch),
+                        cp = std::cos(seen.pitch);
+            const float cy = std::isnan(state.cy) ? 0.0f : state.cy;
+            const float uc = state.cx * c - state.cz * s, wc = (state.cx * s + state.cz * c) * sp + cy * cp;
+            std::vector<std::pair<float, const ChartTexture*>> drawn;
+            for (const auto& [key, side_chart] : sides) {
+                if (int(key & 7u) == side && side_chart.texture != nullptr) {
+                    const BbMapArt::Chart& chart = *side_chart.chart;
+                    // Far areas first: the top of a picture lies furthest away.
+                    drawn.push_back({chart.z1, &side_chart});
+                }
+            }
+            std::sort(drawn.begin(), drawn.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            const ImVec2 m = frame.Mid();
+            for (const auto& [far, side_chart] : drawn) {
+                const BbMapArt::Chart& chart = *side_chart->chart;
+                const Place p = AtlasOffset(side_chart->map);
+                const float du = p.dx * c - p.dz * s, dw = (p.dx * s + p.dz * c) * sp;
+                const ImVec2 a(m.x + (chart.x0 + du - uc) * state.zoom, m.y - (chart.z1 + dw - wc) * state.zoom);
+                const ImVec2 b(a.x + float(chart.width) / chart.ppm * state.zoom,
+                               a.y + float(chart.height) / chart.ppm * state.zoom);
+                const float tone = side_chart->map == state.shown ? 1.0f : 0.62f;
+                draw->AddImage(side_chart->texture->GetTexRef(), a, b, ImVec2(0, 0), ImVec2(1, 1),
+                               Party::Rgba(tone, tone, tone, alpha));
+            }
+            return !drawn.empty();
+        };
+        bool sides_shown = false;
         if (state.three_d) {
+            const float fade = float(std::clamp((ImGui::GetTime() - state.turned_at) / 0.3, 0.0, 1.0));
+            sides_shown = side_picture(state.side, 1.0f);
+            if (state.turning_from > 0 && fade < 1.0f) {
+                sides_shown = side_picture(state.turning_from, 1.0f - fade) || sides_shown;
+            }
+        }
+        if (state.three_d && !sides_shown) {
+            // Not drawn yet: the blocks meanwhile.
             DrawLandscapes(frame);
             // The marks over the landscape's child windows: in one of their own, after them.
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -4953,7 +5038,7 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
             draw = ImGui::GetWindowDrawList();
             draw->PushClipRect(frame.p0, frame.p1, false);
-        } else {
+        } else if (!state.three_d) {
             for (const auto& [map, c] : charts) {
                 if (map != state.shown && c.texture != nullptr) {
                     picture(c, 0.62f);
@@ -5245,14 +5330,41 @@ void MoveView(const Frame& frame) {
     const bool inside = io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x && io.MousePos.y >= frame.p0.y &&
                         io.MousePos.y < frame.p1.y;
     if (state.three_d) {
-        // Kaniel 2026-10-19: in the 3D view the right stick (or the right mouse button dragged)
-        // turns the landscape and tilts it; the left stick's cursor and a left drag move it.
-        state.yaw += sx * 1.8f * dt;
-        state.pitch = std::clamp(state.pitch - sy * 0.9f * dt, 0.45f, 1.5707f);
-        if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
-            state.yaw += io.MouseDelta.x * 0.006f;
-            state.pitch = std::clamp(state.pitch + io.MouseDelta.y * 0.004f, 0.45f, 1.5707f);
+        // Kaniel 2026-10-19 ("can we prerender it?"): the 3D view is seen from four sides; the
+        // right stick pushed sideways (or Z / X, or a right drag) turns it to the next, the old
+        // side's picture fading out. The left stick's cursor and a left drag move it.
+        static bool held = false;
+        static float dragged = 0.0f;
+        int turn = 0;
+        if (std::abs(sx) > 0.6f) {
+            turn = held ? 0 : (sx > 0 ? 1 : -1);
+            held = true;
+        } else if (std::abs(sx) < 0.3f) {
+            held = false;
         }
+        if (Pressed({ImGuiKey_X})) {
+            turn = 1;
+        } else if (Pressed({ImGuiKey_Z})) {
+            turn = -1;
+        }
+        if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
+            dragged += io.MouseDelta.x;
+            if (std::abs(dragged) > S(120.0f)) {
+                turn = dragged > 0 ? 1 : -1;
+                dragged = 0.0f;
+            }
+        } else {
+            dragged = 0.0f;
+        }
+        if (turn != 0) {
+            state.turning_from = state.side;
+            state.side = (state.side - 1 + turn + 4) % 4 + 1;
+            state.turned_at = ImGui::GetTime();
+            std::printf("Map: 3D view from side %d\n", state.side);
+        }
+        const BbMapArt::ObliqueView seen = BbMapArt::ViewOf(state.side);
+        state.yaw = seen.yaw;
+        state.pitch = seen.pitch;
         sx = sy = 0.0f;
     }
     sx += (ImGui::IsKeyDown(ImGuiKey_D) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_A) ? 1.0f : 0.0f);
