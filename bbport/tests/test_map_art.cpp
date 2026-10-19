@@ -406,16 +406,58 @@ int main() {
         assert(((left >> 16) & 0xFF) > 200 && (left & 0xFF) < 50);
         assert(((right >> 16) & 0xFF) < 50 && (right & 0xFF) > 200);
         assert(texture->Sample(1.1f, 0.5f) == left); // wraps
-        const auto shared = std::make_shared<const Texture>(*texture);
+        const auto shared = std::make_shared<const Surface>(Surface{std::make_shared<const Texture>(*texture), nullptr, nullptr, nullptr});
         Canvas painted(PlayArea{0, 20, 0, 10, 100}, 2.0f, 4096);
         painted.SetTextures([&](std::uint32_t id) { return id == 7 ? shared : nullptr; });
         const std::vector<float> ground{0, 0, 0, 20, 0, 0, 0, 0, 10, 20, 0, 0, 20, 0, 10, 0, 0, 10};
-        const std::vector<float> uvs{0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1};
+        // Each corner: its (u, v), then its light's (none here).
+        const std::vector<float> uvs{0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0};
         painted.Add(ground, std::vector<std::uint32_t>(2, TexturedColor(7)), uvs);
         const Chart chart = painted.Finish();
         const std::uint8_t* west = PixelAt(chart, 3, 5);
         const std::uint8_t* east = PixelAt(chart, 17, 5);
         assert(west && east && west[0] > west[2] + 40 && east[2] > east[0] + 40);
+    }
+
+    // Kaniel 2026-10-19 (torches glowing): a light file's point lights (version 2, the lights after
+    // the names, 200 bytes each), the spotlights left out.
+    {
+        Blob btl;
+        btl.Put<std::int32_t>(0, 2);
+        btl.Put<std::int32_t>(8, 2);
+        btl.Put<std::int32_t>(0xC, 4); // the names' length
+        btl.Put<std::int32_t>(0x14, 200);
+        const std::size_t first = 0x3C + 4;
+        for (int i = 0; i < 2; ++i) {
+            const std::size_t at = first + std::size_t(i) * 200;
+            btl.Put<std::uint8_t>(at + 0x1D, 0xFF);
+            btl.Put<std::uint8_t>(at + 0x1E, 0xD2);
+            btl.Put<std::uint8_t>(at + 0x1F, 0xB4);
+            btl.Put<float>(at + 0x20, 2.0f);
+            btl.Put<float>(at + 0x2C, i == 0 ? 0.0f : 22.0f); // the second is a spotlight
+            btl.Put<float>(at + 0x38, -146.5f);
+            btl.Put<float>(at + 0x3C, -57.25f);
+            btl.Put<float>(at + 0x40, -129.5f);
+            btl.Put<float>(at + 0x58, 6.0f);
+        }
+        btl.Put<std::uint8_t>(first + 2 * 200 - 1, 0);
+        const auto lights = ReadLights(btl.bytes);
+        assert(lights.size() == 1 && lights[0].color == 0xFFFFD2B4u && lights[0].x == -146.5f &&
+               lights[0].y == -57.25f && lights[0].z == -129.5f && lights[0].radius == 6.0f && lights[0].power == 2.0f);
+        assert(ReadLights(std::vector<std::uint8_t>(8, 0)).empty());
+        // Its warm glow on the ground under it, none far away.
+        Canvas lit(PlayArea{-160, -130, -140, -120, 100}, 2.0f, 4096);
+        Canvas dark(PlayArea{-160, -130, -140, -120, 100}, 2.0f, 4096);
+        const std::vector<float> ground{-160, -59, -140, -130, -59, -140, -160, -59, -120,
+                                        -130, -59, -140, -130, -59, -120, -160, -59, -120};
+        lit.Add(ground, std::vector<std::uint32_t>(2, 0xFF606060u));
+        dark.Add(ground, std::vector<std::uint32_t>(2, 0xFF606060u));
+        lit.AddLight(lights[0]);
+        const Chart with = lit.Finish(), without = dark.Finish();
+        const std::uint8_t* under = PixelAt(with, -146.5f, -129.5f);
+        const std::uint8_t* plain = PixelAt(without, -146.5f, -129.5f);
+        assert(under && plain && under[0] > plain[0] + 20 && under[0] - plain[0] > under[2] - plain[2]);
+        assert(std::memcmp(PixelAt(with, -158.0f, -122.0f), PixelAt(without, -158.0f, -122.0f), 3) == 0);
     }
 
     // A texture archive's header: each file's name, offset and size in the .tpfbdt.

@@ -4,6 +4,7 @@
 #include "bbport_map_art.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -273,10 +274,10 @@ std::optional<Texture> DecodeTexture(std::span<const std::uint8_t> tpf, int max_
             }
         }
     }
-    Texture out{texture.width, texture.height, std::move(full)};
+    Texture out{texture.width, texture.height, std::move(full), {}};
     // Halved (2 x 2 averages) down to max_side.
     while (out.width > max_side || out.height > max_side) {
-        Texture half{std::max(1, out.width / 2), std::max(1, out.height / 2), {}};
+        Texture half{std::max(1, out.width / 2), std::max(1, out.height / 2), {}, {}};
         half.pixels.resize(std::size_t(half.width) * std::size_t(half.height));
         for (int y = 0; y < half.height; ++y) {
             for (int x = 0; x < half.width; ++x) {
@@ -297,16 +298,90 @@ std::optional<Texture> DecodeTexture(std::span<const std::uint8_t> tpf, int max_
         }
         out = std::move(half);
     }
+    // Its smaller levels, down to 4 pixels.
+    Texture level = out;
+    while (level.width > 4 && level.height > 4) {
+        Texture half{level.width / 2, level.height / 2, {}, {}};
+        half.pixels.resize(std::size_t(half.width) * std::size_t(half.height));
+        for (int y = 0; y < half.height; ++y) {
+            for (int x = 0; x < half.width; ++x) {
+                std::uint32_t sum[4] = {};
+                for (int k = 0; k < 4; ++k) {
+                    const std::uint32_t p =
+                        level.pixels[std::size_t(y * 2 + (k >> 1)) * std::size_t(level.width) + std::size_t(x * 2 + (k & 1))];
+                    for (int c = 0; c < 4; ++c) {
+                        sum[c] += (p >> (c * 8)) & 0xFF;
+                    }
+                }
+                std::uint32_t p = 0;
+                for (int c = 0; c < 4; ++c) {
+                    p |= (sum[c] / 4) << (c * 8);
+                }
+                half.pixels[std::size_t(y) * std::size_t(half.width) + std::size_t(x)] = p;
+            }
+        }
+        out.mips.push_back(half);
+        level = std::move(half);
+    }
     return out;
 }
 
-std::uint32_t Texture::Sample(float u, float v) const {
-    if (width <= 0 || height <= 0) {
+/// How bright the baked light is taken: the game's light maps hold a third of it (BB_MAP_LIGHT_GAIN
+/// overrides; 0 leaves the light out).
+float LightGain() {
+    static const float gain = [] {
+        const char* text = std::getenv("BB_MAP_LIGHT_GAIN");
+        return text != nullptr ? float(std::atof(text)) : 3.0f;
+    }();
+    return gain;
+}
+
+std::uint32_t Texture::Sample(float u, float v, int level) const {
+    const Texture& t = level <= 0 || mips.empty() ? *this : mips[std::size_t(std::min<int>(level, int(mips.size())) - 1)];
+    if (t.width <= 0 || t.height <= 0) {
         return 0;
     }
-    const int x = int(std::floor((u - std::floor(u)) * float(width))) % width;
-    const int y = int(std::floor((v - std::floor(v)) * float(height))) % height;
-    return pixels[std::size_t(std::max(0, y)) * std::size_t(width) + std::size_t(std::max(0, x))];
+    const int x = int(std::floor((u - std::floor(u)) * float(t.width))) % t.width;
+    const int y = int(std::floor((v - std::floor(v)) * float(t.height))) % t.height;
+    return t.pixels[std::size_t(std::max(0, y)) * std::size_t(t.width) + std::size_t(std::max(0, x))];
+}
+
+int Texture::LevelFor(float texels) const {
+    if (!(texels > 1.0f)) {
+        return 0;
+    }
+    return std::min(int(mips.size()), int(std::log2(texels)));
+}
+
+std::vector<PointLight> ReadLights(std::span<const std::uint8_t> btl) {
+    // The header: version (2), count at +8, the names' length at +0xC, a light's size at +0x14;
+    // the names from +0x3C, then the lights.
+    std::vector<PointLight> lights;
+    std::int32_t version = 0, count = 0, names = 0, size = 0;
+    if (!Get(btl, 0, version) || !Get(btl, 8, count) || !Get(btl, 0xC, names) || !Get(btl, 0x14, size) ||
+        version != 2 || count < 0 || count > 10000 || names < 0 || size < 0x5C) {
+        return lights;
+    }
+    const std::size_t first = 0x3C + std::size_t(names);
+    for (std::int32_t i = 0; i < count; ++i) {
+        const std::size_t at = first + std::size_t(i) * std::size_t(size);
+        std::uint8_t rgb[3] = {};
+        float power = 0, cone = 0, radius = 0;
+        PointLight light;
+        if (!Get(btl, at + 0x1D, rgb[0]) || !Get(btl, at + 0x1E, rgb[1]) || !Get(btl, at + 0x1F, rgb[2]) ||
+            !Get(btl, at + 0x20, power) || !Get(btl, at + 0x2C, cone) || !Get(btl, at + 0x38, light.x) ||
+            !Get(btl, at + 0x3C, light.y) || !Get(btl, at + 0x40, light.z) || !Get(btl, at + 0x58, radius)) {
+            break;
+        }
+        if (cone != 0.0f || !(radius > 0.0f) || radius > 60.0f || !std::isfinite(light.x)) {
+            continue; // a spotlight, or no reach
+        }
+        light.color = 0xFF000000u | std::uint32_t(rgb[0]) << 16 | std::uint32_t(rgb[1]) << 8 | rgb[2];
+        light.radius = radius;
+        light.power = power;
+        lights.push_back(light);
+    }
+    return lights;
 }
 
 std::vector<ArchiveEntry> ReadArchiveHeader(std::span<const std::uint8_t> bhd) {
@@ -424,8 +499,13 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
     // Each layout's position member: its offset in the vertex and whether it is a float3 or float4;
     // its first texture coordinates (semantic 5): offset and type (0x15/0x16 shorts, 1 floats).
     std::vector<std::int32_t> position_of(std::size_t(layouts), -1);
-    std::vector<std::int32_t> uv_of(std::size_t(layouts), -1);
-    std::vector<std::uint32_t> uv_type(std::size_t(layouts), 0);
+    // Up to two texture coordinate sets: (offset, type, which pair of a 0x16).
+    struct UvSource {
+        std::int32_t offset = -1;
+        std::uint32_t type = 0;
+        int pair = 0;
+    };
+    std::vector<std::array<UvSource, 2>> uv_sets(static_cast<std::size_t>(layouts));
     std::uint32_t version = 0;
     Get(flver, 0x08, version);
     const float uv_factor = version >= 0x2000F ? 2048.0f : 1024.0f;
@@ -443,9 +523,16 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
             if (semantic == 0 && (type == 2 || type == 3) && position_of[std::size_t(i)] < 0) {
                 position_of[std::size_t(i)] = offset;
             }
-            if (semantic == 5 && uv_of[std::size_t(i)] < 0 && (type == 1 || type == 0x15 || type == 0x16)) {
-                uv_of[std::size_t(i)] = offset;
-                uv_type[std::size_t(i)] = type;
+            if (semantic == 5 && (type == 1 || type == 0x15 || type == 0x16)) {
+                auto& sets = uv_sets[std::size_t(i)];
+                for (int pair = 0; pair < (type == 0x16 ? 2 : 1); ++pair) {
+                    for (UvSource& set : sets) {
+                        if (set.offset < 0) {
+                            set = UvSource{offset, type, pair};
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
@@ -464,20 +551,30 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
         Get(flver, material_base + std::size_t(material) * 0x20 + 8, count);
         Get(flver, material_base + std::size_t(material) * 0x20 + 0xC, first);
         std::uint32_t color = 0;
+        std::string diffuse, diffuse2, mask, light;
         for (std::int32_t t = first; t < first + count && t >= 0 && t < first + 32; ++t) {
             std::int32_t path = 0, type = 0;
             Get(flver, texture_base + std::size_t(t) * 0x20, path);
             Get(flver, texture_base + std::size_t(t) * 0x20 + 4, type);
-            if (Utf16At(flver, std::size_t(type)).find("Diffuse") == std::string::npos) {
-                continue;
-            }
+            const std::string kind = Utf16At(flver, std::size_t(type));
             std::string name = Utf16At(flver, std::size_t(path));
             name = name.substr(name.find_last_of("\\/") + 1);
             name = name.substr(0, name.find('.'));
-            if (!name.empty()) {
-                color = color_of(name);
+            if (kind == "g_DiffuseTexture" || (diffuse.empty() && kind.find("Diffuse") != std::string::npos &&
+                                               kind != "g_DiffuseTexture2")) {
+                diffuse = diffuse.empty() ? name : diffuse;
+            } else if (kind == "g_DiffuseTexture2") {
+                diffuse2 = name;
+            } else if (kind == "g_BlendMaskTexture") {
+                mask = name;
+            } else if (kind == "g_DOLTexture1") {
+                light = name;
             }
-            break;
+        }
+        if (!diffuse.empty()) {
+            color = color_of(diffuse2.empty() && mask.empty() && light.empty()
+                                 ? diffuse
+                                 : diffuse + ";" + diffuse2 + ";" + mask + ";" + light);
         }
         material_colors[material] = color;
         return color;
@@ -526,29 +623,31 @@ bool AppendTriangles(std::span<const std::uint8_t> flver, std::vector<float>& ou
         if (vertices + std::size_t(vertex_count - 1) * std::size_t(vertex_size) + 12 > flver.size()) {
             continue;
         }
-        const std::int32_t uv_at = uv_of[std::size_t(layout)];
-        const std::size_t uv_base = std::size_t(data) + buffer_offset + std::size_t(std::max(0, uv_at));
-        const bool has_uv = uvs != nullptr && uv_at >= 0 &&
-                            uv_base + std::size_t(vertex_count - 1) * std::size_t(vertex_size) + 8 <= flver.size();
+        const auto& sets = uv_sets[std::size_t(layout)];
         const auto corner = [&](std::uint32_t index) {
             const std::uint8_t* p = flver.data() + vertices + std::size_t(index) * std::size_t(vertex_size);
             float xyz[3];
             std::memcpy(xyz, p, 12);
             corners.insert(corners.end(), xyz, xyz + 3);
             if (uvs != nullptr) {
-                float uv[2] = {0.0f, 0.0f};
-                if (has_uv) {
-                    const std::uint8_t* q = flver.data() + uv_base + std::size_t(index) * std::size_t(vertex_size);
-                    if (uv_type[std::size_t(layout)] == 1) {
-                        std::memcpy(uv, q, 8);
+                float uv[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                for (int k = 0; k < 2; ++k) {
+                    const UvSource& set = sets[std::size_t(k)];
+                    const std::size_t at = std::size_t(data) + buffer_offset + std::size_t(std::max(0, set.offset)) +
+                                           std::size_t(index) * std::size_t(vertex_size);
+                    if (set.offset < 0 || at + 8 > flver.size()) {
+                        continue;
+                    }
+                    if (set.type == 1) {
+                        std::memcpy(uv + k * 2, flver.data() + at, 8);
                     } else {
                         std::int16_t s[2];
-                        std::memcpy(s, q, 4);
-                        uv[0] = float(s[0]) / uv_factor;
-                        uv[1] = float(s[1]) / uv_factor;
+                        std::memcpy(s, flver.data() + at + std::size_t(set.pair) * 4, 4);
+                        uv[k * 2] = float(s[0]) / uv_factor;
+                        uv[k * 2 + 1] = float(s[1]) / uv_factor;
                     }
                 }
-                corner_uvs.insert(corner_uvs.end(), uv, uv + 2);
+                corner_uvs.insert(corner_uvs.end(), uv, uv + 4);
             }
         };
         for (std::int32_t f = 0; f < faceset_count; ++f) {
@@ -707,8 +806,8 @@ void Place(const Piece& piece, std::span<const float> model, const PlayArea& are
             out_colors->push_back(t / 9 < colors.size() ? colors[t / 9] : 0u);
         }
         if (out_uvs) {
-            const std::size_t u = t / 9 * 6;
-            for (std::size_t k = 0; k < 6; ++k) {
+            const std::size_t u = t / 9 * 12;
+            for (std::size_t k = 0; k < 12; ++k) {
                 out_uvs->push_back(u + k < uvs.size() ? uvs[u + k] : 0.0f);
             }
         }
@@ -822,15 +921,15 @@ void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t
         const float lambert = std::clamp((nx * lx + ny * ly + nz * lz) / length, 0.0f, 1.0f);
         const auto shade = std::uint8_t(std::lround(lambert * 255.0f));
         std::uint32_t tint = t / 9 < colors.size() ? colors[t / 9] : 0u;
-        // Kaniel 2026-10-19: a textured triangle takes its texture's pixel at each spot.
-        std::shared_ptr<const Texture> texture;
+        // Kaniel 2026-10-19: a textured triangle takes its surface's pixel at each spot.
+        std::shared_ptr<const Surface> surface;
         const float* uv = nullptr;
         if (IsTextured(tint)) {
-            texture = texture_of ? texture_of(tint & 0xFFFFFFu) : nullptr;
-            uv = t / 9 * 6 + 6 <= uvs.size() ? uvs.data() + t / 9 * 6 : nullptr;
-            if (!texture || !uv) {
+            surface = texture_of ? texture_of(tint & 0xFFFFFFu) : nullptr;
+            uv = t / 9 * 12 + 12 <= uvs.size() ? uvs.data() + t / 9 * 12 : nullptr;
+            if (!surface || !surface->diffuse || !uv) {
                 tint = 0;
-                texture = nullptr;
+                surface = nullptr;
             }
         }
         // Pixels of the corners (z north up).
@@ -847,16 +946,56 @@ void Canvas::Add(std::span<const float> triangles, std::span<const std::uint32_t
         if (bx0 > bx1 || by0 > by1) {
             continue;
         }
+        // Each texture's level for this triangle: as many texels a pixel as its coordinates span.
+        int diffuse_level = 0, level2 = 0, light_level = 0;
+        if (surface) {
+            const float pixels = std::max(0.5f, std::abs((px[1] - px[0]) * (py[2] - py[0]) - (px[2] - px[0]) * (py[1] - py[0])));
+            const auto span = [&](int k, const std::shared_ptr<const Texture>& tex) {
+                if (!tex) {
+                    return 0;
+                }
+                const float* a = uv + 0 * 4 + k * 2;
+                const float* b = uv + 1 * 4 + k * 2;
+                const float* c = uv + 2 * 4 + k * 2;
+                const float area = std::abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) *
+                                   float(tex->width) * float(tex->height);
+                return tex->LevelFor(std::sqrt(area / pixels));
+            };
+            diffuse_level = span(0, surface->diffuse);
+            level2 = span(0, surface->diffuse2);
+            light_level = span(1, surface->light);
+        }
         const auto plot = [&](int x, int y, float z, float l1 = 1.0f / 3, float l2 = 1.0f / 3) {
             const std::size_t at = std::size_t(y) * std::size_t(width) + std::size_t(x);
             std::uint32_t c = tint;
-            if (texture) {
+            if (surface) {
                 const float l3 = 1.0f - l1 - l2;
-                c = texture->Sample(l1 * uv[0] + l2 * uv[2] + l3 * uv[4], l1 * uv[1] + l2 * uv[3] + l3 * uv[5]);
+                const float u0 = l1 * uv[0] + l2 * uv[4] + l3 * uv[8], v0 = l1 * uv[1] + l2 * uv[5] + l3 * uv[9];
+                c = surface->diffuse->Sample(u0, v0, diffuse_level);
                 if ((c >> 24) < 96) {
                     return; // cut out (leaves, railings): what lies under shows
                 }
-                c |= 0xFF000000u;
+                float rgb[3] = {float((c >> 16) & 0xFF), float((c >> 8) & 0xFF), float(c & 0xFF)};
+                // The second texture where its mask says (moss, mud, damage).
+                if (surface->diffuse2 && surface->mask) {
+                    const float m = float((surface->mask->Sample(u0, v0, diffuse_level) >> 16) & 0xFF) / 255.0f;
+                    const std::uint32_t d = surface->diffuse2->Sample(u0, v0, level2);
+                    const float other[3] = {float((d >> 16) & 0xFF), float((d >> 8) & 0xFF), float(d & 0xFF)};
+                    for (int k = 0; k < 3; ++k) {
+                        rgb[k] += (other[k] - rgb[k]) * m;
+                    }
+                }
+                // The light the game baked for the model.
+                if (surface->light) {
+                    const float u1 = l1 * uv[2] + l2 * uv[6] + l3 * uv[10], v1 = l1 * uv[3] + l2 * uv[7] + l3 * uv[11];
+                    const std::uint32_t lit = surface->light->Sample(u1, v1, light_level);
+                    const float gain = LightGain();
+                    rgb[0] *= float((lit >> 16) & 0xFF) / 255.0f * gain;
+                    rgb[1] *= float((lit >> 8) & 0xFF) / 255.0f * gain;
+                    rgb[2] *= float(lit & 0xFF) / 255.0f * gain;
+                }
+                c = 0xFF000000u | std::uint32_t(std::clamp(rgb[0], 0.0f, 255.0f)) << 16 |
+                    std::uint32_t(std::clamp(rgb[1], 0.0f, 255.0f)) << 8 | std::uint32_t(std::clamp(rgb[2], 0.0f, 255.0f));
             }
             if (z > top[at]) {
                 top[at] = z;
@@ -1073,6 +1212,40 @@ Chart Canvas::Finish() const {
     // Ink on paper: low ground dark umber, high ground pale parchment, the light's relief over it,
     // ink lines where the height drops away (walls, roof edges, the shore of the void).
     const float paper[3] = {214.0f, 198.0f, 162.0f}, umber[3] = {84.0f, 70.0f, 54.0f}, ink[3] = {38.0f, 29.0f, 22.0f};
+    // Kaniel 2026-10-19 (torches and lamps glowing): each warm, small light's glow on the
+    // surfaces within its reach and not far above it, fading with distance.
+    std::vector<float> glow;
+    for (const PointLight& light : lights) {
+        const float r = ((light.color >> 16) & 0xFF) / 255.0f, g = ((light.color >> 8) & 0xFF) / 255.0f,
+                    b = (light.color & 0xFF) / 255.0f;
+        if (r < g || g < b || r - b < 0.15f || light.radius > 20.0f) {
+            continue; // not a flame's colour, or a wide fill light
+        }
+        if (glow.empty()) {
+            glow.assign(top.size() * 3, 0.0f);
+        }
+        const float reach = light.radius * 1.2f;
+        const float strength = std::clamp(light.power, 1.0f, 4.0f) * 60.0f;
+        const int cx = int((light.x - x0) * ppm), cy = int((z1 - light.z) * ppm), rp = int(reach * ppm) + 1;
+        for (int y = std::max(0, cy - rp); y <= std::min(height - 1, cy + rp); ++y) {
+            for (int x = std::max(0, cx - rp); x <= std::min(width - 1, cx + rp); ++x) {
+                const std::size_t at = std::size_t(y) * std::size_t(width) + std::size_t(x);
+                if (!std::isfinite(top[at]) || top[at] > light.y + 1.5f) {
+                    continue;
+                }
+                const float dx = (float(x) + 0.5f) / ppm + x0 - light.x, dz = z1 - (float(y) + 0.5f) / ppm - light.z;
+                const float dy = (top[at] - light.y) * 0.3f; // a torch on a wall lights the ground below it
+                const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (d >= reach) {
+                    continue;
+                }
+                const float f = (1.0f - d / reach) * (1.0f - d / reach) * strength;
+                glow[at * 3] += f * r;
+                glow[at * 3 + 1] += f * g;
+                glow[at * 3 + 2] += f * b;
+            }
+        }
+    }
     // A surface's colour at height h: its light, its material, lit or in shadow, graded.
     const auto colour = [&](float h, std::uint8_t light_at, std::uint32_t tint, float shade, float lit[3]) {
         const float t = std::clamp((h - low) / span, 0.0f, 1.0f);
@@ -1132,6 +1305,12 @@ Chart Canvas::Finish() const {
             std::uint8_t* px = chart.rgba.data() + at * 4;
             float lit[3];
             colour(h, smooth_light[at], smooth_color[at], in_shadow(x, y, h) ? 0.72f : 1.0f, lit);
+            if (!glow.empty()) {
+                const float* g = glow.data() + at * 3;
+                for (int c = 0; c < 3; ++c) {
+                    lit[c] = std::min(255.0f, lit[c] + g[c]);
+                }
+            }
             for (int c = 0; c < 3; ++c) {
                 float v = lit[c] + grain;
                 v = v * (1.0f - line) + ink[c] * line;
@@ -1338,7 +1517,7 @@ void FloorView(const Chart& chart, float y, std::uint8_t* rgba) {
 
 std::vector<std::uint8_t> Save(const Chart& chart) {
     std::vector<std::uint8_t> file(32);
-    std::memcpy(file.data(), "BBMAP7\0\0", 8);
+    std::memcpy(file.data(), "BBMAP8\0\0", 8);
     std::memcpy(file.data() + 8, &chart.width, 4);
     std::memcpy(file.data() + 12, &chart.height, 4);
     std::memcpy(file.data() + 16, &chart.x0, 4);
@@ -1388,7 +1567,7 @@ std::vector<std::uint8_t> Save(const Chart& chart) {
 }
 
 std::optional<Chart> Load(std::span<const std::uint8_t> file) {
-    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP7\0\0", 8) != 0) {
+    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP8\0\0", 8) != 0) {
         return std::nullopt;
     }
     Chart chart;
@@ -1485,7 +1664,7 @@ public:
         if (!read_range) {
             return 0;
         }
-        const std::string name(texture);
+        const std::string name(texture.substr(0, texture.find(';')));
         Where where;
         {
             std::scoped_lock lock{mutex};
@@ -1550,6 +1729,51 @@ public:
         std::scoped_lock lock{mutex};
         return id < images.size() ? images[id] : nullptr;
     }
+    /// A material's surface ("diffuse;diffuse2;mask;light", MaterialColor) as an id for
+    /// TexturedColor; -1 when its diffuse texture is not there. The baked light is the DOL
+    /// texture's first atlas, its low-resolution copy (light changes slowly).
+    std::int32_t SurfaceOf(std::string_view key) {
+        {
+            std::scoped_lock lock{mutex};
+            if (const auto known = surface_ids.find(std::string(key)); known != surface_ids.end()) {
+                return known->second;
+            }
+        }
+        std::string parts[4];
+        std::size_t at = 0;
+        for (int k = 0; k < 4; ++k) {
+            const std::size_t end = std::min(key.size(), key.find(';', at));
+            parts[k] = std::string(key.substr(std::min(at, key.size()), end - std::min(at, key.size())));
+            at = end + 1;
+        }
+        Surface surface;
+        const auto image = [&](const std::string& name) -> std::shared_ptr<const Texture> {
+            const std::int32_t id = name.empty() ? -1 : ImageOf(name);
+            return id >= 0 ? Image(std::uint32_t(id)) : nullptr;
+        };
+        surface.diffuse = image(parts[0]);
+        surface.diffuse2 = image(parts[1]);
+        surface.mask = image(parts[2]);
+        if (!parts[3].empty() && LightGain() > 0.0f) {
+            surface.light = image(parts[3] + "_atlas000_l");
+            if (!surface.light) {
+                surface.light = image(parts[3] + "_atlas000");
+            }
+        }
+        std::scoped_lock lock{mutex};
+        if (const auto known = surface_ids.find(std::string(key)); known != surface_ids.end()) {
+            return known->second;
+        }
+        if (!surface.diffuse) {
+            return surface_ids[std::string(key)] = -1;
+        }
+        surfaces.push_back(std::make_shared<const Surface>(std::move(surface)));
+        return surface_ids[std::string(key)] = std::int32_t(surfaces.size() - 1);
+    }
+    std::shared_ptr<const Surface> SurfaceAt(std::uint32_t id) {
+        std::scoped_lock lock{mutex};
+        return id < surfaces.size() ? surfaces[id] : nullptr;
+    }
 
 private:
     struct Where {
@@ -1563,6 +1787,8 @@ private:
     std::map<std::string, std::uint32_t> colors;
     std::map<std::string, std::int32_t> image_ids;
     std::vector<std::shared_ptr<const Texture>> images;
+    std::map<std::string, std::int32_t> surface_ids;
+    std::vector<std::shared_ptr<const Surface>> surfaces;
 };
 
 /// The collision meshes of an area (map/mAA_BB_00_00/hAA_BB_00_00.hkxbhd/.hkxbdt, the .patch ones
@@ -1594,7 +1820,17 @@ std::map<std::string, std::vector<std::uint8_t>> CollisionFiles(const std::strin
 std::vector<std::string> ArchivesOf(const std::string& map_name, const ReadFile& exists) {
     std::vector<std::string> archives;
     const std::string area = map_name.substr(0, 3), block = map_name.substr(0, 6);
-    for (const std::string& prefix : {area, block}) {
+    // Kaniel 2026-10-19 (blended ground): a material can take a mask or a texture from another
+    // block of its area (m24_01 uses m24_00's masks), so those blocks' archives come last.
+    std::vector<std::string> prefixes{area, block};
+    for (int b = 0; b < 10; ++b) {
+        char other[16];
+        std::snprintf(other, sizeof(other), "%s_%02d", area.c_str(), b);
+        if (other != block) {
+            prefixes.emplace_back(other);
+        }
+    }
+    for (const std::string& prefix : prefixes) {
         for (int i = 0; i < 10; ++i) {
             char name[32];
             std::snprintf(name, sizeof(name), "%s_%04d", prefix.c_str(), i);
@@ -1602,6 +1838,13 @@ std::vector<std::string> ArchivesOf(const std::string& map_name, const ReadFile&
                 !exists("map/" + area + "/" + name + ".tpfbhd").empty()) {
                 archives.emplace_back(name);
             }
+        }
+    }
+    // Kaniel 2026-10-19: the light the game baked for each model (gi_env_mAA, gi_env_mAA_BB).
+    for (const std::string& name : {"gi_env_" + area, "gi_env_" + block}) {
+        if (std::find(archives.begin(), archives.end(), name) == archives.end() &&
+            !exists("map/" + area + "/" + name + ".tpfbhd").empty()) {
+            archives.push_back(name);
         }
     }
     return archives;
@@ -1701,9 +1944,19 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
     for (std::size_t i = 1; i < canvases.size(); ++i) {
         canvases[i].ShareFloors(canvases[0]);
     }
+    // Kaniel 2026-10-19: the areas' torches and lamps (their light files' point lights).
+    for (const Source& source : sources) {
+        const auto btl = inflate(read("map/" + source.name + "/" + source.name + "_0000.btl.dcx"));
+        for (const PointLight& light : ReadLights(btl)) {
+            if (light.x >= source.area.x0 && light.x <= source.area.x1 && light.z >= source.area.z0 &&
+                light.z <= source.area.z1) {
+                canvases[0].AddLight(light);
+            }
+        }
+    }
     if (textured) {
         for (Canvas& canvas : canvases) {
-            canvas.SetTextures([&](std::uint32_t id) { return textures.Image(id); });
+            canvas.SetTextures([&](std::uint32_t id) { return textures.SurfaceAt(id); });
         }
     }
     // The game's colour grade of the (first) area's block.
@@ -1718,7 +1971,7 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
         std::vector<std::uint32_t> model_colors, world_colors;
         const MaterialColor color_of = [&](std::string_view texture) {
             if (textured) {
-                if (const std::int32_t id = textures.ImageOf(texture); id >= 0) {
+                if (const std::int32_t id = textures.SurfaceOf(texture); id >= 0) {
                     return TexturedColor(std::uint32_t(id));
                 }
             }
