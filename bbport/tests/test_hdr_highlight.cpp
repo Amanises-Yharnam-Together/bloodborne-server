@@ -25,6 +25,9 @@ inline float mix(double a, double b, float t) {
 inline float log2(float x) {
     return std::log2(x);
 }
+inline float pow(float x, double y) {
+    return std::pow(x, float(y));
+}
 #include "hdr_highlight.glsl"
 } // namespace glsl
 
@@ -54,6 +57,12 @@ int main() {
     assert(0.24f * HighlightGain(0.24f, headroom, 1.0f) > halo);
     // No headroom (white at the peak): nothing changes.
     assert(HighlightGain(0.69f, 1.0f, 1.0f) == 1.0f);
+    // Kaniel 2026-10-19, second look ("still looked not right"): the SDR picture is decoded as
+    // the gamma 2.2 display the game was graded on, not the sRGB curve, whose straight toe lifts
+    // the dark shades Bloodborne is made of.
+    assert(std::fabs(glsl::SdrToLinear(0.05f) - std::pow(0.05f, 2.2f)) < 1e-6f && "shadows stay deep");
+    assert(std::fabs(glsl::SdrToLinear(0.5f) - std::pow(0.5f, 2.2f)) < 1e-6f);
+    assert(glsl::SdrToLinear(0.0f) == 0.0f && glsl::SdrToLinear(1.0f) == 1.0f);
     std::puts("PASS: HDR highlights lift the game's lights, keep its mid-tones");
     return 0;
 }
