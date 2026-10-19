@@ -757,7 +757,7 @@ const play: DocPage = {
               src: "/docs/loading.webp",
               width: 1440,
               height: 810,
-              alt: "The Hunt Begins loading screen over a night city under the moon, with cards for Player 1 and Player 2, both Joining the hunt at about 80 percent.",
+              alt: "The Hunt Begins loading screen, with cards for Player 1 and Player 2, both Joining the hunt at about 80 percent.",
               caption: "The Hunt Begins: everyone loads, then the hunt opens at once.",
             },
             {
@@ -1212,15 +1212,15 @@ const play: DocPage = {
       blocks: [
         {
           type: "p",
-          text: "**Insert** on the keyboard, or **L3 + R3** on a pad, opens the port's settings over the game, with Co-op Team, Apply and restart the game and Quit to desktop. The frame rate shows 60 (co-op) and can't be changed while playing together.",
+          text: "**Insert** on the keyboard, or **L3 + R3** on a pad, opens the port's settings over the game, with Co-op Team, Map, Apply and restart the game and Quit to desktop. The frame rate shows 60 (co-op) and can't be changed while playing together.",
         },
         {
           type: "image",
           src: "/docs/insert-menu.webp",
-          alt: "The Insert settings menu over the game, on the Display tab, with Co-op Team selected above Quit to desktop.",
-          caption: "The Insert menu, with Co-op Team at the bottom.",
-          width: 1220,
-          height: 830,
+          alt: "The Insert settings menu over the game, on the Display tab, with Co-op Team selected above Map and Quit to desktop.",
+          caption: "The Insert menu, with Co-op Team near the bottom.",
+          width: 1440,
+          height: 810,
         },
         {
           type: "gallery",

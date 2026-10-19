@@ -104,7 +104,7 @@ const features: {
     src: "/docs/insert-team.webp",
     width: 1440,
     height: 810,
-    alt: "The Co-op Team page from the Insert menu: Player 1 and Player 2 In the hunt, two empty places, Hunters online and Invitations.",
+    alt: "The Co-op Team page from the Insert menu: Player 1, Player 2 and Player 3 In the hunt, one empty place, Hunters online and Invitations.",
   },
   {
     title: "Ready, then the hunt",
@@ -203,7 +203,7 @@ export default function Home() {
         <figure>
           <Image
             src="/docs/loading.webp"
-            alt="The Hunt Begins loading screen: cards for Player 1 and Player 2 over a night city under the moon."
+            alt="The Hunt Begins loading screen: cards for Player 1 and Player 2, both joining the hunt."
             width={1440}
             height={810}
             priority
