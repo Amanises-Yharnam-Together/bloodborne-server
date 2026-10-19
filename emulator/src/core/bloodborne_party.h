@@ -3350,6 +3350,9 @@ constexpr float BossLeaveMetres = 45.0f;
 // boss stood in a T-pose: the pick handed it to him at once, but his fresh game did not run it.
 // While the game's own runner (the map's `owner`) is in the arena, the boss stays with it; and a
 // stale board keeps the last pick (Last) rather than flipping back.
+// Kaniel's playtest 2026-10-19: a chalice dungeon's enemies, scaled by its depth (and the harder
+// enemies), pass the boss size by the dozen; there the map's own runner keeps every enemy.
+bool BossRunnersOn(u32 packed_map);
 class BossRunnerPick {
 public:
     // The member whose game runs the boss at `boss` on `map` now, "" for the game's own (the map's

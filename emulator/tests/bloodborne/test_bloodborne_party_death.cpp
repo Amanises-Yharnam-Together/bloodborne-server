@@ -1388,3 +1388,14 @@ TEST(PartyDeath, AWipeHoldsEnemyHpUntilItsTripLoadedTheMap) {
     EXPECT_TRUE(hold.Holds(9, 50'000));
     EXPECT_FALSE(hold.Holds(10, 50'001));
 }
+
+// Kaniel's playtest 2026-10-19: in a chalice dungeon big enemies' AI lagged again and again. The
+// dungeon's enemies, scaled by its depth and the harder enemies, pass the boss size (1500 HP) by
+// the dozen, so the boss pick handed ordinary enemies to whichever guest came near, flipping at
+// every load. No enemy there is handed out: the map's own runner keeps them all.
+TEST(BloodbornePartyDeath, NoBossRunnerInAChaliceDungeon) {
+    EXPECT_FALSE(BossRunnersOn(0x1d000000));
+    EXPECT_FALSE(BossRunnersOn(0x1d010000));
+    EXPECT_TRUE(BossRunnersOn(0x18000000)) << "Central Yharnam";
+    EXPECT_TRUE(BossRunnersOn(0x19000000));
+}

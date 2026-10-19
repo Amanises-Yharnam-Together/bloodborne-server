@@ -837,7 +837,7 @@ std::map<u32, BossRunnerPick> boss_runners;
 bool IsBossSized(u64 character); // below, with the characters shown like the host
 
 std::string BossRunnerOf(u64 character) {
-    if (!IsBossSized(character)) {
+    if (!IsBossSized(character) || !BossRunnersOn(PlayingMap())) {
         return {};
     }
     const auto at = CharacterPosition(character);
