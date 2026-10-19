@@ -1741,11 +1741,7 @@ private:
     u64 player = 0;
 };
 
-// Kaniel's playtest 2026-10-17: his Central Yharnam kills came back for him only after a lamp
-// trip while both guests stood in Cathedral Ward, where Central Yharnam's enemies are loaded too.
-// Maps the game loads together count as one for "someone is on that map" (the Ward and Central
-// Yharnam).
-bool MapsLoadedTogether(u32 a, u32 b);
+// MapsLoadedTogether: server/coop/world_log.h.
 
 class VisitKills {
 public:
@@ -1770,6 +1766,10 @@ public:
     // A death that resets the map (a party wipe): every kill of this member is taken back, the
     // held ones too, and the next visit starts with none.
     std::vector<std::pair<s32, bool>> Forget();
+    // The party's log reset these maps (WorldLogHost::ResetMap: everyone on one died while
+    // another member stood elsewhere): this member's kills on them are taken back, the held ones
+    // too.
+    std::vector<std::pair<s32, bool>> ForgetOn(std::span<const u32> maps);
 
 private:
     struct Seen {

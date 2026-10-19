@@ -127,10 +127,12 @@ struct Game {
         ToMessage(WorldLogProposal{name, member.Epoch(), run, ++number, kills});
     Send(envelope, now_ms);
   }
-  void Lifecycle(bbcoop::Lifecycle::Event event, bool host, qint64 now_ms) {
+  void Lifecycle(bbcoop::Lifecycle::Event event, bool host, qint64 now_ms,
+                 u32 map = 0) {
     bbcoop::Envelope envelope;
     envelope.mutable_lifecycle()->set_event(event);
     envelope.mutable_lifecycle()->set_host(host);
+    envelope.mutable_lifecycle()->set_map(map);
     Send(envelope, now_ms);
   }
   void LobbyHello(bool playing, qint64 now_ms) {
@@ -820,6 +822,68 @@ int AMembersOwnWipeKeepsThePartysLog() {
   Pump(service, {&host, &guest, &other}, now + 10);
   CHECK(other.member.Epoch() != before);
   CHECK(!Killed(other, 7));
+  return 0;
+}
+
+// Kaniel's play test 2026-10-19: Kaniel and Lisara died on Cathedral Ward
+// while krolebord stood in the Hunter's Dream, and the Ward came back half
+// respawned, different for each of them. Nobody stands on the Ward, so it
+// starts over alone (and Central Yharnam, loaded with it): its kills go, even
+// krolebord's held ones, while the Dream's stay and no new log starts. With
+// someone standing on a map loaded with it, the log stands.
+int AWipeOfOneMapStartsThatMapOverAlone() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  qint64 now = 1'000'000;
+  for (Game *game : {&host, &guest, &other}) {
+    game->Hello(now);
+  }
+  Pump(service, {&host, &guest, &other}, now);
+  constexpr u32 Up = 1;
+  constexpr u32 Down = 2;
+  constexpr u32 Ward = 0x18000000;
+  constexpr u32 Yharnam = 0x18010000;
+  constexpr u32 Dream = 0x15000000;
+  host.Propose({{Ward, {7}}}, now);
+  other.Propose({{Ward, {8}}, {Dream, {9}}}, now);
+  host.Send(VitalsOf(Ward, Down, 5), now);
+  guest.Send(VitalsOf(Ward, Down, 6), now);
+  other.Send(VitalsOf(Dream, Up), now);
+  Pump(service, {&host, &guest, &other}, now);
+  const u64 before = other.member.Epoch();
+  CHECK(Killed(other, 7) && Killed(other, 8) && Killed(other, 9));
+  // The host respawned first and stands at its lamp on the Ward again before
+  // it tells its wipe: a member of the wipe does not count as standing there.
+  now += 5000;
+  host.Send(VitalsOf(Ward, Up), now);
+  host.Lifecycle(bbcoop::Lifecycle::WIPE, true, now, Ward);
+  Pump(service, {&host, &guest, &other}, now);
+  CHECK(other.member.Epoch() == before);
+  CHECK(!Killed(other, 7) && !Killed(other, 8) && !Killed(host, 7));
+  CHECK(Killed(other, 9));
+  // krolebord's game still holds its Ward kill: it does not stand again.
+  now += 100;
+  other.Propose({{Ward, {8}}, {Dream, {9}}}, now);
+  guest.Lifecycle(bbcoop::Lifecycle::WIPE, false, now, Ward);
+  Pump(service, {&host, &guest, &other}, now);
+  CHECK(!Killed(guest, 8) && Killed(guest, 9));
+  // A new kill there stands.
+  now += 1000;
+  host.Propose({{Ward, {10}}}, now);
+  Pump(service, {&host, &guest, &other}, now);
+  CHECK(Killed(other, 10));
+  // Someone stands on Central Yharnam, loaded with the Ward: the log stands.
+  now += WorldLogWipeGraceMs + 1000;
+  other.Send(VitalsOf(Yharnam, Up), now);
+  guest.Send(VitalsOf(Ward, Down, 7), now);
+  host.Send(VitalsOf(Ward, Down, 8), now);
+  Pump(service, {&host, &guest, &other}, now);
+  guest.Lifecycle(bbcoop::Lifecycle::WIPE, false, now + 10, Ward);
+  Pump(service, {&host, &guest, &other}, now + 10);
+  CHECK(Killed(other, 10));
+  CHECK(other.member.Epoch() == before);
   return 0;
 }
 
@@ -2135,6 +2199,8 @@ int main() {
       {"ThePartyIsWipedWhenNobodyOnTheMapStands",
        ThePartyIsWipedWhenNobodyOnTheMapStands},
       {"AMembersOwnWipeKeepsThePartysLog", AMembersOwnWipeKeepsThePartysLog},
+      {"AWipeOfOneMapStartsThatMapOverAlone",
+       AWipeOfOneMapStartsThatMapOverAlone},
       {"APortraitGoesToTheOthersAndToLaterMembers",
        APortraitGoesToTheOthersAndToLaterMembers},
       {"WhateverAGameSendsTheServiceKeepsWorking",

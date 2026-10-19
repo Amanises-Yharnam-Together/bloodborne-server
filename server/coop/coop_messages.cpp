@@ -267,6 +267,9 @@ bbcoop::StoredHost ToMessage(const WorldLogHost::State& state) {
         stored->set_run(member.run);
         stored->set_number(member.number);
         PutKills(member.kills, stored->mutable_kills());
+        for (const u32 handle : member.voided) {
+            stored->add_voided(handle);
+        }
     }
     for (const auto& [handle, standing] : state.standing) {
         bbcoop::StoredStanding* stored = message.add_standing();
@@ -314,7 +317,10 @@ WorldLogHost::State StateOf(const bbcoop::StoredHost& message) {
     state.epoch = message.epoch();
     state.last = message.last();
     for (const bbcoop::StoredMember& stored : message.members()) {
-        state.members[stored.name()] = {stored.run(), stored.number(), KillsOf(stored.kills())};
+        state.members[stored.name()] = {stored.run(),
+                                        stored.number(),
+                                        KillsOf(stored.kills()),
+                                        {stored.voided().begin(), stored.voided().end()}};
     }
     for (const bbcoop::StoredStanding& stored : message.standing()) {
         WorldLogHost::Standing& standing = state.standing[stored.handle()];

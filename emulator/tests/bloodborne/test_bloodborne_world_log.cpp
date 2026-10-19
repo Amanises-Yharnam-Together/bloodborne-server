@@ -511,6 +511,56 @@ TEST(WorldLogMember, ResetsOnlyItsMapAndSkipsKindsItDoesNotKnow) {
     EXPECT_TRUE(member.Kills().empty()) << "no empty map left behind";
 }
 
+// Kaniel's play test 2026-10-19: everyone on the Ward died while krolebord stood in the Dream.
+// The Ward (and Central Yharnam, loaded with it) starts over: its kills and HP go, the Dream's
+// stay, and a member's proposal sent before it heard the Reset does not stand them again.
+TEST(WorldLogHost, AResetMapStartsThatMapOverAlone) {
+    WorldLogHost host;
+    const u64 epoch = WorldLogEpoch(7, 1);
+    host.Start(epoch, false);
+    host.Propose(Proposal("kaniel", epoch, 5, 1, {{Ward, {0x10}}, {Yharnam, {0x11}}}));
+    host.Propose(Proposal("krolebord", epoch, 6, 1, {{Ward, {0x12}}, {Dream, {0x30}}}));
+    EnemyHpReport report{(u64{1} << 32) | 1, {{0x13, 50, 100}}};
+    host.ProposeHp({"lisara", epoch, 7, 1, Ward, report});
+    ASSERT_EQ(host.Hp().size(), 1u);
+    const u64 last = host.Last();
+    const std::vector<WorldLogEntry> entries = host.ResetMap(Ward);
+    ASSERT_GE(entries.size(), 3u);
+    EXPECT_EQ(entries[0], (WorldLogEntry{last + 1, epoch, Ward, WorldLogKind::Reset, 0}));
+    EXPECT_EQ(entries[1], (WorldLogEntry{last + 2, epoch, Yharnam, WorldLogKind::Reset, 0}));
+    EXPECT_EQ(entries[2].kind, WorldLogKind::HpSourceGone);
+    EXPECT_EQ(host.Kills(), (WorldLogKills{{Dream, {0x30}}}));
+    EXPECT_TRUE(host.Hp().empty());
+    // krolebord's game still holds its Ward kill until it hears the Reset.
+    EXPECT_TRUE(host.Propose(Proposal("krolebord", epoch, 6, 2, {{Ward, {0x12}}, {Dream, {0x30}}}))
+                    .entries.empty());
+    EXPECT_EQ(host.Kills(), (WorldLogKills{{Dream, {0x30}}}));
+    // Heard it: the kill is gone from its set, and a new kill of that enemy stands again.
+    host.Propose(Proposal("krolebord", epoch, 6, 3, {{Dream, {0x30}}}));
+    EXPECT_EQ(host.Propose(Proposal("krolebord", epoch, 6, 4, {{Ward, {0x12}}, {Dream, {0x30}}}))
+                  .entries.size(),
+              1u);
+    EXPECT_EQ(host.Kills(), (WorldLogKills{{Ward, {0x12}}, {Dream, {0x30}}}));
+    // A member following the log has the same.
+    WorldLogMember member;
+    member.Take(Batch(epoch, 3, {Reset(1), Kill(2, Ward, 0x10), Kill(3, Dream, 0x30)}), 0);
+    member.Take(Batch(epoch, 5, {Reset(4, Ward), Reset(5, Yharnam)}), 10);
+    EXPECT_EQ(member.Kills(), (WorldLogKills{{Dream, {0x30}}}));
+}
+
+TEST(WorldLogHost, AResetMapSurvivesASaveAndRestore) {
+    WorldLogHost host;
+    const u64 epoch = WorldLogEpoch(7, 1);
+    host.Start(epoch, false);
+    host.Propose(Proposal("krolebord", epoch, 6, 1, {{Ward, {0x12}}}));
+    host.ResetMap(Ward);
+    WorldLogHost restored;
+    restored.Restore(host.Save());
+    EXPECT_TRUE(
+        restored.Propose(Proposal("krolebord", epoch, 6, 2, {{Ward, {0x12}}})).entries.empty());
+    EXPECT_TRUE(restored.Kills().empty());
+}
+
 TEST(WorldLogMember, LeavingForgetsTheLog) {
     WorldLogMember member;
     const u64 epoch = WorldLogEpoch(7, 1);
@@ -673,6 +723,24 @@ TEST(VisitKillsStanding, ThisVisitsAndTheHeldOnesByMap) {
     EXPECT_EQ(kills.Standing(), (WorldLogKills{{Yharnam, {0x10}}, {Dream, {0x40}}}));
     kills.Forget();
     EXPECT_TRUE(kills.Standing().empty());
+}
+
+// Kaniel's play test 2026-10-19: both on the Ward died while krolebord was in the Dream. His
+// kills held on the Ward, and the dying members' own there, go with the log's Reset of the Ward.
+TEST(VisitKillsStanding, AResetMapTakesBackTheKillsThereAndKeepsTheOthers) {
+    VisitKills kills;
+    const u64 ward_visit = (u64{Ward} << 32) | 1;
+    kills.Observe(ward_visit, std::vector<SeenCharacter>{{0x10, 400, 0xA0}, {0x11, 300, 0xB0}});
+    kills.Observe(ward_visit, std::vector<SeenCharacter>{{0x10, 0, 0xA0}, {0x11, 300, 0xB0}});
+    const std::vector<u32> others{Ward};
+    const u64 dream_visit = (u64{Dream} << 32) | 2;
+    kills.Observe(dream_visit, std::vector<SeenCharacter>{{0x40, 50, 0xC0}}, others);
+    kills.Observe(dream_visit, std::vector<SeenCharacter>{{0x40, 0, 0xC0}}, others);
+    ASSERT_EQ(kills.Standing(), (WorldLogKills{{Ward, {0x10}}, {Dream, {0x40}}}));
+    const std::vector<u32> reset = MapsLoadedWith(Ward);
+    EXPECT_EQ(kills.ForgetOn(reset), (std::vector<std::pair<s32, bool>>{{0x10, false}}));
+    EXPECT_EQ(kills.Standing(), (WorldLogKills{{Dream, {0x40}}}));
+    EXPECT_TRUE(kills.ForgetOn(reset).empty()) << "once";
 }
 
 TEST(PartyKillsBoard, TheHostsEntriesCanBeLeftOut) {

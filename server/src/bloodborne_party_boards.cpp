@@ -92,6 +92,22 @@ bool PartyBoards::SomeoneStandsBesides(const std::string& member) const {
     });
 }
 
+bool PartyBoards::SomeoneStandsOn(const std::vector<std::uint32_t>& maps,
+                                  const std::string& member) const {
+    std::set<std::string> wiped_with;
+    for (const Wipe& wipe : wipes) {
+        const auto& members = wipe.wipe.members();
+        if (std::ranges::find(members, member) != members.end()) {
+            wiped_with.insert(members.begin(), members.end());
+        }
+    }
+    return std::ranges::any_of(vitals, [&](const auto& entry) {
+        return entry.first != member && !wiped_with.contains(entry.first) &&
+               entry.second.vitals.vital() == VitalUp &&
+               std::ranges::find(maps, entry.second.vitals.map()) != maps.end();
+    });
+}
+
 unsigned PartyBoards::Expire(std::int64_t now_ms) {
     unsigned changed = None;
     const auto stale = [now_ms](const auto& entry) {

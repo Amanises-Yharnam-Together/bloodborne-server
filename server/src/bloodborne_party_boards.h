@@ -45,6 +45,9 @@ public:
     unsigned Forget(const std::string& member);
     // Kaniel 2026-10-16: whether any member but `member` stands (up, on any map).
     bool SomeoneStandsBesides(const std::string& member) const;
+    // Whether a member stands (up) on one of `maps`, but for the members of `member`'s wipes (the
+    // first of them to respawn may stand at the lamp again before the last one tells its wipe).
+    bool SomeoneStandsOn(const std::vector<std::uint32_t>& maps, const std::string& member) const;
 
     bbcoop::MapBoard MapMessage() const;
     bbcoop::RestBoard RestMessage() const;

@@ -1049,8 +1049,16 @@ WorldLogHost::Taken WorldLogHost::Propose(const WorldLogProposal& proposal) {
         return taken;
     }
     Member& member = members[proposal.member];
+    // Kills on a map reset since (ResetMap) stay out while the proposals hold them.
+    WorldLogKills proposed = proposal.kills;
+    const std::unordered_set<u32> held = WorldLogHandles(proposed);
+    std::erase_if(member.voided, [&](u32 handle) { return !held.contains(handle); });
+    for (auto it = proposed.begin(); it != proposed.end();) {
+        std::erase_if(it->second, [&](u32 handle) { return member.voided.contains(handle); });
+        it = it->second.empty() ? proposed.erase(it) : std::next(it);
+    }
     const std::unordered_set<u32> before = WorldLogHandles(member.kills);
-    const std::unordered_set<u32> after = WorldLogHandles(proposal.kills);
+    const std::unordered_set<u32> after = WorldLogHandles(proposed);
     for (const auto& [map, handles] : member.kills) {
         for (const u32 handle : handles) {
             if (!after.contains(handle)) {
@@ -1058,15 +1066,61 @@ WorldLogHost::Taken WorldLogHost::Propose(const WorldLogProposal& proposal) {
             }
         }
     }
-    for (const auto& [map, handles] : proposal.kills) {
+    for (const auto& [map, handles] : proposed) {
         for (const u32 handle : handles) {
             if (!before.contains(handle)) {
                 Own(proposal.member, map, handle, taken.entries);
             }
         }
     }
-    member = Member{proposal.run, proposal.number, proposal.kills};
+    member.run = proposal.run;
+    member.number = proposal.number;
+    member.kills = std::move(proposed);
     return taken;
+}
+
+std::vector<WorldLogEntry> WorldLogHost::ResetMap(u32 map) {
+    std::vector<WorldLogEntry> entries;
+    if (map == 0) {
+        return entries;
+    }
+    const std::vector<u32> maps = MapsLoadedWith(map);
+    const auto reset = [&](u32 on) { return std::ranges::find(maps, on) != maps.end(); };
+    for (const u32 on : maps) {
+        entries.push_back(Append(WorldLogKind::Reset, on, 0));
+    }
+    for (auto& [name, member] : members) {
+        for (auto it = member.kills.begin(); it != member.kills.end();) {
+            if (!reset(it->first)) {
+                ++it;
+                continue;
+            }
+            member.voided.insert(it->second.begin(), it->second.end());
+            it = member.kills.erase(it);
+        }
+    }
+    std::erase_if(standing, [&](const auto& kill) { return reset(kill.second.map); });
+    std::vector<u64> sources;
+    for (const auto& [source, report] : hp) {
+        if (reset(report.map)) {
+            sources.push_back(source);
+        }
+    }
+    for (const u64 source : sources) {
+        DropHpSource(source, entries);
+    }
+    // The Reset takes the members' copies of the host's shown characters and map state there:
+    // they come again, the dead alive (the map respawns, as Start's after a wipe).
+    if (reset(shown.map)) {
+        for (auto& [handle, bits] : shown.bits) {
+            bits = static_cast<u8>(bits & ~ShownBits({0, false, false, false, true}));
+        }
+        AppendShown(entries);
+    }
+    if (reset(map_state.map)) {
+        AppendMapState(entries);
+    }
+    return entries;
 }
 
 std::vector<WorldLogEntry> WorldLogHost::Drop(const std::string& member) {

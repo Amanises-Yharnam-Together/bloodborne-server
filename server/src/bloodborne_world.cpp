@@ -330,6 +330,15 @@ void Service::Replay(PartyWorld& world, const bbcoop::JournalRecord& record) {
     case bbcoop::JournalRecord::kHp:
         world.host.ProposeHp(HpOf(record.hp().hp(), record.hp().member()));
         break;
+    case bbcoop::JournalRecord::kResetMap:
+        world.host.ResetMap(record.reset_map().map());
+        world.map_reset_ms[record.reset_map().map()] = record.at_ms();
+        for (auto& [name, kills] : world.proposed) {
+            for (const u32 on : MapsLoadedWith(record.reset_map().map())) {
+                kills.erase(on);
+            }
+        }
+        break;
     default:
         break;
     }
@@ -394,6 +403,20 @@ void Service::StartLog(PartyWorld& world, bool after_wipe, qint64 now_ms, Result
     Journal(world, std::move(record), now_ms);
     result.log.append(QStringLiteral("party world %1: log %2 starts (%3, no kills stand)")
                           .arg(world.name, Hex(epoch), after_wipe ? "a wipe" : "a new session"));
+    SendEntries(world, entries, now_ms);
+}
+
+void Service::ResetMap(PartyWorld& world, std::uint32_t map, qint64 now_ms) {
+    const std::vector<WorldLogEntry> entries = world.host.ResetMap(map);
+    for (const std::uint32_t on : MapsLoadedWith(map)) {
+        world.map_reset_ms[on] = now_ms;
+        for (auto& [name, kills] : world.proposed) {
+            kills.erase(on);
+        }
+    }
+    bbcoop::JournalRecord record;
+    record.mutable_reset_map()->set_map(map);
+    Journal(world, std::move(record), now_ms);
     SendEntries(world, entries, now_ms);
 }
 
@@ -528,11 +551,30 @@ void Service::OnLifecycle(Member& member, const bbcoop::Lifecycle& lifecycle, qi
             return;
         }
         // Kaniel 2026-10-16: kills stay while anyone is on their map. A member down alone (its
-        // map wiped) while another stands anywhere dies on its own: the party's log stands.
+        // map wiped) while another stands anywhere dies on its own: the party's log stands, but
+        // its map starts over when nobody stands there (Kaniel's play test 2026-10-19: the two
+        // on Cathedral Ward wiped while krolebord was in the Dream, and the Ward came back half
+        // respawned, different for each of them).
         if (world.boards.SomeoneStandsBesides(member.name)) {
-            result.log.append(QStringLiteral("party world %1: %2's wipe is its own (another "
-                                             "member stands): the party's log stands")
-                                  .arg(world.name, who));
+            const std::uint32_t map = lifecycle.map();
+            if (map == 0 || world.boards.SomeoneStandsOn(MapsLoadedWith(map), member.name)) {
+                result.log.append(QStringLiteral("party world %1: %2's wipe is its own (another "
+                                                 "member stands%3): the party's log stands")
+                                      .arg(world.name, who,
+                                           map == 0 ? QString{} : QStringLiteral(" on its map")));
+                return;
+            }
+            if (const auto reset = world.map_reset_ms.find(map);
+                reset != world.map_reset_ms.end() && now_ms - reset->second < WorldLogWipeGraceMs) {
+                result.log.append(QStringLiteral("party world %1: %2's wipe on %3: that map "
+                                                 "already started over")
+                                      .arg(world.name, who, Hex(map)));
+                return;
+            }
+            ResetMap(world, map, now_ms);
+            result.log.append(QStringLiteral("party world %1: %2's wipe on %3 (another member "
+                                             "stands elsewhere): that map starts over")
+                                  .arg(world.name, who, Hex(map)));
             return;
         }
         result.log.append(QStringLiteral("party world %1: %2 wiped").arg(world.name, who));

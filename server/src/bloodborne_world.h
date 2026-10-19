@@ -118,6 +118,8 @@ private:
         quint32 world = 0;
         quint32 logs = 0;
         qint64 last_wipe_ms = 0;
+        // When each map last started over on its own (WorldLogHost::ResetMap), by map.
+        std::map<std::uint32_t, qint64> map_reset_ms;
         quint64 records = 0;      // journal records written (the next one's number)
         quint64 journal_from = 0; // the first record not in the stored world
         qint64 compacted_ms = 0;
@@ -180,6 +182,8 @@ private:
     void OnLifecycle(Member& member, const bbcoop::Lifecycle& lifecycle, qint64 now_ms,
                      Result& result);
     void StartLog(PartyWorld& world, bool after_wipe, qint64 now_ms, Result& result);
+    // `map` (and the maps loaded with it) starts over on its own (WorldLogHost::ResetMap).
+    void ResetMap(PartyWorld& world, std::uint32_t map, qint64 now_ms);
     void Journal(PartyWorld& world, bbcoop::JournalRecord record, qint64 now_ms);
     void Compact(PartyWorld& world, qint64 now_ms);
     void Replay(PartyWorld& world, const bbcoop::JournalRecord& record);

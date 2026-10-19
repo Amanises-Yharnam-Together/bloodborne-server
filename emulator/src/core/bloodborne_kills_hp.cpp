@@ -2255,6 +2255,18 @@ void KeepEnemyDeathsInStep(bool sharing) {
     const bool forget_kills = party_kills_reset.exchange(false);
     TraceKillsInputs(visit, map, forget_kills, characters, others_maps);
     auto changes = forget_kills ? visit_kills.Forget() : std::vector<std::pair<s32, bool>>{};
+    if (const std::vector<u32> reset = TakeLogMapResets(); !reset.empty() && !forget_kills) {
+        const auto back = visit_kills.ForgetOn(reset);
+        changes.insert(changes.end(), back.begin(), back.end());
+        std::string maps;
+        for (const u32 on : reset) {
+            maps += fmt::format("{}{:#x}", maps.empty() ? "" : ", ", on);
+        }
+        LOG_INFO(Debug,
+                 "Bloodborne party: the party's log reset {}: {} of this member's kills "
+                 "there taken back",
+                 maps, back.size());
+    }
     const auto observed = visit_kills.Observe(visit, characters, others_maps, map);
     changes.insert(changes.end(), observed.begin(), observed.end());
     std::erase_if(changes, [](const std::pair<s32, bool>& change) {

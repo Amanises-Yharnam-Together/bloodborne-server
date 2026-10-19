@@ -349,7 +349,14 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     const bool reset = call != DeathReset::None;
     if (call == DeathReset::OwnMap) {
         LOG_INFO(Debug, "Bloodborne party death: another member stood when this member died: this "
-                        "death is no party wipe (the party's kills stay)");
+                        "death is no party wipe (the party's kills stay, but on its own map "
+                        "if nobody stands there)");
+        // Kaniel's play test 2026-10-19: both on the Ward died while krolebord was in the Dream,
+        // and the Ward came back half respawned, different for each of them. shadNet starts the
+        // map over for everyone unless someone stands on it (the Reset comes back in the log).
+        if (const u32 map = PlayingMap(); IsUsablePackedMap(map)) {
+            TellServerMapWipe(map);
+        }
     } else if (call == DeathReset::PartyWipe) {
         OnLifecycle(Lifecycle::Wipe); // kills and enemy HP, see their RegisterLifecycleReset
     }

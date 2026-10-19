@@ -520,16 +520,18 @@ WorldLogKills last_proposed;
 u32 proposals = 0;
 s64 proposed_ms = 0;
 
-void SendLifecycle(bbcoop::Lifecycle::Event event) {
+void SendLifecycle(bbcoop::Lifecycle::Event event, u32 map = 0) {
     if (!server_world_switch) {
         return;
     }
     bbcoop::Envelope envelope;
     envelope.mutable_lifecycle()->set_event(event);
     envelope.mutable_lifecycle()->set_host(!IsPartyGuestRole());
+    envelope.mutable_lifecycle()->set_map(map);
     Queue(std::move(envelope));
-    LOG_INFO(Debug, "Co-op server world: told shadNet this member's {} ({})",
-             bbcoop::Lifecycle::Event_Name(event), IsPartyGuestRole() ? "a guest" : "the host");
+    LOG_INFO(Debug, "Co-op server world: told shadNet this member's {} ({}{})",
+             bbcoop::Lifecycle::Event_Name(event), IsPartyGuestRole() ? "a guest" : "the host",
+             map != 0 ? fmt::format(", its map {:#x} alone", map) : "");
 }
 
 // This member's session events, for the party's world: a wipe starts its log over once for the
@@ -702,6 +704,10 @@ bool ServerWorldOn() {
 
 bool EnemyOwnerOn() {
     return enemy_owner_switch;
+}
+
+void TellServerMapWipe(u32 map) {
+    SendLifecycle(bbcoop::Lifecycle::WIPE, map);
 }
 
 bool TakeServerWorldNews() {
