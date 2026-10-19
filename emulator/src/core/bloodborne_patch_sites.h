@@ -104,6 +104,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"server owns leaves", true},
     {"floor guard", false},
     {"flag block guard", false},
+    {"packet guard", false},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -547,6 +548,9 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // And the "stands on part X" query's (StandsOnPartFloorRead; Kaniel's crash 2026-10-17).
     {"stands on part floor read", "floor guard", CoopSiteKind::Hook, 0x0191B79E,
      "48 8B 8E 88 02 00 00 48 85 C9"},
+    // And a remote player's update's read of the object its physics stands on
+    // (ClearContactObjectThatIsGone; Kaniel's crash 2026-10-19).
+    {"contact object read", "floor guard", CoopSiteKind::Hook, 0x01524B0C, "4C 8B A8 A8 00 00 00"},
 
     // The event flag manager's read of a value over two flag blocks (0x013CFD80), where it reads
     // each block (InstallFlagBlockGuard): a missing block reads as zeros (rig 2026-10-16: a game
@@ -555,6 +559,10 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "41 FF C9 44 89 C9 C1 E9 03"},
     {"flag value second block", "flag block guard", CoopSiteKind::Hook, 0x013CFFEC,
      "45 29 D0 41 8D 58 FF 89 D8"},
+
+    // The game's per-character receive of a remote player's state (InstallMemberPacketGuard): only
+    // the newest copy of a member takes its packets (Kaniel's playtest 2026-10-19).
+    {"member receive", "packet guard", CoopSiteKind::Hook, 0x01A6D390, "55 48 89 E5 41 57"},
 });
 
 // The flag block guard's choice: a block that is there, else the zeros it reads instead.

@@ -697,6 +697,8 @@ std::vector<OtherPlayer> OtherPlayers() {
 void ReconcileMemberPresence() {
     static std::unordered_map<u64, s64> unmatched_since;
     static std::unordered_set<u64> hidden;
+    static std::unordered_map<u64, s64> first_seen;
+    static std::unordered_set<u64> stale_hidden;
     using SetDisabled = void PS4_SYSV_ABI (*)(u64, bool);
     const auto set_disabled =
         reinterpret_cast<SetDisabled>(image_base + SetCharacterDisabledOffset);
@@ -709,6 +711,42 @@ void ReconcileMemberPresence() {
     std::erase_if(hidden, [&](u64 character) { return !present.contains(character); });
     std::erase_if(unmatched_since,
                   [&](const auto& entry) { return !present.contains(entry.first); });
+    std::erase_if(first_seen, [&](const auto& entry) { return !present.contains(entry.first); });
+    std::erase_if(stale_hidden, [&](u64 character) { return !present.contains(character); });
+    // Kaniel's playtest 2026-10-19: two copies of one member take his packets off one queue on two
+    // threads (a double free in everyone's game when he joined back). All but his newest copy
+    // stay hidden (a hidden copy's update, the one that takes them, does not run).
+    const s64 now_ms = SteadyMilliseconds();
+    std::vector<u64> identities;
+    std::vector<s64> seen;
+    for (const OtherPlayer& other : others) {
+        identities.push_back(MemberIdentityOf(other.character));
+        seen.push_back(first_seen.try_emplace(other.character, now_ms).first->second);
+    }
+    const std::vector<bool> stale = StaleDuplicatePlayers(identities, seen);
+    for (size_t i = 0; i < others.size(); ++i) {
+        const u64 character = others[i].character;
+        if (!stale[i] && stale_hidden.erase(character) > 0) {
+            // The other copy is gone: this one is the member's again, shown by the board as any.
+            hidden.insert(character);
+            LOG_INFO(Debug, "Bloodborne presence: player {:#x} is member {:#x}'s only copy again",
+                     ReadValue<u32>(character, 0x08), identities[i]);
+        }
+        if (!stale[i] || stale_hidden.contains(character)) {
+            continue;
+        }
+        if (!IsCharacterDisabled(character)) {
+            set_disabled(character, true);
+            ForgetGroundOfHidden(character);
+        }
+        stale_hidden.insert(character);
+        hidden.erase(character);
+        unmatched_since.erase(character);
+        LOG_WARNING(Debug,
+                    "Bloodborne presence: player {:#x} is a second copy of member {:#x}: hidden "
+                    "(the newest copy stays)",
+                    ReadValue<u32>(character, 0x08), identities[i]);
+    }
     std::vector<MemberVitals> board;
     std::string self;
     bool fresh = false;
@@ -721,7 +759,8 @@ void ReconcileMemberPresence() {
     }
     const u32 map = CurrentPlace().map;
     if (!InPartySession() || !fresh || map == 0) {
-        // Out of a session (or nothing known): everyone as the game has them.
+        // Out of a session (or nothing known): everyone as the game has them (a stale second copy
+        // of a member stays hidden).
         for (const u64 character : hidden) {
             if (IsCharacterDisabled(character)) {
                 set_disabled(character, false);
@@ -736,9 +775,11 @@ void ReconcileMemberPresence() {
         positions.push_back(other.at);
     }
     const std::vector<bool> shown = ShownOtherPlayers(positions, board, self, map);
-    const s64 now_ms = SteadyMilliseconds();
     for (size_t i = 0; i < others.size(); ++i) {
         const u64 character = others[i].character;
+        if (stale_hidden.contains(character)) {
+            continue;
+        }
         if (shown[i]) {
             unmatched_since.erase(character);
             if (hidden.erase(character) > 0 && IsCharacterDisabled(character)) {
@@ -762,17 +803,43 @@ void ReconcileMemberPresence() {
         if (now_ms - since >= PresenceGraceMs && !hidden.contains(character) &&
             !IsCharacterDisabled(character)) {
             set_disabled(character, true);
-            // Kaniel's crash 2026-10-17: hidden, its floor update no longer runs, and the floor of
-            // a map block this game then drops stayed (0x0191B7C0). No floor (as in mid-air) until
-            // it is shown again and finds one.
-            if (HasMemoryAccess(character + 0x288, sizeof(u64), MemoryProt::CpuWrite)) {
-                WriteValue<u64>(character, 0x288, 0);
-            }
+            ForgetGroundOfHidden(character);
             hidden.insert(character);
             LOG_INFO(Debug, "Bloodborne presence: no member on map {:#x} by player {:#x}: hidden",
                      map, ReadValue<u32>(character, 0x08));
         }
     }
+}
+
+// Kaniel's crash 2026-10-17: hidden, its floor update no longer runs, and the floor of a map block
+// this game then drops stayed (0x0191B7C0). No floor (as in mid-air) until it is shown again and
+// finds one. Kaniel's crash 2026-10-19 (0x01524B24): the same for the object its physics holds as
+// the one it stands on: Lisara's hidden copy kept one of the map block his game had just dropped.
+void ForgetGroundOfHidden(u64 character) {
+    if (HasMemoryAccess(character + 0x288, sizeof(u64), MemoryProt::CpuWrite)) {
+        WriteValue<u64>(character, 0x288, 0);
+    }
+    const u64 modules = ReadValue<u64>(character, 0x3B0);
+    const u64 physics = modules >= 0x10000 ? ReadValue<u64>(modules, 0x68) : 0;
+    if (physics >= 0x10000 &&
+        HasMemoryAccess(physics + PhysicsContactObjectOffset, sizeof(u64), MemoryProt::CpuWrite)) {
+        WriteValue<u64>(physics, PhysicsContactObjectOffset, 0);
+    }
+}
+
+// The member a remote player's character stands for: its network state ([[+0x60]+0xD0], what the
+// game's per-character receive 0x01A6D390 looks the member's connection up by) starts with the
+// member's identity. 0 when unknown.
+u64 MemberIdentityOf(u64 character) {
+    const u64 control = ReadValue<u64>(character, 0x60);
+    if (control < 0x10000 || !HasMemoryAccess(control + 0xD0, sizeof(u64), MemoryProt::CpuRead)) {
+        return 0;
+    }
+    const u64 network = ReadValue<u64>(control, 0xD0);
+    if (network < 0x10000 || !HasMemoryAccess(network, sizeof(u64), MemoryProt::CpuRead)) {
+        return 0;
+    }
+    return ReadValue<u64>(network, 0);
 }
 
 bool IsCharacterDisabled(u64 character) {

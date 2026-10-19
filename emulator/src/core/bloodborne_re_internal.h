@@ -482,6 +482,11 @@ void LogNearbyEnemyControl();
 void LogEnemyTargets();
 void LogJoinTasksOnChange();
 void ReconcileMemberPresence();
+// The object a character's physics ([[+0x3B0]+0x68]) holds as the one it stands on (read at
+// 0x01524B0C; null: none).
+constexpr u64 PhysicsContactObjectOffset = 0xA8;
+void ForgetGroundOfHidden(u64 character);
+u64 MemberIdentityOf(u64 character);
 
 void TickPartyTrip();
 void LogJoinTaskChanges();
@@ -572,6 +577,7 @@ void InstallSolidNpcsInParty(u64 base, u64 image_size);
 void InstallFloorGuard(u64 base, u64 image_size);
 // A flag value read over a flag block that is missing reads as zeros (bloodborne_party_rules.cpp).
 void InstallFlagBlockGuard(u64 base, u64 image_size);
+void InstallMemberPacketGuard(u64 base, u64 image_size);
 
 // Diagnostics for shared loot (RE trace only): the map item module (MapItemMan, 0x017D-0x017E)
 // asks "am I a summoned guest" (matching state 6) or "am I the host" (3) at these spots. Counting
