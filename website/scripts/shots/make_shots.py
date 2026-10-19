@@ -1,6 +1,6 @@
 """Turns the rig's PNG captures into the guide's WebP screenshots in public/docs.
 
-Usage: python3 scripts/shots/make_shots.py <folder with the PNGs>
+Usage: python3 scripts/shots/make_shots.py <folder with the PNGs> [more folders...]
 
 Each entry: published name, source PNG, crop box (left, top, right, bottom) or None, and the
 published width (the height follows). Headless captures draw only the overlays on black, so
@@ -10,7 +10,8 @@ the menus are cropped to their panel.
 import sys
 from pathlib import Path
 
-from PIL import Image
+import numpy as np
+from PIL import Image, ImageFilter
 
 OUT = Path(__file__).resolve().parents[2] / "public" / "docs"
 
@@ -20,6 +21,8 @@ COOP_CARD = (270, 222, 1530, 950)
 INSERT = (360, 130, 1560, 950)
 COMPASS = (680, 28, 1290, 90)
 TOOLTIP = (420, 230, 1260, 445)
+# The FPS counter at the top right of visible rig games (1920x1080), painted over.
+FPS_BOX = (1570, 10, 1910, 48)
 
 SHOTS = [
     # setup wizard
@@ -71,13 +74,45 @@ SHOTS = [
     ("compass-behind", "game-compass-behind.png", COMPASS, 1220),
     ("compass-right", "game-compass-right.png", COMPASS, 1220),
     # the Insert menu's tabs
+    # visible games: the HUD
+    ("party-alive", "hud-party-alive.png", GAME, 1440),
+    ("party-downed", "hud-party-downed.png", GAME, 1440),
+    ("you-are-down", "hud-you-are-down.png", GAME, 1440),
+    ("you-are-down-revive", "hud-you-are-down-reviving.png", GAME, 1440),
+    ("give-inventory", "hud-give-1-inventory.png", GAME, 1440),
+    ("give-menu", "hud-give-2-menu.png", GAME, 1440),
+    ("give-quantity", "hud-give-3-quantity.png", GAME, 1440),
+    ("give-offer", "hud-give-4-offer-received.png", GAME, 1440),
+    ("give-received", "hud-give-5-received.png", GAME, 1440),
+    ("wipe-lamp", "hud-wipe-lamp.png", GAME, 1440),
+    ("wipe-bloodstain", "hud-wipe-lamp-bloodstain.png", GAME, 1440),
     *[(f"insert-{t}", f"game-insert-{t}.png", INSERT, 1200) for t in ("display", "upscaler", "effects", "controls", "advanced")],
 ]
 
 
-def main(src: Path) -> None:
+def hide_fps_counter(im: Image.Image) -> Image.Image:
+    """Fills the counter's box from the rows just above and below it, softened."""
+    a = np.asarray(im).astype(np.float32).copy()
+    l, t, r, b = FPS_BOX
+    top, bottom = a[t - 1, l:r].copy(), a[b, l:r].copy()
+    for y in range(t, b):
+        f = (y - t + 1) / (b - t + 1)
+        a[y, l:r] = top * (1 - f) + bottom * f
+    out = Image.fromarray(a.clip(0, 255).astype(np.uint8))
+    patch = out.crop((l - 8, t - 4, r + 8, b + 4)).filter(ImageFilter.GaussianBlur(3))
+    out.paste(patch.crop((8, 4, 8 + r - l, 4 + b - t)), (l, t))
+    return out
+
+
+def main(srcs: list[Path]) -> None:
     for name, file, box, width in SHOTS:
+        src = next((d for d in srcs if (d / file).exists()), None)
+        if src is None:
+            print(f"skipped {name}: no {file}")
+            continue
         im = Image.open(src / file).convert("RGB")
+        if file.startswith("hud-"):
+            im = hide_fps_counter(im)
         if box:
             im = im.crop(box)
         if im.width != width:
@@ -87,4 +122,4 @@ def main(src: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    main([Path(a) for a in sys.argv[1:]])
