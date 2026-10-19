@@ -1239,6 +1239,12 @@ std::optional<u32> AltarChaliceGoods(u32 depth_area) {
     return std::nullopt;
 }
 
+bool SkipsOthersAltarWarp(s32 flag, bool talker_is_another_player) {
+    const bool warp =
+        (flag >= 72100420 && flag <= 72100429) || (flag >= 72100300 && flag <= 72100309);
+    return warp && talker_is_another_player;
+}
+
 bool SharesClearsWithParty(s32 flag) {
     return SharedWithParty(flag) && RuleFor(flag).Has(FlagSharesClears);
 }
