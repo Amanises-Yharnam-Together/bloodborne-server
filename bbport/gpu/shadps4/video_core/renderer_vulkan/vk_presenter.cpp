@@ -1111,6 +1111,9 @@ void Presenter::UpdateHdrOutput() {
         std::printf("Presenter: HDR output %s (setting %d, display HDR %d, HDR10 swapchain %d)\n",
                     wanted ? "on (HDR10)" : "off (SDR)", int(setting), int(display_hdr),
                     int(swapchain.HasHDR()));
+        // Changing HDR recreates the swapchain and waits for the device: no queue submits from
+        // the recording threads meanwhile (deadinside28 PR #211).
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
         swapchain.SetHDR(wanted);
     }
 }
@@ -1230,7 +1233,12 @@ void Presenter::PresentFrame(Frame* frame, bool is_reusing_frame, bool is_game_f
     if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
         !swapchain.IsPresentable() ||
         swapchain.HasFrameGenerationImages() != swapchain.WantsFrameGenerationImages()) {
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        // Recreate waits for the device: recording threads must not submit to its queues
+        // meanwhile (deadinside28 PR #211), as for the recreation after a failed present.
+        {
+            std::scoped_lock submit_lock{Scheduler::submit_mutex};
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
         if (!swapchain.IsPresentable()) {
             free_frame();
             return;
@@ -1238,7 +1246,10 @@ void Presenter::PresentFrame(Frame* frame, bool is_reusing_frame, bool is_game_f
     }
 
     if (!swapchain.AcquireNextImage()) {
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        {
+            std::scoped_lock submit_lock{Scheduler::submit_mutex};
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
         if (!swapchain.AcquireNextImage()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");

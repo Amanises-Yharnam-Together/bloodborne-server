@@ -64,6 +64,9 @@ public:
         return !copying && tracked.contains(image_uid);
     }
     void ResolveAll();
+    /// bbport: drops the proxies of native images the texture cache no longer has (evicted
+    /// textures kept their proxies in VRAM until the size changed; deadinside28 0.6).
+    void CleanupStaleEntries();
     bool debug = false; ///< BB_SCENE_DEBUG frame: print resolves and fills
 private:
     struct Entry {

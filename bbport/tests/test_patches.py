@@ -349,6 +349,26 @@ class ExternalPatchTests(unittest.TestCase):
         self.assertEqual(replaced, [])
 
 
+class GxCommandHeapTests(unittest.TestCase):
+    """Two per-frame GX command heaps of 1 MiB instead of 256 KiB (deadinside28 PR #224): the game
+    writes through NULL when one fills (their #162). On by default; BB_GX_COMMAND_HEAP=0 off."""
+
+    def test_on_unless_the_environment_turns_it_off(self):
+        self.assertTrue(patches.gx_command_heap({}))
+        self.assertTrue(patches.gx_command_heap({'BB_GX_COMMAND_HEAP': '1'}))
+        self.assertFalse(patches.gx_command_heap({'BB_GX_COMMAND_HEAP': '0'}))
+
+    def test_patch_writes_two_heap_sizes(self):
+        meta = [m for m in ET.parse(XML).getroot().iter('Metadata')
+                if m.get('Name') == patches.GX_COMMAND_HEAP and m.get('AppVer') == '01.09']
+        self.assertEqual(len(meta), 1)
+        self.assertEqual(meta[0].get('isEnabled'), 'false')  # only patches.py's switch turns it on
+        writes = compile_patches(XML, [patches.GX_COMMAND_HEAP], '01.09', SEGMENTS)
+        self.assertEqual([(offset + EBOOT_BASE, data) for offset, data in writes],
+                         [(0x02595c0a, (1 << 20).to_bytes(4, 'little')),
+                          (0x02595c47, (1 << 20).to_bytes(4, 'little'))])
+
+
 class SkipNetworkChoiceTests(unittest.TestCase):
     """The title's PLAY ONLINE / PLAY OFFLINE dialog is skipped by default."""
     ADDRESS = 0x01F39030

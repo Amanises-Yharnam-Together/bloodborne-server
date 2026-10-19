@@ -242,6 +242,7 @@ private:
     VideoCore::ImageId scene_color{};
     bool done_this_frame = false;
     u32 preset_file_frames = 0; ///< BB_PRESET_FILE polling
+    u32 proxy_cleanup_frames = 0; ///< bbport: SceneTargets::CleanupStaleEntries pacing
     int applied_output = -1;
     bool snapshot_taken = false;
     bool opaque_valid = false;
