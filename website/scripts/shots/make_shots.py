@@ -1,6 +1,7 @@
 """Turns the rig's PNG captures into the guide's WebP screenshots in public/docs.
 
 Usage: python3 scripts/shots/make_shots.py <folder with the PNGs> [more folders...]
+(the first folder that has a file wins, so list the newest captures first)
 
 Each entry: published name, source PNG, crop box (left, top, right, bottom) or None, and the
 published width (the height follows). Headless captures draw only the overlays on black, so
@@ -90,6 +91,12 @@ SHOTS = [
 ]
 
 
+def has_fps_counter(im: Image.Image) -> bool:
+    """The counter is light text in a box; without it the corner is dark."""
+    a = np.asarray(im.crop(FPS_BOX).convert("L"))
+    return int((a > 150).sum()) > 200
+
+
 def hide_fps_counter(im: Image.Image) -> Image.Image:
     """Fills the counter's box from the rows just above and below it, softened."""
     a = np.asarray(im).astype(np.float32).copy()
@@ -111,7 +118,10 @@ def main(srcs: list[Path]) -> None:
             print(f"skipped {name}: no {file}")
             continue
         im = Image.open(src / file).convert("RGB")
-        if file.startswith("hud-"):
+        if im.width == 3840:
+            # 4K captures: the boxes above are in 1920x1080 pixels
+            im = im.resize((im.width // 2, im.height // 2), Image.LANCZOS)
+        if file.startswith("hud-") and has_fps_counter(im):
             im = hide_fps_counter(im)
         if box:
             im = im.crop(box)
