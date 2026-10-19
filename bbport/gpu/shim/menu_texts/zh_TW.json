@@ -12,9 +12,7 @@
  "HDR10 output: the picture's white sits at the UI brightness, its highlights reach toward the peak brightness.": "HDR10 輸出：畫面的白色位於介面亮度，高光則延伸至峰值亮度。",
  "nits": "尼特",
  "HDR peak brightness": "HDR 峰值亮度",
- "Your display's peak brightness (Windows HDR Calibration or the display's specs).": "顯示器的峰值亮度（Windows HDR 校正或顯示器規格）。",
  "HDR UI brightness": "HDR 介面亮度",
- "Brightness of white in the picture and the interface (paper white). 200 is a good start; lower in a dark room.": "畫面與介面中白色的亮度（紙白）。200 是不錯的起點；暗室中可調低。",
  "HDR scene highlights": "HDR 場景高光",
  "The game's HUD stays at UI brightness, and lamps and flames may get extra brightness from the game's 16-bit scene. Off: the whole SDR picture is stretched, HUD included.": "遊戲 HUD 維持介面亮度，燈光與火焰可藉遊戲的 16 位元場景獲得額外亮度。關閉：整個 SDR 畫面被拉伸，包括 HUD。",
  "HDR highlights": "HDR 高光",
@@ -248,8 +246,6 @@
  "Borderless": "無邊框",
  "HDR10 output (shown when HDR is on for this display in Windows)": "HDR10 輸出（在 Windows 中為此顯示器開啟 HDR 時顯示）",
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "開啟：HUD 維持介面亮度，火焰借助 16 位元場景。關閉：全部拉伸",
- "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)": "尼特：0 400，1-2 600，3-4 800，5 1000，6-7 1500，8-9 2000，10 4000（顯示器峰值）",
- "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400": "白色，尼特：0 80，1-2 100，3-4 150，5 200，6-7 250，8-9 300，10 400",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 無，5 白色達到峰值，10 更多畫面變亮",
  "Frame rate": "幀率",
  "Frame rate limit and DLSS model (bbport)": "幀率上限與 DLSS 模型（bbport）",
@@ -349,5 +345,10 @@
  "Flat": "平面",
  "Toggled with {Cross} + {L3}": "以{Cross} + {L3}切換",
  "The map is open over the game: {Circle} comes back here": "地圖開在遊戲之上：按{Circle}回到這裡",
- "Free camera ({Cross} + {L3})": "自由鏡頭（{Cross} + {L3}）"
+ "Free camera ({Cross} + {L3})": "自由鏡頭（{Cross} + {L3}）",
+ "Auto": "自動",
+ "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "顯示器的峰值亮度。自動：顯示器回報的峰值（Windows HDR 校正會改變它）。",
+ "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "畫面與介面中白色的亮度（紙白）。自動：與桌面一樣亮（Windows 的 SDR 內容亮度）；暗室中可調低。",
+ "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "尼特：0 顯示器本身，1-2 400，3 600，4 800，5-6 1000，7 1500，8-9 2000，10 4000",
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白色，尼特：0 與桌面相同，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480"
 }

@@ -12,9 +12,7 @@
  "HDR10 output: the picture's white sits at the UI brightness, its highlights reach toward the peak brightness.": "HDR10-utgang: bildets hvitt ligger på UI-lysstyrken, høylysene går mot topplysstyrken.",
  "nits": "nits",
  "HDR peak brightness": "HDR-topplysstyrke",
- "Your display's peak brightness (Windows HDR Calibration or the display's specs).": "Skjermens topplysstyrke (Windows HDR-kalibrering eller skjermens spesifikasjoner).",
  "HDR UI brightness": "HDR UI-lysstyrke",
- "Brightness of white in the picture and the interface (paper white). 200 is a good start; lower in a dark room.": "Lysstyrken til hvitt i bildet og grensesnittet (papirhvitt). 200 er en god start; lavere i et mørkt rom.",
  "HDR scene highlights": "HDR-høylys fra scenen",
  "The game's HUD stays at UI brightness, and lamps and flames may get extra brightness from the game's 16-bit scene. Off: the whole SDR picture is stretched, HUD included.": "Spillets HUD blir på UI-lysstyrken, og lamper og flammer kan få ekstra lysstyrke fra spillets 16-bits scene. Av: hele SDR-bildet strekkes, HUD inkludert.",
  "HDR highlights": "HDR-høylys",
@@ -248,8 +246,6 @@
  "Borderless": "Rammeløst",
  "HDR10 output (shown when HDR is on for this display in Windows)": "HDR10-utgang (vises når HDR er på for denne skjermen i Windows)",
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "På: HUD holdes på UI-lysstyrke, flammer forsterkes av 16-bits scenen. Av: alt strekkes",
- "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)": "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (skjermens topp)",
- "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400": "Hvitt, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 ingen, 5 hvitt når toppen, 10 mer av bildet lyses opp",
  "Frame rate": "Bildefrekvens",
  "Frame rate limit and DLSS model (bbport)": "Grense for bildefrekvens og DLSS-modell (bbport)",
@@ -349,5 +345,10 @@
  "Flat": "Flat",
  "Toggled with {Cross} + {L3}": "Slås av/på med {Cross} + {L3}",
  "The map is open over the game: {Circle} comes back here": "Kartet er åpent over spillet: {Circle} kommer tilbake hit",
- "Free camera ({Cross} + {L3})": "Fritt kamera ({Cross} + {L3})"
+ "Free camera ({Cross} + {L3})": "Fritt kamera ({Cross} + {L3})",
+ "Auto": "Auto",
+ "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "Skjermens topplysstyrke. Auto: toppen skjermen oppgir (Windows HDR-kalibrering endrer den).",
+ "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "Lysstyrken til hvitt i bildet og grensesnittet (papirhvitt). Auto: like lyst som skrivebordet (Windows' lysstyrke for SDR-innhold); lavere i et mørkt rom.",
+ "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "Nits: 0 skjermens egen, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "Hvitt, nits: 0 som skrivebordet, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
 }

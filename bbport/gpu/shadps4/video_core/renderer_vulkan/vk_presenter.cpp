@@ -760,8 +760,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     });
     if (hdr_job.valid) {
         const auto& s = BbSettings::Get();
-        const float headroom = float(s.hdr_peak_nits.load(std::memory_order_relaxed)) /
-                               float(std::max(s.hdr_paper_white.load(std::memory_order_relaxed), 1));
+        const float headroom = BbSettings::HdrPeak() / BbSettings::HdrPaperWhite();
         const float highlights = s.hdr_highlights.load(std::memory_order_relaxed);
         draw_scheduler.Record([this, hdr_job, image_view, headroom,
                                highlights](vk::CommandBuffer cmdbuf) {
@@ -1202,8 +1201,8 @@ void Presenter::RecordHdrOutput(vk::CommandBuffer cmdbuf, Frame* frame, vk::Exte
     barrier(to_read);
     const auto& s = BbSettings::Get();
     hdr_pass.Render(cmdbuf, swapchain.ImageView(), extent,
-                    {.paper_white = float(s.hdr_paper_white.load(std::memory_order_relaxed)),
-                     .peak = float(s.hdr_peak_nits.load(std::memory_order_relaxed)),
+                    {.paper_white = BbSettings::HdrPaperWhite(),
+                     .peak = BbSettings::HdrPeak(),
                      .highlights = s.hdr_highlights.load(std::memory_order_relaxed),
                      .use_gain = gain.image ? 1.0f : 0.0f});
     const std::array to_present{transition(swapchain.Image(), Access::eColorAttachmentWrite,

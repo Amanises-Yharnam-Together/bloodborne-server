@@ -12,9 +12,7 @@
  "HDR10 output: the picture's white sits at the UI brightness, its highlights reach toward the peak brightness.": "HDR10出力：映像の白はUI輝度に、ハイライトはピーク輝度に向かって伸びます。",
  "nits": "nit",
  "HDR peak brightness": "HDRピーク輝度",
- "Your display's peak brightness (Windows HDR Calibration or the display's specs).": "ディスプレイのピーク輝度（Windows HDR キャリブレーションまたはディスプレイの仕様）。",
  "HDR UI brightness": "HDR UI輝度",
- "Brightness of white in the picture and the interface (paper white). 200 is a good start; lower in a dark room.": "映像とインターフェースの白の明るさ（ペーパーホワイト）。200が目安、暗い部屋では低めに。",
  "HDR scene highlights": "HDRシーンハイライト",
  "The game's HUD stays at UI brightness, and lamps and flames may get extra brightness from the game's 16-bit scene. Off: the whole SDR picture is stretched, HUD included.": "ゲームのHUDはUI輝度のまま、ランプや炎はゲームの16ビットシーンから更に明るくなることがあります。OFF：HUDを含むSDR映像全体を引き伸ばします。",
  "HDR highlights": "HDRハイライト",
@@ -248,8 +246,6 @@
  "Borderless": "ボーダーレス",
  "HDR10 output (shown when HDR is on for this display in Windows)": "HDR10出力（WindowsでこのディスプレイのHDRがONのとき表示）",
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "ON：HUDはUI輝度のまま、炎は16ビットシーンで強調。OFF：全体を引き伸ばし",
- "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)": "nit：0 400、1-2 600、3-4 800、5 1000、6-7 1500、8-9 2000、10 4000（ディスプレイのピーク）",
- "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400": "白、nit：0 80、1-2 100、3-4 150、5 200、6-7 250、8-9 300、10 400",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 なし、5 白がピークに到達、10 映像の多くが明るくなる",
  "Frame rate": "フレームレート",
  "Frame rate limit and DLSS model (bbport)": "フレームレート上限とDLSSモデル（bbport）",
@@ -349,5 +345,10 @@
  "Flat": "平面",
  "Toggled with {Cross} + {L3}": "{Cross} + {L3}で切り替え",
  "The map is open over the game: {Circle} comes back here": "マップはゲームの上に開いています：{Circle}で戻ります",
- "Free camera ({Cross} + {L3})": "フリーカメラ（{Cross} + {L3}）"
+ "Free camera ({Cross} + {L3})": "フリーカメラ（{Cross} + {L3}）",
+ "Auto": "自動",
+ "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "ディスプレイのピーク輝度。自動：ディスプレイが報告するピーク（Windows HDR キャリブレーションで変わります）。",
+ "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "映像とインターフェースの白の明るさ（ペーパーホワイト）。自動：デスクトップと同じ明るさ（Windows の SDR コンテンツの明るさ）、暗い部屋では低めに。",
+ "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "nit：0 ディスプレイの値，1-2 400，3 600，4 800，5-6 1000，7 1500，8-9 2000，10 4000",
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "白、nit：0 デスクトップと同じ，1 80，2-3 100，4 150，5 200，6 250，7-8 300，9 400，10 480"
 }

@@ -12,9 +12,7 @@
  "HDR10 output: the picture's white sits at the UI brightness, its highlights reach toward the peak brightness.": "HDR10 출력: 화면의 흰색은 UI 밝기에 맞추고, 하이라이트는 최대 밝기까지 올라갑니다.",
  "nits": "니트",
  "HDR peak brightness": "HDR 최대 밝기",
- "Your display's peak brightness (Windows HDR Calibration or the display's specs).": "디스플레이의 최대 밝기(Windows HDR 보정 또는 디스플레이 사양).",
  "HDR UI brightness": "HDR UI 밝기",
- "Brightness of white in the picture and the interface (paper white). 200 is a good start; lower in a dark room.": "화면과 인터페이스의 흰색 밝기(페이퍼 화이트). 200부터 시작하고, 어두운 방에서는 낮추세요.",
  "HDR scene highlights": "HDR 장면 하이라이트",
  "The game's HUD stays at UI brightness, and lamps and flames may get extra brightness from the game's 16-bit scene. Off: the whole SDR picture is stretched, HUD included.": "게임 HUD는 UI 밝기를 유지하고, 등불과 불꽃은 게임의 16비트 장면에서 더 밝아질 수 있습니다. OFF: HUD를 포함한 SDR 화면 전체를 늘립니다.",
  "HDR highlights": "HDR 하이라이트",
@@ -248,8 +246,6 @@
  "Borderless": "테두리 없음",
  "HDR10 output (shown when HDR is on for this display in Windows)": "HDR10 출력(Windows에서 이 디스플레이의 HDR이 켜져 있을 때 표시)",
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "ON: HUD는 UI 밝기 유지, 불꽃은 16비트 장면으로 강조. OFF: 전체를 늘림",
- "Nits: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000 (the display's peak)": "니트: 0 400, 1-2 600, 3-4 800, 5 1000, 6-7 1500, 8-9 2000, 10 4000(디스플레이 최대)",
- "White, nits: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400": "흰색, 니트: 0 80, 1-2 100, 3-4 150, 5 200, 6-7 250, 8-9 300, 10 400",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 없음, 5 흰색이 최대에 도달, 10 화면의 더 많은 부분이 밝아짐",
  "Frame rate": "프레임 레이트",
  "Frame rate limit and DLSS model (bbport)": "프레임 레이트 제한과 DLSS 모델(bbport)",
@@ -349,5 +345,10 @@
  "Flat": "평면",
  "Toggled with {Cross} + {L3}": "{Cross} + {L3}로 전환",
  "The map is open over the game: {Circle} comes back here": "지도가 게임 위에 열려 있습니다: {Circle}로 돌아옵니다",
- "Free camera ({Cross} + {L3})": "자유 카메라({Cross} + {L3})"
+ "Free camera ({Cross} + {L3})": "자유 카메라({Cross} + {L3})",
+ "Auto": "자동",
+ "Your display's peak brightness. Auto: the peak the display reports (Windows HDR Calibration changes it).": "디스플레이의 최대 밝기. 자동: 디스플레이가 알려 주는 최대값(Windows HDR 보정으로 바뀜).",
+ "Brightness of white in the picture and the interface (paper white). Auto: as bright as the desktop (Windows' SDR content brightness); lower in a dark room.": "화면과 인터페이스의 흰색 밝기(페이퍼 화이트). 자동: 바탕 화면과 같은 밝기(Windows의 SDR 콘텐츠 밝기), 어두운 방에서는 낮추세요.",
+ "Nits: 0 the display's own, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000": "니트: 0 디스플레이 값, 1-2 400, 3 600, 4 800, 5-6 1000, 7 1500, 8-9 2000, 10 4000",
+ "White, nits: 0 as the desktop's, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480": "흰색, 니트: 0 바탕 화면과 같게, 1 80, 2-3 100, 4 150, 5 200, 6 250, 7-8 300, 9 400, 10 480"
 }

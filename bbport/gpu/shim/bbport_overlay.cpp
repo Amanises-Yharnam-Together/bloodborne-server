@@ -1517,27 +1517,37 @@ void HdrRows() {
              "пиковой яркости."));
     const bool on = s.hdr;
     static char peak_names[BbSettings::HdrPeakCount][24], white_names[BbSettings::HdrPaperWhiteCount][24];
+    // Auto (the first choice) shows the display's value it takes, when known.
+    const auto name = [](char* text, size_t size, int nits, float display) {
+        if (nits != BbSettings::HdrAuto) {
+            std::snprintf(text, size, "%d %s", nits, T("nits", "нит"));
+        } else if (display > 0.0f) {
+            std::snprintf(text, size, "%s (%.0f)", T("Auto", "Авто"), display);
+        } else {
+            std::snprintf(text, size, "%s", T("Auto", "Авто"));
+        }
+    };
     for (int i = 0; i < BbSettings::HdrPeakCount; ++i) {
-        std::snprintf(peak_names[i], sizeof(peak_names[i]), "%d %s", BbSettings::HdrPeakNits[i],
-                      T("nits", "нит"));
+        name(peak_names[i], sizeof(peak_names[i]), BbSettings::HdrPeakNits[i], s.hdr_display_peak);
     }
     for (int i = 0; i < BbSettings::HdrPaperWhiteCount; ++i) {
-        std::snprintf(white_names[i], sizeof(white_names[i]), "%d %s", BbSettings::HdrPaperWhiteNits[i],
-                      T("nits", "нит"));
+        name(white_names[i], sizeof(white_names[i]), BbSettings::HdrPaperWhiteNits[i], s.hdr_display_white);
     }
     Choice("hdr_peak", T("HDR peak brightness", "Пиковая яркость HDR"),
            BbSettings::HdrPeakIndex(s.hdr_peak_nits), BbSettings::HdrPeakCount,
            [](int i) { return peak_names[i]; }, [](int) { return true; },
-           T("Your display's peak brightness (Windows HDR Calibration or the display's specs).",
-             "Пиковая яркость вашего монитора (калибровка HDR в Windows или характеристики монитора)."),
+           T("Your display's peak brightness. Auto: the peak the display reports (Windows HDR "
+             "Calibration changes it).",
+             "Пиковая яркость вашего монитора. Авто: пик, который сообщает монитор (его меняет "
+             "калибровка HDR в Windows)."),
            on, [&](int i) { Store(s.hdr_peak_nits, BbSettings::HdrPeakNits[i], true); });
     Choice("hdr_paper_white", T("HDR UI brightness", "Яркость интерфейса HDR"),
            BbSettings::HdrPaperWhiteIndex(s.hdr_paper_white), BbSettings::HdrPaperWhiteCount,
            [](int i) { return white_names[i]; }, [](int) { return true; },
-           T("Brightness of white in the picture and the interface (paper white). 200 is a good "
-             "start; lower in a dark room.",
-             "Яркость белого в картинке и интерфейсе (paper white). 200 — хорошее начало; в тёмной "
-             "комнате ниже."),
+           T("Brightness of white in the picture and the interface (paper white). Auto: as bright "
+             "as the desktop (Windows' SDR content brightness); lower in a dark room.",
+             "Яркость белого в картинке и интерфейсе (paper white). Авто: как рабочий стол (яркость "
+             "SDR-содержимого в Windows); в тёмной комнате ниже."),
            on, [&](int i) { Store(s.hdr_paper_white, BbSettings::HdrPaperWhiteNits[i], true); });
     Toggle("hdr_scene", T("HDR scene highlights", "Света HDR из сцены"), s.hdr_scene,
            T("The game's HUD stays at UI brightness, and lamps and flames may get extra brightness "

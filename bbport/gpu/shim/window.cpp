@@ -184,6 +184,21 @@ void WindowSDL::UpdateHdrState() {
     if (hdr != hdr_display.exchange(hdr)) {
         std::printf("Window: the display's HDR is %s\n", hdr ? "on" : "off");
     }
+    // Kaniel 2026-10-19: HDR white and peak on auto follow the display. On Windows SDL reads
+    // Windows' SDR content brightness (in 80-nit units) and the display's peak (as headroom over
+    // that white); elsewhere its white is a fixed 1.0, so the defaults stay.
+    float white = 0.0f, peak = 0.0f;
+#if defined(_WIN32) && defined(SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT)
+    if (hdr) {
+        const SDL_PropertiesID props = SDL_GetWindowProperties(window);
+        white = SDL_GetFloatProperty(props, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 0.0f) * 80.0f;
+        peak = white * SDL_GetFloatProperty(props, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 0.0f);
+    }
+#endif
+    auto& s = BbSettings::Get();
+    if (s.hdr_display_white.exchange(white) != white || s.hdr_display_peak.exchange(peak) != peak) {
+        std::printf("Window: the display's SDR white %.0f nits, peak %.0f nits (0: unknown)\n", white, peak);
+    }
 }
 
 WindowSDL::~WindowSDL() {

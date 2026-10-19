@@ -126,9 +126,9 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "hdr") {
         v.hdr = i != 0;
     } else if (key == "hdr_peak_nits") {
-        v.hdr_peak_nits = std::clamp(i, 100, 10000);
+        v.hdr_peak_nits = value == "auto" || i == HdrAuto ? HdrAuto : std::clamp(i, 100, 10000);
     } else if (key == "hdr_paper_white") {
-        v.hdr_paper_white = std::clamp(i, 50, 1000);
+        v.hdr_paper_white = value == "auto" || i == HdrAuto ? HdrAuto : std::clamp(i, 50, 1000);
     } else if (key == "hdr_highlights") {
         v.hdr_highlights = Clamp(f, 0.0f, 1.0f);
     } else if (key == "hdr_scene") {
@@ -425,23 +425,43 @@ int DlssModelIndex(int preset) {
 
 namespace {
 template <int N>
-int Nearest(const int (&choices)[N], int value) {
-    int best = 0;
-    for (int i = 1; i < N; ++i) {
+int Nearest(const int (&choices)[N], int value, int first = 0) {
+    int best = first;
+    for (int i = first + 1; i < N; ++i) {
         if (std::abs(choices[i] - value) < std::abs(choices[best] - value)) {
             best = i;
         }
     }
     return best;
 }
+
+// Auto is the first choice; a brightness is the nearest of the others.
+template <int N>
+int NearestHdr(const int (&choices)[N], int nits) {
+    return nits == HdrAuto ? 0 : Nearest(choices, nits, 1);
+}
 } // namespace
 
 int HdrPeakIndex(int nits) {
-    return Nearest(HdrPeakNits, nits);
+    return NearestHdr(HdrPeakNits, nits);
 }
 
 int HdrPaperWhiteIndex(int nits) {
-    return Nearest(HdrPaperWhiteNits, nits);
+    return NearestHdr(HdrPaperWhiteNits, nits);
+}
+
+float HdrPaperWhite() {
+    const auto& v = Get();
+    const int picked = v.hdr_paper_white.load(std::memory_order_relaxed);
+    const float display = v.hdr_display_white.load(std::memory_order_relaxed);
+    return picked != HdrAuto ? float(picked) : display > 0.0f ? display : 200.0f;
+}
+
+float HdrPeak() {
+    const auto& v = Get();
+    const int picked = v.hdr_peak_nits.load(std::memory_order_relaxed);
+    const float display = v.hdr_display_peak.load(std::memory_order_relaxed);
+    return std::max(picked != HdrAuto ? float(picked) : display > 0.0f ? display : 1000.0f, HdrPaperWhite());
 }
 
 bool FixedRenderSession() {
@@ -501,8 +521,9 @@ void Save() {
     put("dlss_model", DlssModelNames[DlssModelIndex(v.dlss_model)]);
     put("window_mode", WindowModeNames[std::clamp(v.window_mode.load(), 0, WindowModeCount - 1)]);
     put("hdr", flag(v.hdr));
-    put("hdr_peak_nits", std::to_string(v.hdr_peak_nits.load()));
-    put("hdr_paper_white", std::to_string(v.hdr_paper_white.load()));
+    const auto nits = [](int value) { return value == HdrAuto ? std::string("auto") : std::to_string(value); };
+    put("hdr_peak_nits", nits(v.hdr_peak_nits.load()));
+    put("hdr_paper_white", nits(v.hdr_paper_white.load()));
     put("hdr_highlights", fixed(v.hdr_highlights, 2));
     put("hdr_scene", flag(v.hdr_scene));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));
