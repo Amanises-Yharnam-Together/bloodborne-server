@@ -1201,6 +1201,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     static s32 own_progress = 0;
     static u32 loaded_map = 0;                    // where the load the resume is for put the guest
     static std::optional<LampPosition> loaded_at; // and the spot it stood on then
+    static std::optional<std::chrono::steady_clock::time_point> loaded_since; // its first ready
     static std::chrono::steady_clock::time_point travel_started{};
     static int for_slot = -1;
     if (!IsPartyGuestRole()) {
@@ -1214,6 +1215,7 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         saved = {};
         loaded_map = 0;
         loaded_at.reset();
+        loaded_since.reset();
     }
     const u64 global = GetGlobalState();
     const bool loading = global < 0x10000 || ReadValue<u8>(global, 0x08) != 0;
@@ -1232,12 +1234,18 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         phase = Phase::WaitForLoad;
         loaded_map = 0;
         loaded_at.reset();
+        loaded_since.reset();
         LOG_INFO(Debug, "Bloodborne party: guest sent home; it will resume at its last point");
         TraceLife("sent-home");
     }
     const bool ready = !loading && IsUsablePackedMap(map) && at && character_slot.load() >= 0;
     if (!ready) {
         stable_since.reset();
+        // A load before the resume (a team join's reload): the spot it puts the guest on counts.
+        if (loading && phase == Phase::WaitForLoad && TeamResumeDue()) {
+            loaded_map = 0;
+            loaded_at.reset();
+        }
         return;
     }
     if (!stable_since) {
@@ -1246,6 +1254,9 @@ void ResumeWhereTheGuestLeft(bool in_session) {
     if (phase == Phase::WaitForLoad && loaded_map == 0) {
         loaded_map = map;
         loaded_at = *at;
+        if (!loaded_since) {
+            loaded_since = now;
+        }
     }
     const bool settled = now - *stable_since >= std::chrono::seconds{3};
     switch (phase) {
@@ -1256,6 +1267,13 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         // Kaniel 2026-10-18: a team's load puts the guest beside the team's host (its world may
         // still be loading: its place is waited for a while).
         const bool team_load = TeamResumeDue();
+        const s64 since_load_ms =
+            loaded_since
+                ? std::chrono::duration_cast<std::chrono::milliseconds>(now - *loaded_since).count()
+                : 0;
+        if (WaitsForTeamSession(team_load, in_session, since_load_ms)) {
+            return;
+        }
         std::optional<ResumePoint> host_place;
         if (team_load) {
             std::scoped_lock lock{vitals_mutex};
@@ -1277,7 +1295,8 @@ void ResumeWhereTheGuestLeft(bool in_session) {
         std::ifstream file{GuestResumeFile()};
         const std::string text{std::istreambuf_iterator<char>{file}, {}};
         // Phase 7: the server's point first (a team join puts the guest in a session at once).
-        const auto point = PickResumePoint(in_session, ParseResumePoint(text),
+        // A team load's file is the guest's own from before this session: it counts.
+        const auto point = PickResumePoint(in_session && !team_load, ParseResumePoint(text),
                                            TakeServerResumePoint(), host_place);
         // An unknown count (0) is no other character (see IsOtherCharacter).
         own_progress = in_session ? 0 : CountSetFlags().value_or(0);

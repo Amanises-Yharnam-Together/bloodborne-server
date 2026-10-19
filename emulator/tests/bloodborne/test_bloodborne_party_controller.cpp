@@ -3050,6 +3050,17 @@ TEST(BloodborneGuestResume, ATeamGuestWaitsForItsHostsPlaceAWhile) {
     EXPECT_FALSE(WaitsForHostPlace(false, false, 0)) << "not a team's load";
 }
 
+// Kaniel's play test 2026-10-19: krolebord's team load moved him to his last place, then his join's
+// reload put him back where his save stood. A team load resumes once the guest is in the session
+// (its join's reload done), or falls back after a while without one.
+TEST(BloodborneGuestResume, ATeamGuestResumesOnceItIsInTheSession) {
+    EXPECT_TRUE(WaitsForTeamSession(true, false, 0));
+    EXPECT_TRUE(WaitsForTeamSession(true, false, TeamSessionWaitMs - 1));
+    EXPECT_FALSE(WaitsForTeamSession(true, false, TeamSessionWaitMs)) << "falls back";
+    EXPECT_FALSE(WaitsForTeamSession(true, true, 0)) << "in the session";
+    EXPECT_FALSE(WaitsForTeamSession(false, false, 0)) << "not a team's load";
+}
+
 // Phase 7: the resume moves a guest only while it still stands where its load put it; one that
 // already moved (a player who set off, the rig's own steps) stays (rig party-death 2026-10-15:
 // the resume teleported a guest in the middle of its fall).

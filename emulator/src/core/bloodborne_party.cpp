@@ -1444,6 +1444,10 @@ bool WaitsForHostPlace(bool team_load, bool host_known, s64 waited_ms) {
     return team_load && !host_known && waited_ms < HostPlaceWaitMs;
 }
 
+bool WaitsForTeamSession(bool team_load, bool in_session, s64 waited_ms) {
+    return team_load && !in_session && waited_ms < TeamSessionWaitMs;
+}
+
 std::optional<ResumePoint> HostPlaceOf(std::span<const MemberVitals> board, std::string_view host) {
     if (host.empty()) {
         return std::nullopt;

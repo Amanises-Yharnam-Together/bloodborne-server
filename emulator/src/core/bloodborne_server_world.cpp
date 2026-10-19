@@ -542,6 +542,25 @@ void SendLifecycle(bbcoop::Lifecycle::Event event) {
         member_reset.store(true);
         SendLifecycle(bbcoop::Lifecycle::JOIN);
     });
+// Kaniel's play test 2026-10-19: a guest's join reloads its world, and the reload gives its game
+// its own saved world back in every block its title load had taken the team's in. krolebord's
+// own save had the Cathedral Ward gate closed (2010/2020 off), so the gate the team had opened
+// was shut again. The join's reload takes the team's world again in every block.
+[[maybe_unused]] const bool team_world_join_registered =
+    RegisterLifecycleReset("team world (join)", {Lifecycle::Join}, [] {
+        if (!IsPartyGuestRole()) {
+            return;
+        }
+        std::scoped_lock lock{team_mutex};
+        if (team_host || team_world_blocks.empty()) {
+            return;
+        }
+        LOG_INFO(Debug,
+                 "Co-op team world: joined; the join's reload takes the team's world again in "
+                 "{} blocks",
+                 team_world_blocks.size());
+        team_world_blocks.clear();
+    });
 [[maybe_unused]] const bool leave_registered =
     RegisterLifecycleReset("server world (leave)", {Lifecycle::Leave}, [] {
         member_reset.store(true);
