@@ -24,6 +24,7 @@
 #include "bbport_game_art.h"
 #include "bbport_coop_art.h"
 #include "bbport_key_guide.h"
+#include "bbport_map_3d.h"
 #include "bbport_map_charts.h"
 #include "bbport_pad_rebind.h"
 #include "bbport_party_icons.h"
@@ -1612,14 +1613,21 @@ void DisplayTab() {
              "Сверху или снизу экрана: полоса. Вокруг центра: метки на кольце вокруг середины "
              "экрана, впереди сверху."),
            s.compass, [&](int i) { Store(s.compass_position, i, true); });
-    // Kaniel 2026-10-19 ("make it opt in"): the map's 3D view.
-    Toggle("map_3d", T("3D map", "3D-карта"), s.map_3d,
-           T("L3 on the map shows the place drawn from the game's own models from an angle. Each "
-             "area is drawn once, the first time, in the background, using memory and time; leave it "
-             "off on a low-end PC.",
-             "L3 на карте показывает местность, нарисованную из моделей самой игры под углом. "
-             "Каждая область рисуется один раз при первом показе, в фоне, используя память "
-             "и время; на слабом ПК оставьте выключенным."));
+    // Kaniel 2026-10-19 ("make it opt in", "an opt in option to view rendered in real time"):
+    // the map's 3D view.
+    const char* map_3d_names[] = {T("Off", "Выкл."), T("Prerendered", "Заранее нарисованная"),
+                                  T("Live", "В реальном времени")};
+    Choice("map_3d", T("3D map", "3D-карта"), std::clamp(s.map_3d.load(), 0, BbSettings::Map3dCount - 1),
+           BbSettings::Map3dCount, [&](int i) { return map_3d_names[i]; }, [](int) { return true; },
+           T("L3 on the map shows the place from the game's own models, from an angle. Prerendered: "
+             "each area is drawn once, the first time, in the background. Live: the models are "
+             "drawn on the graphics card as you turn and tilt the view (right stick), using its "
+             "memory. Leave it off on a low-end PC.",
+             "L3 на карте показывает местность из моделей самой игры под углом. Заранее "
+             "нарисованная: каждая область рисуется один раз, при первом показе, в фоне. В "
+             "реальном времени: модели рисуются видеокартой, пока вы поворачиваете и наклоняете "
+             "вид (правый стик), используя её память. На слабом ПК оставьте выключенным."),
+           true, [&](int i) { Store(s.map_3d, i, true); });
     Choice("fps_limit", T("FPS limit", "Лимит FPS"), BbSettings::FpsLimitIndex(s.fps_limit),
            BbSettings::FpsLimitCount,
            [&](int i) {
@@ -4476,9 +4484,13 @@ struct State {
 State state;
 bool three_d_kept = false; // the 3D view stays on the next time the map opens
 bool sides_ready = false;  // the 3D view's pictures of its side are there (else the flat map shows)
-/// The map is shown angled: the 3D view is on and its pictures are drawn.
+bool live_ready = false;   // the live 3D view has the shown area on the GPU
+/// The map is shown angled: the 3D view is on and its pictures (or meshes) are there.
 bool Angled() {
-    return state.three_d && sides_ready;
+    return state.three_d && (sides_ready || live_ready);
+}
+bool Live() {
+    return BbSettings::Get().map_3d == BbSettings::Map3dLive;
 }
 
 /// An area's picture as a texture.
@@ -4729,16 +4741,31 @@ void Refresh() {
     if (!BbSettings::Get().map_3d) {
         state.three_d = false;
     }
+    const bool live = BbSettings::Get().map_3d == BbSettings::Map3dLive;
+    // Kaniel 2026-10-19 ("an opt in option to view rendered in real time"): the live view's meshes
+    // of the areas on screen, made ahead and put on the GPU as they are ready; gone when it is off.
+    if (live) {
+        for (const uint32_t map : order) {
+            if (map != 0 && charts.contains(map) && !BbMap3d::Has(map)) {
+                if (const auto mesh = BbMapCharts::GetMesh(map)) {
+                    const Place p = AtlasOffset(map);
+                    BbMap3d::Upload(map, mesh, p.dx, p.dz);
+                }
+            }
+        }
+    } else {
+        BbMap3d::Clear();
+    }
     // Kaniel 2026-10-19 ("now it shows this state with boxes"): with the 3D map on, the areas on
     // screen are drawn for it ahead, while the flat map is up.
-    if (BbSettings::Get().map_3d) {
+    if (BbSettings::Get().map_3d == BbSettings::Map3dPrerendered) {
         for (const uint32_t map : order) {
             if (map != 0 && charts.contains(map)) {
                 BbMapCharts::Get(map | uint32_t(state.side));
             }
         }
     }
-    if (state.three_d) {
+    if (state.three_d && !live) {
         for (const uint32_t map : order) {
             {
                 const uint32_t key = map | uint32_t(state.side);
@@ -4761,6 +4788,8 @@ void Refresh() {
     for (const auto& [key, side_chart] : sides) {
         sides_ready = sides_ready || (int(key & 7u) == state.side && side_chart.texture != nullptr);
     }
+    // The live view is ready once the area shown is on the GPU.
+    live_ready = live && BbMap3d::Has(state.shown);
 }
 
 const ChartTexture* Shown() {
@@ -5007,7 +5036,19 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
             }
             return !drawn.empty();
         };
-        const bool sides_shown = state.three_d && side_picture(state.side, 1.0f);
+        bool sides_shown = state.three_d && !Live() && side_picture(state.side, 1.0f);
+        if (state.three_d && Live() && live_ready) {
+            // Kaniel 2026-10-19 (live 3D): the models drawn this frame on the GPU, with this camera.
+            ImVec2 uv1(1, 1);
+            const ImTextureRef live_picture = BbMap3d::Request(
+                BbMap3d::Camera{frame.p0.x, frame.p0.y, frame.p1.x, frame.p1.y, state.cx,
+                                std::isnan(state.cy) ? 0.0f : state.cy, state.cz, state.yaw, state.pitch, state.zoom},
+                uv1);
+            if (live_picture.GetTexID() != ImTextureID_Invalid) {
+                draw->AddImage(live_picture, frame.p0, frame.p1, ImVec2(0, 0), uv1);
+                sides_shown = true;
+            }
+        }
         // Kaniel 2026-10-19 ("now it shows this state with boxes"): while the sides are still
         // being drawn, the flat map with a note.
         const bool preparing = state.three_d && !sides_shown;
@@ -5286,11 +5327,23 @@ void MoveView(const Frame& frame) {
     const bool inside = io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x && io.MousePos.y >= frame.p0.y &&
                         io.MousePos.y < frame.p1.y;
     if (state.three_d) {
-        // Kaniel 2026-10-19 ("we need just one side"): the 3D view is seen from the south; the
-        // sticks and drags move it as on the flat map.
-        const BbMapArt::ObliqueView seen = BbMapArt::ViewOf(state.side);
-        state.yaw = seen.yaw;
-        state.pitch = seen.pitch;
+        if (Live()) {
+            // Kaniel 2026-10-19 (live 3D): the right stick (or a right drag) turns and tilts it;
+            // the left stick's cursor and a left drag move it.
+            state.yaw += sx * 1.8f * dt;
+            state.pitch = std::clamp(state.pitch - sy * 0.9f * dt, 0.35f, 1.5707f);
+            if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
+                state.yaw += io.MouseDelta.x * 0.006f;
+                state.pitch = std::clamp(state.pitch + io.MouseDelta.y * 0.004f, 0.35f, 1.5707f);
+            }
+            sx = sy = 0.0f;
+        } else {
+            // Kaniel 2026-10-19 ("we need just one side"): the 3D view is seen from the south;
+            // the sticks and drags move it as on the flat map.
+            const BbMapArt::ObliqueView seen = BbMapArt::ViewOf(state.side);
+            state.yaw = seen.yaw;
+            state.pitch = seen.pitch;
+        }
     }
     sx += (ImGui::IsKeyDown(ImGuiKey_D) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_A) ? 1.0f : 0.0f);
     sy += (ImGui::IsKeyDown(ImGuiKey_S) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_W) ? 1.0f : 0.0f);
@@ -5383,6 +5436,12 @@ void Screen() {
         state = {};
         state.fresh = false;
         state.opened = ImGui::GetTime();
+        // Kaniel 2026-10-19 ("use it as default"): with the 3D map on, the map first opens in 3D.
+        static bool first_opening = true;
+        if (first_opening) {
+            first_opening = false;
+            three_d_kept = BbSettings::Get().map_3d != BbSettings::Map3dOff;
+        }
         state.three_d = three_d_kept;
     }
     // The player's own area once the game thread has read where it stands (a moment after opening).
@@ -5734,6 +5793,7 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
         return;
     }
     initialized = true;
+    BbMap3d::Init(instance); // the map's live 3D view (used only when it is turned on)
     std::printf("Overlay: menu ready (Insert or L3+R3)\n");
 }
 
@@ -6193,6 +6253,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         TextPrompt();
     }
     ImGui::Render();
+    BbMap3d::Draw(cmdbuf); // the map's live 3D picture, which the frame's draw lists show
 
     const vk::RenderingAttachmentInfo attachment{
         .imageView = view,

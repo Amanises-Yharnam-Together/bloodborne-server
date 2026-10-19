@@ -83,6 +83,7 @@ inline constexpr int DlssModelCount = int(sizeof(DlssModels) / sizeof(DlssModels
 /// BB_FULLSCREEN: 1 borderless, 0 windowed). Live.
 enum WindowMode : int { Windowed = 0, Borderless = 1, ExclusiveFullscreen = 2, WindowModeCount };
 inline constexpr const char* WindowModeNames[] = {"windowed", "borderless", "fullscreen"};
+enum Map3d { Map3dOff, Map3dPrerendered, Map3dLive, Map3dCount };
 /// Kaniel 2026-10-17, the teammate compass (bbport.ini compass_position): a strip at the top or
 /// the bottom of the screen, or a ring around its middle.
 enum CompassPosition : int { CompassTop = 0, CompassBottom = 1, CompassReticle = 2, CompassPositionCount };
@@ -113,9 +114,10 @@ struct Values {
     /// The teammate compass (bbport.ini compass, on by default) and where it is (CompassPosition).
     std::atomic<bool> compass{true};
     std::atomic<int> compass_position{CompassTop};
-    /// Kaniel 2026-10-19 ("make it opt in, so low vram cards will not prerender it"): the map
-    /// screen's 3D view (bbport.ini map_3d, off by default): its pictures are drawn only when on.
-    std::atomic<bool> map_3d{false};
+    /// Kaniel 2026-10-19 ("make it opt in, so low vram cards will not prerender it", "an opt in
+    /// option to view rendered in real time 3d map"): the map screen's 3D view (bbport.ini map_3d,
+    /// Map3d*, off by default): prerendered pictures, or the models drawn live on the GPU.
+    std::atomic<int> map_3d{Map3dOff};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.

@@ -1,6 +1,8 @@
 {
+ "Prerendered": "Vooraf getekend",
+ "Live": "Live",
+ "L3 on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "L3 op de kaart toont de plek schuin van boven uit de modellen van het spel. Vooraf getekend: elk gebied wordt één keer getekend, de eerste keer, op de achtergrond. Live: de videokaart tekent de modellen terwijl je het beeld draait en kantelt (rechterstick), met haar geheugen. Laat het uit op een zwakke pc.",
  "3D map": "3D-kaart",
- "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "L3 op de kaart toont de plek schuin van boven, getekend uit de modellen van het spel. Elk gebied wordt de eerste keer eenmaal op de achtergrond getekend, wat geheugen en tijd kost; laat het uit op een zwakke pc.",
  "Turn on the 3D map in the settings (Insert, Display)": "Zet de 3D-kaart aan in de instellingen (Insert, Beeld)",
  "Preparing the 3D view...": "3D-weergave wordt voorbereid...",
  "On": "Aan",

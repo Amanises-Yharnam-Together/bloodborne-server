@@ -1654,6 +1654,185 @@ std::string MapNameOf(std::uint32_t packed_map) {
     return name;
 }
 
+namespace {
+/// A surface's colour at a corner (its first and second texture coordinates, `uv`): the diffuse
+/// texture's at a middling level (an average over a hand's width), the second one mixed in by
+/// its mask, in the baked light. 0xFFRRGGBB.
+std::uint32_t SurfaceColorAt(const Surface& surface, const float* uv) {
+    constexpr int Level = 3;
+    std::uint32_t c = surface.diffuse->Sample(uv[0], uv[1], Level);
+    float rgb[3] = {float((c >> 16) & 0xFF), float((c >> 8) & 0xFF), float(c & 0xFF)};
+    if (surface.diffuse2 && surface.mask) {
+        const float m = float((surface.mask->Sample(uv[0], uv[1], Level) >> 16) & 0xFF) / 255.0f;
+        const std::uint32_t d = surface.diffuse2->Sample(uv[0], uv[1], Level);
+        const float other[3] = {float((d >> 16) & 0xFF), float((d >> 8) & 0xFF), float(d & 0xFF)};
+        for (int k = 0; k < 3; ++k) {
+            rgb[k] += (other[k] - rgb[k]) * m;
+        }
+    }
+    if (surface.light) {
+        const std::uint32_t lit = surface.light->Sample(uv[2], uv[3], 1);
+        const float gain = LightGain();
+        rgb[0] *= float((lit >> 16) & 0xFF) / 255.0f * gain;
+        rgb[1] *= float((lit >> 8) & 0xFF) / 255.0f * gain;
+        rgb[2] *= float(lit & 0xFF) / 255.0f * gain;
+    }
+    return 0xFF000000u | std::uint32_t(std::clamp(rgb[0], 0.0f, 255.0f)) << 16 |
+           std::uint32_t(std::clamp(rgb[1], 0.0f, 255.0f)) << 8 | std::uint32_t(std::clamp(rgb[2], 0.0f, 255.0f));
+}
+} // namespace
+
+std::uint32_t SurfaceColor(const Surface& surface, const float* uv) {
+    return SurfaceColorAt(surface, uv);
+}
+
+std::uint32_t MeshBuilder::Corner(const float* at, std::uint32_t color) {
+    const auto q = [&](float v) { return std::uint64_t(std::int64_t(std::floor(v / cell)) + (1 << 20)) & 0x1FFFFF; };
+    const std::uint64_t key = q(at[0]) | q(at[1]) << 21 | q(at[2]) << 42;
+    auto [it, fresh] = corner_of.try_emplace(key, std::uint32_t(counts.size()));
+    if (fresh) {
+        sums.insert(sums.end(), 6, 0.0);
+        counts.push_back(0);
+    }
+    double* s = sums.data() + std::size_t(it->second) * 6;
+    s[0] += at[0], s[1] += at[1], s[2] += at[2];
+    s[3] += (color >> 16) & 0xFF, s[4] += (color >> 8) & 0xFF, s[5] += color & 0xFF;
+    ++counts[it->second];
+    return it->second;
+}
+
+void MeshBuilder::Add(const float* triangle, const std::uint32_t corner_colors[3]) {
+    const std::uint32_t a = Corner(triangle, corner_colors[0]), b = Corner(triangle + 3, corner_colors[1]),
+                        c = Corner(triangle + 6, corner_colors[2]);
+    if (a == b || b == c || a == c) {
+        return; // folded to a line or a point
+    }
+    std::uint32_t k[3] = {a, b, c};
+    std::sort(k, k + 3);
+    const std::uint64_t key = std::uint64_t(k[0]) * 0x9E3779B97F4A7C15ull ^ std::uint64_t(k[1]) * 0xC2B2AE3D27D4EB4Full ^
+                              std::uint64_t(k[2]);
+    if (!seen.insert(key).second) {
+        return; // the same three corners again (its back, a copy)
+    }
+    tris.insert(tris.end(), {a, b, c});
+}
+
+void MeshBuilder::Merge(const MeshBuilder& other) {
+    // Each of the other's triangles with its corners at their averages, in their colours.
+    for (std::size_t t = 0; t + 3 <= other.tris.size(); t += 3) {
+        float at[9];
+        std::uint32_t colors[3];
+        for (int k = 0; k < 3; ++k) {
+            const std::uint32_t v = other.tris[t + std::size_t(k)];
+            const double* s = other.sums.data() + std::size_t(v) * 6;
+            const double n = std::max(1u, other.counts[v]);
+            for (int d = 0; d < 3; ++d) {
+                at[k * 3 + d] = float(s[d] / n);
+            }
+            colors[k] = 0xFF000000u | std::uint32_t(s[3] / n) << 16 | std::uint32_t(s[4] / n) << 8 | std::uint32_t(s[5] / n);
+        }
+        Add(at, colors);
+    }
+}
+
+AreaMesh MeshBuilder::Finish() const {
+    AreaMesh mesh;
+    mesh.positions.reserve(counts.size() * 3);
+    mesh.colors.reserve(counts.size());
+    for (std::size_t v = 0; v < counts.size(); ++v) {
+        const double* s = sums.data() + v * 6;
+        const double n = std::max(1u, counts[v]);
+        mesh.positions.insert(mesh.positions.end(), {float(s[0] / n), float(s[1] / n), float(s[2] / n)});
+        // RGBA bytes in memory: R first.
+        mesh.colors.push_back(0xFF000000u | std::uint32_t(s[5] / n) << 16 | std::uint32_t(s[4] / n) << 8 |
+                              std::uint32_t(s[3] / n));
+    }
+    mesh.indices = tris;
+    return mesh;
+}
+
+std::vector<std::uint8_t> SaveMesh(const AreaMesh& mesh) {
+    std::vector<std::uint8_t> raw;
+    const auto put32 = [&](std::uint32_t v) {
+        const auto* b = reinterpret_cast<const std::uint8_t*>(&v);
+        raw.insert(raw.end(), b, b + 4);
+    };
+    put32(std::uint32_t(mesh.colors.size()));
+    put32(std::uint32_t(mesh.indices.size()));
+    const auto* p = reinterpret_cast<const std::uint8_t*>(mesh.positions.data());
+    raw.insert(raw.end(), p, p + mesh.positions.size() * 4);
+    const auto* c = reinterpret_cast<const std::uint8_t*>(mesh.colors.data());
+    raw.insert(raw.end(), c, c + mesh.colors.size() * 4);
+    const auto* i = reinterpret_cast<const std::uint8_t*>(mesh.indices.data());
+    raw.insert(raw.end(), i, i + mesh.indices.size() * 4);
+    mz_ulong size = mz_compressBound(mz_ulong(raw.size()));
+    std::vector<std::uint8_t> file(16 + size);
+    std::memcpy(file.data(), "BBMESH1\0", 8);
+    const auto raw_size = std::uint32_t(raw.size());
+    std::memcpy(file.data() + 8, &raw_size, 4);
+    if (mz_compress2(file.data() + 16, &size, raw.data(), mz_ulong(raw.size()), 6) != MZ_OK) {
+        return {};
+    }
+    const auto stored = std::uint32_t(size);
+    std::memcpy(file.data() + 12, &stored, 4);
+    file.resize(16 + size);
+    return file;
+}
+
+std::optional<AreaMesh> LoadMesh(std::span<const std::uint8_t> file) {
+    if (file.size() < 16 || std::memcmp(file.data(), "BBMESH1\0", 8) != 0) {
+        return std::nullopt;
+    }
+    std::uint32_t raw_size = 0, stored = 0;
+    std::memcpy(&raw_size, file.data() + 8, 4);
+    std::memcpy(&stored, file.data() + 12, 4);
+    if (stored > file.size() - 16 || raw_size < 8 || raw_size > (1u << 31)) {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> raw(raw_size);
+    mz_ulong size = raw_size;
+    if (mz_uncompress(raw.data(), &size, file.data() + 16, stored) != MZ_OK || size != raw_size) {
+        return std::nullopt;
+    }
+    std::uint32_t vertices = 0, indices = 0;
+    std::memcpy(&vertices, raw.data(), 4);
+    std::memcpy(&indices, raw.data() + 4, 4);
+    if (8 + std::uint64_t(vertices) * 16 + std::uint64_t(indices) * 4 != raw_size) {
+        return std::nullopt;
+    }
+    AreaMesh mesh;
+    mesh.positions.resize(std::size_t(vertices) * 3);
+    mesh.colors.resize(vertices);
+    mesh.indices.resize(indices);
+    std::memcpy(mesh.positions.data(), raw.data() + 8, std::size_t(vertices) * 12);
+    std::memcpy(mesh.colors.data(), raw.data() + 8 + std::size_t(vertices) * 12, std::size_t(vertices) * 4);
+    std::memcpy(mesh.indices.data(), raw.data() + 8 + std::size_t(vertices) * 16, std::size_t(indices) * 4);
+    for (const std::uint32_t i : mesh.indices) {
+        if (i >= vertices) {
+            return std::nullopt;
+        }
+    }
+    return mesh;
+}
+
+std::optional<AreaMesh> MeshOf(std::uint32_t packed_map, const ReadFile& read, int threads, const ReadRange& read_range,
+                               float cell) {
+    threads = std::clamp(threads, 1, 16);
+    std::vector<MeshBuilder> parts(static_cast<std::size_t>(threads), MeshBuilder(cell));
+    const std::array<std::uint32_t, 1> one{packed_map};
+    // A canvas too small to matter: the models go to the meshes instead.
+    if (!ChartAreas(one, read, 0.01f, 64, threads, read_range, true, 0, &parts)) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 1; i < parts.size(); ++i) {
+        parts[0].Merge(parts[i]);
+    }
+    if (parts[0].Triangles() == 0) {
+        return std::nullopt;
+    }
+    return parts[0].Finish();
+}
+
 std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm, int max_side, int threads,
                                const ReadRange& read_range, bool textured, int view) {
     const std::array<std::uint32_t, 1> one{packed_map};
@@ -1915,7 +2094,8 @@ std::vector<std::string> ArchivesOf(const std::string& map_name, const ReadFile&
 } // namespace
 
 std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, const ReadFile& read, float ppm,
-                                int max_side, int threads, const ReadRange& read_range, bool textured, int view) {
+                                int max_side, int threads, const ReadRange& read_range, bool textured, int view,
+                                std::vector<MeshBuilder>* meshes) {
     TextureColors textures(read, read_range);
     const auto inflate = [](std::vector<std::uint8_t> file) {
         if (file.size() >= 4 && std::memcmp(file.data(), "DCX\0", 4) == 0) {
@@ -2097,6 +2277,22 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
                 Place(*piece, model, it.source->area, world, model_colors, &world_colors, model_uvs,
                       textured ? &world_uvs : nullptr);
                 turn(world);
+                if (meshes != nullptr) {
+                    // The live 3D map's mesh: each corner in its surface's colour there.
+                    MeshBuilder& mesh = (*meshes)[std::size_t(part)];
+                    for (std::size_t t = 0; t + 9 <= world.size(); t += 9) {
+                        std::uint32_t corner[3];
+                        const std::uint32_t tint = t / 9 < world_colors.size() ? world_colors[t / 9] : 0u;
+                        const auto surface = IsTextured(tint) ? textures.SurfaceAt(tint & 0xFFFFFFu) : nullptr;
+                        for (int k = 0; k < 3; ++k) {
+                            const float* uv = t / 9 * 12 + 12 <= world_uvs.size() ? world_uvs.data() + t / 9 * 12 + k * 4
+                                                                                  : nullptr;
+                            corner[k] = surface && uv ? SurfaceColor(*surface, uv) : (tint != 0 ? tint : 0xFF808080u);
+                        }
+                        mesh.Add(world.data() + t, corner);
+                    }
+                    continue;
+                }
                 canvases[std::size_t(part)].Add(world, world_colors, world_uvs);
             }
         }
