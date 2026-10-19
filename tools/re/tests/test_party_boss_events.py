@@ -269,6 +269,39 @@ class GuestsEnterChaliceDungeons(unittest.TestCase):
         self.assertEqual(count, 1)
 
 
+class NoFogWallsInChaliceDungeons(unittest.TestCase):
+    """Kaniel 2026-10-19: a fog wall stood at the start of a chalice dungeon in a party. The chalice
+    maps' event 12907600 (m29, started per block with its wall object and fog) is the common
+    multiplayer wall event 7600 again: walls off, then on while the multiplayer state is 3 or 2.
+    The emulator turns 7600's walls off by a list of the main maps' objects; a chalice dungeon's
+    come from its blocks, so the event's "multiplayer" check never matches instead."""
+
+    CHALICE = 'm29.emevd.dcx'
+    WALL = [(2000, 2, struct.pack('<i', 0)),
+            (2005, 3, struct.pack('<ii', 0, 0)),
+            (2006, 1, struct.pack('<ii', 0, 1)),
+            (3, 6, struct.pack('<bBxx', -1, 3)),
+            (3, 6, struct.pack('<bBxx', -1, 2)),
+            (0, 0, struct.pack('<bBBx', 0, 1, 0xFF)),
+            (2005, 3, struct.pack('<ii', 0, 1)),
+            (2006, 2, struct.pack('<i', 0)),
+            (3, 6, struct.pack('<bBxx', -2, 3)),
+            (3, 6, struct.pack('<bBxx', -2, 2)),
+            (0, 0, struct.pack('<bBBx', 0, 0, 0xFE)),
+            (1000, 4, struct.pack('<i', 1))]
+
+    def test_the_wall_never_shows_in_a_party(self):
+        patched, count = tool.patch_chalice_walls(build_emevd({12907600: self.WALL}))
+        events = read_events(patched)[12907600]
+        self.assertEqual([events[3][2][1], events[4][2][1]], [tool.NEVER, tool.NEVER])
+        self.assertEqual([events[8][2][1], events[9][2][1]], [3, 2], "the hide side stays")
+        self.assertEqual(count, 2)
+
+    def test_other_events_keep_their_checks(self):
+        original = build_emevd({12907601: self.WALL})
+        self.assertEqual(tool.patch_chalice_walls(original), (original, 0))
+
+
 class GuestsSeeTheNightFall(unittest.TestCase):
     """Kaniel's playtest 2026-10-17: after Vicar Amelia the host examined the altar's skull, saw
     the cutscene and the night fell; the guests saw neither. The skull's event (m24_00 12401803:
