@@ -2694,11 +2694,12 @@ SCENARIOS = {
         "about": "the map screen's one picture of every world and its 3D view: L3 turns the "
                  "landscape on, Triangle shows all of it, L3 again the flat map; pictures of each",
         "roles": {
-            "host": [START, "godmode", "wait 25", "keys map", "wait 15", "shot map-flat", "keys l3", "wait 4",
+            "host": [START, "godmode", "wait 25", "keys map", "wait 15", "shot map-flat", "keys l3", "wait 25",
                      "shot map-3d", "keys triangle", "wait 15", "shot map-3d-all", "keys l3", "wait 4",
                      "shot map-flat-all", "keys circle", "wait 2"],
         },
-        "console_expect": {"host": [r"Map: 3D view", r"Map: flat view"]},
+        "console_expect": {"host": [r"Map: 3D view", r"Map: flat view",
+                                    r"Map: (drew|read) m24_01_00_00 view 1"]},
         "timeout": 240,
     },
     # Kaniel 2026-10-17: the map screen in a session: the other hunter at its spot on the

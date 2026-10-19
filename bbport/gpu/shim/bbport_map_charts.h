@@ -14,7 +14,9 @@
 namespace BbMapCharts {
 
 /// The area's picture once it is ready; nothing while it is still being drawn (asking starts it)
-/// or when it can't be (Failed: no such map in the game's files).
+/// or when it can't be (Failed: no such map in the game's files). Kaniel 2026-10-19 ("can we
+/// prerender it?"): `packed_map | view`, view 1 to 4, asks for the 3D view's picture from that
+/// side (BbMapArt::ViewOf).
 std::shared_ptr<const BbMapArt::Chart> Get(std::uint32_t packed_map);
 bool Failed(std::uint32_t packed_map);
 

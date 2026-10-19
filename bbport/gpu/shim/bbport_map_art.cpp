@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -1304,7 +1305,7 @@ Chart Canvas::Finish() const {
             const float grain = float((hash >> 24) & 0xFF) / 255.0f * 3.0f - 1.5f;
             std::uint8_t* px = chart.rgba.data() + at * 4;
             float lit[3];
-            colour(h, smooth_light[at], smooth_color[at], in_shadow(x, y, h) ? 0.72f : 1.0f, lit);
+            colour(h, smooth_light[at], smooth_color[at], !oblique && in_shadow(x, y, h) ? 0.72f : 1.0f, lit);
             if (!glow.empty()) {
                 const float* g = glow.data() + at * 3;
                 for (int c = 0; c < 3; ++c) {
@@ -1636,9 +1637,20 @@ std::string MapNameOf(std::uint32_t packed_map) {
 }
 
 std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, float ppm, int max_side, int threads,
-                               const ReadRange& read_range, bool textured) {
+                               const ReadRange& read_range, bool textured, int view) {
     const std::array<std::uint32_t, 1> one{packed_map};
-    return ChartAreas(one, read, ppm, max_side, threads, read_range, textured);
+    return ChartAreas(one, read, ppm, max_side, threads, read_range, textured, view);
+}
+
+ObliqueView ViewOf(int view) {
+    return ObliqueView{float(std::clamp(view, 1, 4) - 1) * 1.5707963f, 0.87f};
+}
+
+std::array<float, 3> ToView(const ObliqueView& view, float x, float y, float z) {
+    const float c = std::cos(view.yaw), s = std::sin(view.yaw);
+    const float u = x * c - z * s, v = x * s + z * c;
+    const float sp = std::sin(view.pitch), cp = std::cos(view.pitch);
+    return {u, v * sp + y * cp, -v * cp + y * sp};
 }
 
 namespace {
@@ -1853,7 +1865,7 @@ std::vector<std::string> ArchivesOf(const std::string& map_name, const ReadFile&
 } // namespace
 
 std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, const ReadFile& read, float ppm,
-                                int max_side, int threads, const ReadRange& read_range, bool textured) {
+                                int max_side, int threads, const ReadRange& read_range, bool textured, int view) {
     TextureColors textures(read, read_range);
     const auto inflate = [](std::vector<std::uint8_t> file) {
         if (file.size() >= 4 && std::memcmp(file.data(), "DCX\0", 4) == 0) {
@@ -1905,7 +1917,40 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
         }
     }
     threads = std::clamp(threads, 1, 16);
-    std::vector<Canvas> canvases(std::size_t(threads), Canvas(*all, ppm, max_side));
+    // An oblique picture: every triangle turned into the view's frame (x: u, z: w, y: nearness),
+    // the canvas round the play area's box seen that way.
+    const std::optional<ObliqueView> oblique = view > 0 ? std::optional<ObliqueView>(ViewOf(view)) : std::nullopt;
+    const auto turn = [&](std::vector<float>& triangles) {
+        if (!oblique) {
+            return;
+        }
+        for (std::size_t i = 0; i + 3 <= triangles.size(); i += 3) {
+            const auto t = ToView(*oblique, triangles[i], triangles[i + 1], triangles[i + 2]);
+            triangles[i] = t[0], triangles[i + 1] = t[2], triangles[i + 2] = t[1];
+        }
+    };
+    PlayArea canvas_area = *all;
+    if (oblique) {
+        float low = all->ceiling;
+        for (const Source& source : sources) {
+            for (const Vec3& spot : source.studio.spots) {
+                low = std::min(low, spot[1]);
+            }
+        }
+        low -= 40.0f;
+        canvas_area = PlayArea{FLT_MAX, -FLT_MAX, FLT_MAX, -FLT_MAX, FLT_MAX};
+        for (int k = 0; k < 8; ++k) {
+            const auto t = ToView(*oblique, k & 1 ? all->x1 : all->x0, k & 4 ? all->ceiling : low, k & 2 ? all->z1 : all->z0);
+            canvas_area.x0 = std::min(canvas_area.x0, t[0]), canvas_area.x1 = std::max(canvas_area.x1, t[0]);
+            canvas_area.z0 = std::min(canvas_area.z0, t[1]), canvas_area.z1 = std::max(canvas_area.z1, t[1]);
+        }
+    }
+    std::vector<Canvas> canvases(std::size_t(threads), Canvas(canvas_area, ppm, max_side));
+    if (oblique) {
+        for (Canvas& canvas : canvases) {
+            canvas.SetOblique();
+        }
+    }
     // Kaniel 2026-10-18: the collision meshes' floors: where one can walk (what lies far from it
     // goes) and where each place the game names lies (its label).
     std::map<std::int32_t, std::array<double, 3>> places; // name id -> area-weighted x, z, area
@@ -1928,7 +1973,9 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
             }
             std::vector<float> world;
             Place(collision.piece, mesh->second, PlayArea{-1e9f, 1e9f, -1e9f, 1e9f, 1e9f}, world);
-            canvases[0].AddWalkable(world);
+            std::vector<float> seen = world;
+            turn(seen);
+            canvases[0].AddWalkable(seen);
             // Area names (ids ending in 0) are the title already.
             if (collision.place_name > 0 && collision.place_name % 10 != 0) {
                 auto& place = places[collision.place_name];
@@ -1950,7 +1997,12 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
         for (const PointLight& light : ReadLights(btl)) {
             if (light.x >= source.area.x0 && light.x <= source.area.x1 && light.z >= source.area.z0 &&
                 light.z <= source.area.z1) {
-                canvases[0].AddLight(light);
+                PointLight placed = light;
+                if (oblique) {
+                    const auto t = ToView(*oblique, light.x, light.y, light.z);
+                    placed.x = t[0], placed.y = t[2], placed.z = t[1];
+                }
+                canvases[0].AddLight(placed);
             }
         }
     }
@@ -1994,6 +2046,7 @@ std::optional<Chart> ChartAreas(std::span<const std::uint32_t> packed_maps, cons
                 world_uvs.clear();
                 Place(*piece, model, it.source->area, world, model_colors, &world_colors, model_uvs,
                       textured ? &world_uvs : nullptr);
+                turn(world);
                 canvases[std::size_t(part)].Add(world, world_colors, world_uvs);
             }
         }

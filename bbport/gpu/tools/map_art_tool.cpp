@@ -41,7 +41,8 @@ int main(int argc, char** argv) {
             bytes.resize(std::size_t(file.gcount()));
             return bytes;
         },
-        std::getenv("BB_MAP_TEXTURED") != nullptr); // the game's own textures
+        std::getenv("BB_MAP_TEXTURED") != nullptr, // the game's own textures
+        std::getenv("BB_MAP_VIEW") ? std::atoi(std::getenv("BB_MAP_VIEW")) : 0); // an oblique view, 1 to 4
     if (!chart) {
         std::fprintf(stderr, "no map for %08x\n", packed);
         return 1;
