@@ -30,7 +30,6 @@ Every flag not in the table is **Host, carried home** (quest steps, NPCs, the Dr
 | 4000-4999 | Session | | death and multiplayer bookkeeping (4000 a boss fight on, 4047 a player on the way out) |
 | 6630-6633, 6640-6649 | Per player | carried home; follow the player's own items | "holds this workshop tool / hunter badge" (`HeldItemFlags`, set by the Dream's 12100450): the badges' bosses, NPC gifts and map objects read them. As the host's (a team world wrote them into every save) a guest never got its own Sword Hunter Badge from the Cleric Beast (Kaniel 2026-10-18) |
 | 9180-9199 | Session | | the bell's bookkeeping (common events 9181-9198); carried home it gave Insight again |
-| 9020-9026 | Per player | | the Dream's current ritual altar (set by its warp event 12107100): the altar each player used |
 | 9300-9307, 9336, 9338-9344, 9346-9348 | Per player | carried home | a boss's "found" flag: each player gets the Insight for finding a boss (`EncounterInsights`) |
 | 9401 | Host | carried home; a guest out in the world sets it itself once its own character has been to the Dream | Central Yharnam reached: the Dream's first visit and its shop (set early, it showed the clinic's lamp and kept a first death from waking in the Dream) |
 | 9403 | Host | carried home; a guest out in the world sets it itself once the session's world has 12410900 | the workshop's doors open (only set for a live player) |
@@ -43,7 +42,6 @@ Every flag not in the table is **Host, carried home** (quest steps, NPCs, the Dr
 | 12000000-13999999 (the rest) | Host | carried home, host's map value | the maps' flags: switches, bosses, enemies |
 | 50000000-52899999, 53000000-53999999 | Host | the guest's own pickup list | map item pickups (kept in their own file, not carried with the rest; never in a team's world: each character keeps its own, as it keeps the items) |
 | 52900000-52999999 | Host | carried home | chalice dungeon item flags: not pickups |
-| 72100300-72100309, 72100420-72100429 | Per player | | a chalice layer to warp to and a ritual altar's "warp to the layer": requests; shared, one player's step into a dungeon took everyone in the Dream along (2026-10-19) |
 | 72101000-72101099 | Per player | carried home | the pick in the Dream messengers' talk |
 | 72102000-72103999 | Session | headstone trip | a Dream headstone's "travel to <lamp>": a request, not progress |
 | 7MMM01LL, map codes 211-399 | Session | lamp trip | a lamp's "travel to the Hunter's Dream": a request, not progress |
