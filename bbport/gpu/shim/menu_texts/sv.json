@@ -1,4 +1,8 @@
 {
+ "3D map": "3D-karta",
+ "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "L3 på kartan visar platsen snett ovanifrån, ritad från spelets egna modeller. Varje område ritas en gång, första gången, i bakgrunden, vilket tar minne och tid; låt den vara av på en svag dator.",
+ "Turn on the 3D map in the settings (Insert, Display)": "Slå på 3D-kartan i inställningarna (Insert, Skärm)",
+ "Preparing the 3D view...": "Förbereder 3D-vyn...",
  "On": "På",
  "Off": "Av",
  "HDR: switch HDR on for this display in Windows to get the HDR options here.": "HDR: slå på HDR för den här skärmen i Windows för att få HDR-alternativen här.",

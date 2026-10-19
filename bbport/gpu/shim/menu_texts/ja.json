@@ -1,4 +1,8 @@
 {
+ "3D map": "3Dマップ",
+ "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "マップでL3を押すと、ゲームのモデルから描いた場所を斜めから表示します。各エリアは初回に一度だけバックグラウンドで描かれ、メモリと時間を使います。低スペックのPCではオフのままにしてください。",
+ "Turn on the 3D map in the settings (Insert, Display)": "設定で3Dマップをオンにしてください（Insert、表示）",
+ "Preparing the 3D view...": "3Dビューを準備中...",
  "On": "ON",
  "Off": "OFF",
  "HDR: switch HDR on for this display in Windows to get the HDR options here.": "HDR：WindowsでこのディスプレイのHDRをONにすると、ここにHDR設定が表示されます。",

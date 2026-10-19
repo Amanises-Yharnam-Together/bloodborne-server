@@ -113,6 +113,9 @@ struct Values {
     /// The teammate compass (bbport.ini compass, on by default) and where it is (CompassPosition).
     std::atomic<bool> compass{true};
     std::atomic<int> compass_position{CompassTop};
+    /// Kaniel 2026-10-19 ("make it opt in, so low vram cards will not prerender it"): the map
+    /// screen's 3D view (bbport.ini map_3d, off by default): its pictures are drawn only when on.
+    std::atomic<bool> map_3d{false};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.

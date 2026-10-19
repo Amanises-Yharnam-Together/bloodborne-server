@@ -260,8 +260,6 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_M: return ImGuiKey_M;
     case SDLK_F: return ImGuiKey_F;
     case SDLK_V: return ImGuiKey_V;
-    case SDLK_Z: return ImGuiKey_Z;
-    case SDLK_X: return ImGuiKey_X;
     case SDLK_EQUALS: return ImGuiKey_Equal;
     case SDLK_MINUS: return ImGuiKey_Minus;
     default: return ImGuiKey_None;
@@ -1614,6 +1612,14 @@ void DisplayTab() {
              "Сверху или снизу экрана: полоса. Вокруг центра: метки на кольце вокруг середины "
              "экрана, впереди сверху."),
            s.compass, [&](int i) { Store(s.compass_position, i, true); });
+    // Kaniel 2026-10-19 ("make it opt in"): the map's 3D view.
+    Toggle("map_3d", T("3D map", "3D-карта"), s.map_3d,
+           T("L3 on the map shows the place drawn from the game's own models from an angle. Each "
+             "area is drawn once, the first time, in the background, using memory and time; leave it "
+             "off on a low-end PC.",
+             "L3 на карте показывает местность, нарисованную из моделей самой игры под углом. "
+             "Каждая область рисуется один раз при первом показе, в фоне, используя память "
+             "и время; на слабом ПК оставьте выключенным."));
     Choice("fps_limit", T("FPS limit", "Лимит FPS"), BbSettings::FpsLimitIndex(s.fps_limit),
            BbSettings::FpsLimitCount,
            [&](int i) {
@@ -4463,13 +4469,17 @@ struct State {
     // (pi/2 straight down), round the height `cy` of the middle.
     bool three_d = false;
     float yaw = 0.0f, pitch = 0.87f, cy = NAN;
-    // Kaniel 2026-10-19 ("can we prerender it?"): the side the 3D view is seen from
-    // (BbMapArt::ViewOf, 1 to 4), and the one it is turning from (its picture fades out).
-    int side = 1, turning_from = 0;
-    double turned_at = 0;
+    // Kaniel 2026-10-19 ("can we prerender it?", "we need just one side"): the side the 3D view
+    // is seen from (BbMapArt::ViewOf): from the south, looking north.
+    int side = 1;
 };
 State state;
 bool three_d_kept = false; // the 3D view stays on the next time the map opens
+bool sides_ready = false;  // the 3D view's pictures of its side are there (else the flat map shows)
+/// The map is shown angled: the 3D view is on and its pictures are drawn.
+bool Angled() {
+    return state.three_d && sides_ready;
+}
 
 /// An area's picture as a texture.
 struct ChartTexture {
@@ -4705,8 +4715,7 @@ void Refresh() {
     // the others go.
     for (auto it = sides.begin(); it != sides.end();) {
         const int side = int(it->first & 7u);
-        const bool wanted = state.three_d && charts.contains(it->first & ~7u) &&
-                            (side == state.side || side == state.turning_from);
+        const bool wanted = state.three_d && charts.contains(it->first & ~7u) && side == state.side;
         if (!wanted) {
             if (it->second.texture != nullptr) {
                 it->second.texture->WantDestroyNextFrame = true;
@@ -4717,11 +4726,23 @@ void Refresh() {
             ++it;
         }
     }
+    if (!BbSettings::Get().map_3d) {
+        state.three_d = false;
+    }
+    // Kaniel 2026-10-19 ("now it shows this state with boxes"): with the 3D map on, the areas on
+    // screen are drawn for it ahead, while the flat map is up.
+    if (BbSettings::Get().map_3d) {
+        for (const uint32_t map : order) {
+            if (map != 0 && charts.contains(map)) {
+                BbMapCharts::Get(map | uint32_t(state.side));
+            }
+        }
+    }
     if (state.three_d) {
         for (const uint32_t map : order) {
-            for (const int side : {state.side, state.turning_from}) {
-                const uint32_t key = map | uint32_t(side);
-                if (map == 0 || side <= 0 || !charts.contains(map) || sides.contains(key)) {
+            {
+                const uint32_t key = map | uint32_t(state.side);
+                if (map == 0 || !charts.contains(map) || sides.contains(key)) {
                     continue;
                 }
                 auto chart = BbMapCharts::Get(key);
@@ -4735,6 +4756,10 @@ void Refresh() {
                 ImGui::RegisterUserTexture(slot.texture);
             }
         }
+    }
+    sides_ready = false;
+    for (const auto& [key, side_chart] : sides) {
+        sides_ready = sides_ready || (int(key & 7u) == state.side && side_chart.texture != nullptr);
     }
 }
 
@@ -4815,7 +4840,7 @@ struct Frame {
     ImVec2 Mid() const { return ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f); }
     ImVec2 Screen(float x, float z, float y = NAN) const {
         const ImVec2 m = Mid();
-        if (!state.three_d) {
+        if (!Angled()) {
             return ImVec2(m.x + (x - state.cx) * state.zoom, m.y - (z - state.cz) * state.zoom);
         }
         const float dx = x - state.cx, dz = z - state.cz;
@@ -4832,7 +4857,7 @@ struct Frame {
     }
     /// A move of the picture by (sx, sy) screen pixels, in atlas metres.
     std::array<float, 2> Metres(float sx, float sy) const {
-        if (!state.three_d) {
+        if (!Angled()) {
             return {sx / state.zoom, -sy / state.zoom};
         }
         const float u = sx / state.zoom, v = -sy / state.zoom / std::max(0.2f, std::sin(state.pitch));
@@ -4881,248 +4906,6 @@ float TopAt(float x, float z) {
         }
     }
     return NAN;
-}
-
-/// Kaniel 2026-10-19 ("3d map ... as an optional feature"; "looks veeeery off, are there a way to
-/// look it normal?"): the pictures as a model of the place. Each spot of a grid over the pictures'
-/// tops (BbMapArt::Chart::Storeys, or the floors where the map shows the floors) stands as a block:
-/// its flat top carries the picture, and where the next spot is lower a straight wall drops to it,
-/// shaded by the way it faces (the light from the north-west, as the pictures'). Blocks are drawn
-/// far to near so the near ones cover what lies behind them. ImGui counts a draw list's vertices in
-/// 16 bits, so the blocks go out in child windows of up to 60,000 vertices each, one over another.
-struct Block {
-    ImVec2 at[4];
-    ImVec2 uv[4];
-    ImU32 col;
-    const ChartTexture* c;
-};
-void DrawLandscapes(const Frame& frame) {
-    // What the frame can show: the corners taken back to the ground at the middle's height, with
-    // room for what stands up into it.
-    float vx0 = FLT_MAX, vx1 = -FLT_MAX, vz0 = FLT_MAX, vz1 = -FLT_MAX;
-    for (const ImVec2 corner : {frame.p0, frame.p1, ImVec2(frame.p0.x, frame.p1.y), ImVec2(frame.p1.x, frame.p0.y)}) {
-        const ImVec2 m = frame.Mid();
-        const auto [mx, mz] = frame.Metres(corner.x - m.x, corner.y - m.y);
-        vx0 = std::min(vx0, state.cx + mx), vx1 = std::max(vx1, state.cx + mx);
-        vz0 = std::min(vz0, state.cz + mz), vz1 = std::max(vz1, state.cz + mz);
-    }
-    const float margin = 80.0f;
-    vx0 -= margin, vx1 += margin, vz0 -= margin, vz1 += margin;
-    struct Piece {
-        const ChartTexture* c;
-        Place p;
-        int i0, i1, j0, j1; // cells in view
-        float ahead;        // how far ahead its middle lies (drawn far first)
-    };
-    std::vector<Piece> pieces;
-    double cells_in_view = 0;
-    const float c = std::cos(state.yaw), s = std::sin(state.yaw);
-    for (const auto& [map, ct] : charts) {
-        if (ct.texture == nullptr) {
-            continue;
-        }
-        const BbMapArt::Chart& chart = *ct.chart;
-        const BbMapArt::Chart::Storeys& st = chart.storeys;
-        if (st.width < 2 || st.height < 2) {
-            continue;
-        }
-        const Place p = AtlasOffset(map);
-        const float cell_m = float(BbMapArt::Chart::FloorCell) / chart.ppm;
-        const int i0 = std::max(0, int((vx0 - p.dx - chart.x0) / cell_m));
-        const int i1 = std::min(st.width - 1, int((vx1 - p.dx - chart.x0) / cell_m));
-        const int j0 = std::max(0, int((chart.z1 + p.dz - vz1) / cell_m));
-        const int j1 = std::min(st.height - 1, int((chart.z1 + p.dz - vz0) / cell_m));
-        if (i0 >= i1 || j0 >= j1) {
-            continue;
-        }
-        const float mx = chart.x0 + p.dx + float(i0 + i1) * 0.5f * cell_m - state.cx;
-        const float mz = chart.z1 + p.dz - float(j0 + j1) * 0.5f * cell_m - state.cz;
-        pieces.push_back(Piece{&ct, p, i0, i1, j0, j1, mx * s + mz * c});
-        cells_in_view += double(i1 - i0) * double(j1 - j0);
-    }
-    std::sort(pieces.begin(), pieces.end(), [](const Piece& a, const Piece& b) { return a.ahead > b.ahead; });
-    // One block size for all, the blocks in view kept to a number the frame draws smoothly.
-    constexpr double Budget = 45000.0;
-    const int step = std::max(1, int(std::ceil(std::sqrt(cells_in_view / Budget))));
-    // Toward the viewer, in the world: (-s, -c). A wall shows when it faces that way.
-    const ImVec2 toward(-s, -c);
-    std::vector<Block> blocks;
-    blocks.reserve(size_t(std::min(cells_in_view / double(step * step), Budget)) * 3);
-    for (const Piece& piece : pieces) {
-        const BbMapArt::Chart& chart = *piece.c->chart;
-        const BbMapArt::Chart::Storeys& st = chart.storeys;
-        const int nx = (piece.i1 - piece.i0) / step + 1, nz = (piece.j1 - piece.j0) / step + 1;
-        if (nx < 2 || nz < 2) {
-            continue;
-        }
-        const float tone = piece.c->map == state.shown ? 1.0f : 0.62f;
-        const auto top = [&](int i, int j) {
-            i = std::min(i, st.width - 1), j = std::min(j, st.height - 1);
-            // As the picture shows it: the floors where it shows the floors.
-            const int16_t t = BbMapArt::ShownHeight(chart, size_t(j) * size_t(st.width) + size_t(i), drawn_floors);
-            return t == BbMapArt::Chart::NoHeight ? NAN : float(t) / 10.0f;
-        };
-        // Each block's top: the spot in its middle.
-        std::vector<float> heights(size_t(nx) * size_t(nz));
-        for (int b = 0; b < nz; ++b) {
-            for (int a = 0; a < nx; ++a) {
-                heights[size_t(b) * size_t(nx) + size_t(a)] =
-                    top(piece.i0 + a * step + step / 2, piece.j0 + b * step + step / 2);
-            }
-        }
-        // Lamp posts, trees and spires a block wide stand as needles: each block takes the median
-        // of the blocks round it (walls and roofs, many blocks wide, stay).
-        {
-            const std::vector<float> raw = heights;
-            for (int b = 0; b < nz; ++b) {
-                for (int a = 0; a < nx; ++a) {
-                    float& h = heights[size_t(b) * size_t(nx) + size_t(a)];
-                    if (std::isnan(h)) {
-                        continue;
-                    }
-                    float near[9];
-                    int n = 0;
-                    for (int db = -1; db <= 1; ++db) {
-                        for (int da = -1; da <= 1; ++da) {
-                            const int na = a + da, nb = b + db;
-                            if (na >= 0 && nb >= 0 && na < nx && nb < nz) {
-                                const float v = raw[size_t(nb) * size_t(nx) + size_t(na)];
-                                if (!std::isnan(v)) {
-                                    near[n++] = v;
-                                }
-                            }
-                        }
-                    }
-                    std::nth_element(near, near + n / 2, near + n);
-                    h = near[n / 2];
-                }
-            }
-        }
-        const auto h_at = [&](int a, int b) {
-            if (a < 0 || b < 0 || a >= nx || b >= nz) {
-                return NAN;
-            }
-            return heights[size_t(b) * size_t(nx) + size_t(a)];
-        };
-        const float u_scale = 1.0f / float(chart.width), v_scale = 1.0f / float(chart.height);
-        // A block's corner k (0 north-west, 1 north-east, 2 south-east, 3 south-west) in the
-        // world and in the picture.
-        const auto corner = [&](int a, int b, int k, float h, ImVec2& at, ImVec2& uv) {
-            const int i = piece.i0 + (a + (k == 1 || k == 2 ? 1 : 0)) * step;
-            const int j = piece.j0 + (b + (k >= 2 ? 1 : 0)) * step;
-            const float px = float(i * BbMapArt::Chart::FloorCell), py = float(j * BbMapArt::Chart::FloorCell);
-            at = frame.Screen(chart.x0 + px / chart.ppm + piece.p.dx, chart.z1 - py / chart.ppm + piece.p.dz, h);
-            uv = ImVec2(px * u_scale, py * v_scale);
-        };
-        // The four sides: corners (from, to), the next block's step, the way the wall faces.
-        struct Side {
-            int k0, k1, da, db;
-            float nx, nz, light;
-        };
-        static constexpr Side Sides[4] = {
-            {0, 1, 0, -1, 0.0f, 1.0f, 0.82f},  // north: lit
-            {1, 2, 1, 0, 1.0f, 0.0f, 0.58f},   // east
-            {2, 3, 0, 1, 0.0f, -1.0f, 0.48f},  // south: in shade
-            {3, 0, -1, 0, -1.0f, 0.0f, 0.74f}, // west: lit
-        };
-        const bool x_back = s > 0.0f; // east lies ahead: from the east
-        const bool z_back = c < 0.0f; // south lies ahead: from the south (rows grow south)
-        const bool rows_outer = std::abs(c) >= std::abs(s);
-        const int outer_n = rows_outer ? nz : nx, inner_n = rows_outer ? nx : nz;
-        for (int oo = 0; oo < outer_n; ++oo) {
-            for (int ii = 0; ii < inner_n; ++ii) {
-                const int bb = rows_outer ? oo : ii, aa = rows_outer ? ii : oo;
-                const int b = z_back ? nz - 1 - bb : bb;
-                const int a = x_back ? nx - 1 - aa : aa;
-                const float h = h_at(a, b);
-                if (std::isnan(h) || a + 1 >= nx || b + 1 >= nz) {
-                    continue;
-                }
-                // The walls facing the viewer, down to the lower block beside (or a little way
-                // into the void at the picture's edge).
-                for (const Side& side : Sides) {
-                    if (side.nx * toward.x + side.nz * toward.y <= 0.02f) {
-                        continue;
-                    }
-                    float low = h_at(a + side.da, b + side.db);
-                    if (std::isnan(low)) {
-                        low = h - 3.0f;
-                    }
-                    if (h - low < 0.4f) {
-                        continue;
-                    }
-                    Block wall{};
-                    ImVec2 uv0, uv1;
-                    corner(a, b, side.k0, h, wall.at[0], uv0);
-                    corner(a, b, side.k1, h, wall.at[1], uv1);
-                    corner(a, b, side.k1, low, wall.at[2], wall.uv[2]);
-                    corner(a, b, side.k0, low, wall.at[3], wall.uv[3]);
-                    // The wall takes the colour of its top edge, a facade in its own shade.
-                    wall.uv[0] = wall.uv[3] = uv0;
-                    wall.uv[1] = wall.uv[2] = uv1;
-                    const float k = tone * side.light;
-                    wall.col = Party::Rgba(k, k, k, 1.0f);
-                    wall.c = piece.c;
-                    blocks.push_back(wall);
-                }
-                Block roof{};
-                for (int k = 0; k < 4; ++k) {
-                    corner(a, b, k, h, roof.at[k], roof.uv[k]);
-                }
-                roof.col = Party::Rgba(tone, tone, tone, 1.0f);
-                roof.c = piece.c;
-                blocks.push_back(roof);
-            }
-        }
-    }
-    // Out in child windows over the frame, 15,000 quads (60,000 vertices) each.
-    constexpr size_t PerList = 15000;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    for (size_t first = 0, part = 0; first < blocks.size(); first += PerList, ++part) {
-        ImGui::SetCursorScreenPos(frame.p0);
-        char id[32];
-        std::snprintf(id, sizeof(id), "##map_land_%zu", part);
-        ImGui::BeginChild(id, ImVec2(frame.p1.x - frame.p0.x, frame.p1.y - frame.p0.y), ImGuiChildFlags_None,
-                          ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration |
-                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        draw->PushClipRect(frame.p0, frame.p1, false);
-        const ChartTexture* bound = nullptr;
-        const size_t last = std::min(blocks.size(), first + PerList);
-        for (size_t q = first; q < last;) {
-            if (blocks[q].c != bound) {
-                if (bound != nullptr) {
-                    draw->PopTexture();
-                }
-                bound = blocks[q].c;
-                draw->PushTexture(bound->texture->GetTexRef());
-            }
-            size_t run = q;
-            while (run < last && blocks[run].c == bound) {
-                ++run;
-            }
-            draw->PrimReserve(int(run - q) * 6, int(run - q) * 4);
-            for (; q < run; ++q) {
-                const Block& quad = blocks[q];
-                const ImDrawIdx idx = ImDrawIdx(draw->_VtxCurrentIdx);
-                for (int k = 0; k < 4; ++k) {
-                    draw->PrimWriteVtx(quad.at[k], quad.uv[k], quad.col);
-                }
-                draw->PrimWriteIdx(idx);
-                draw->PrimWriteIdx(ImDrawIdx(idx + 1));
-                draw->PrimWriteIdx(ImDrawIdx(idx + 2));
-                draw->PrimWriteIdx(idx);
-                draw->PrimWriteIdx(ImDrawIdx(idx + 2));
-                draw->PrimWriteIdx(ImDrawIdx(idx + 3));
-            }
-        }
-        if (bound != nullptr) {
-            draw->PopTexture();
-        }
-        draw->PopClipRect();
-        ImGui::EndChild();
-    }
-    ImGui::PopStyleVar();
 }
 
 /// A small lamp: its post and its glowing head; `focused` rings it.
@@ -5192,10 +4975,9 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                                       chart.z1 - float(chart.height) / chart.ppm);
             draw->AddImage(c.texture->GetTexRef(), a, b, ImVec2(0, 0), ImVec2(1, 1), Party::Rgba(tone, tone, tone, 1.0f));
         };
-        ImDrawList* const parent = draw;
         // Kaniel 2026-10-19 ("can we prerender it?"): each area's picture from the side the 3D
         // view is seen from, placed by the view's own frame (BbMapArt::ToView) and its world's
-        // place on the atlas; the side it turns from fades out over it.
+        // place on the atlas.
         const auto side_picture = [&](int side, float alpha) {
             const BbMapArt::ObliqueView seen = BbMapArt::ViewOf(side);
             const float c = std::cos(seen.yaw), s = std::sin(seen.yaw), sp = std::sin(seen.pitch),
@@ -5225,27 +5007,11 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
             }
             return !drawn.empty();
         };
-        bool sides_shown = false;
-        if (state.three_d) {
-            const float fade = float(std::clamp((ImGui::GetTime() - state.turned_at) / 0.3, 0.0, 1.0));
-            sides_shown = side_picture(state.side, 1.0f);
-            if (state.turning_from > 0 && fade < 1.0f) {
-                sides_shown = side_picture(state.turning_from, 1.0f - fade) || sides_shown;
-            }
-        }
-        if (state.three_d && !sides_shown) {
-            // Not drawn yet: the blocks meanwhile.
-            DrawLandscapes(frame);
-            // The marks over the landscape's child windows: in one of their own, after them.
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-            ImGui::SetCursorScreenPos(frame.p0);
-            ImGui::BeginChild("##map_marks", ImVec2(frame.p1.x - frame.p0.x, frame.p1.y - frame.p0.y),
-                              ImGuiChildFlags_None,
-                              ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration |
-                                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
-            draw = ImGui::GetWindowDrawList();
-            draw->PushClipRect(frame.p0, frame.p1, false);
-        } else if (!state.three_d) {
+        const bool sides_shown = state.three_d && side_picture(state.side, 1.0f);
+        // Kaniel 2026-10-19 ("now it shows this state with boxes"): while the sides are still
+        // being drawn, the flat map with a note.
+        const bool preparing = state.three_d && !sides_shown;
+        if (!sides_shown) {
             for (const auto& [map, c] : charts) {
                 if (map != state.shown && c.texture != nullptr) {
                     picture(c, 0.62f);
@@ -5327,11 +5093,9 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                 draw->AddLine(ImVec2(c.x, c.y + r - S(2.0f)), ImVec2(c.x, c.y + r + t), color, width);
             }
         }
-        if (draw != parent) {
-            draw->PopClipRect();
-            ImGui::EndChild();
-            ImGui::PopStyleVar();
-            draw = parent;
+        if (preparing) {
+            Party::Text(draw, MenuArt::Font(), S(22.0f), ImVec2(frame.Mid().x, frame.p0.y + S(16.0f)), Plain(0.9f),
+                        T("Preparing the 3D view...", "Готовится 3D-вид..."), 0.5f);
         }
     } else {
         ImGui::PushFont(MenuArt::Font(), 24.0f);
@@ -5485,17 +5249,20 @@ void DrawQuestion(ImDrawList* draw, ImVec2 display, bool yes_pressed, bool no_pr
 /// then what they do, centred on [x0, x1] above `bottom`.
 void DrawKeys(ImDrawList* draw, float x0, float x1, float bottom) {
     ImGui::PushFont(MenuArt::Font(), 18.0f);
-    const Keys::Hint keys[] = {
+    // Kaniel 2026-10-19 ("make it opt in"): L3 only while the 3D map is on in the settings.
+    std::vector<Keys::Hint> keys = {
         {"L1 R1", "Q E", T("Area", "Область")},
         {"LS RS", "WASD", T("Move", "Сдвиг")},
         {"L2 R2", "- =", T("Zoom", "Масштаб")},
         {"Square", "C", T("You", "Вы")},
         {"Triangle", "Tab", T("Whole map", "Вся карта")},
         {"R3", "F", std::isnan(drawn_floors) ? T("Floors", "Этажи") : T("Roofs", "Крыши")},
-        {"L3", "V", state.three_d ? T("Flat", "Плоско") : T("3D", "3D")},
-        {"Cross", "Enter", T("Travel", "В путь")},
-        {"Circle", "Esc", T("Close", "Закрыть")},
     };
+    if (state.three_d || BbSettings::Get().map_3d) {
+        keys.push_back({"L3", "V", state.three_d ? T("Flat", "Плоско") : T("3D", "3D")});
+    }
+    keys.push_back({"Cross", "Enter", T("Travel", "В путь")});
+    keys.push_back({"Circle", "Esc", T("Close", "Закрыть")});
     Keys::Guide(draw, keys, x0, x1, bottom);
     ImGui::PopFont();
 }
@@ -5519,42 +5286,11 @@ void MoveView(const Frame& frame) {
     const bool inside = io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x && io.MousePos.y >= frame.p0.y &&
                         io.MousePos.y < frame.p1.y;
     if (state.three_d) {
-        // Kaniel 2026-10-19 ("can we prerender it?"): the 3D view is seen from four sides; the
-        // right stick pushed sideways (or Z / X, or a right drag) turns it to the next, the old
-        // side's picture fading out. The left stick's cursor and a left drag move it.
-        static bool held = false;
-        static float dragged = 0.0f;
-        int turn = 0;
-        if (std::abs(sx) > 0.6f) {
-            turn = held ? 0 : (sx > 0 ? 1 : -1);
-            held = true;
-        } else if (std::abs(sx) < 0.3f) {
-            held = false;
-        }
-        if (Pressed({ImGuiKey_X})) {
-            turn = 1;
-        } else if (Pressed({ImGuiKey_Z})) {
-            turn = -1;
-        }
-        if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
-            dragged += io.MouseDelta.x;
-            if (std::abs(dragged) > S(120.0f)) {
-                turn = dragged > 0 ? 1 : -1;
-                dragged = 0.0f;
-            }
-        } else {
-            dragged = 0.0f;
-        }
-        if (turn != 0) {
-            state.turning_from = state.side;
-            state.side = (state.side - 1 + turn + 4) % 4 + 1;
-            state.turned_at = ImGui::GetTime();
-            std::printf("Map: 3D view from side %d\n", state.side);
-        }
+        // Kaniel 2026-10-19 ("we need just one side"): the 3D view is seen from the south; the
+        // sticks and drags move it as on the flat map.
         const BbMapArt::ObliqueView seen = BbMapArt::ViewOf(state.side);
         state.yaw = seen.yaw;
         state.pitch = seen.pitch;
-        sx = sy = 0.0f;
     }
     sx += (ImGui::IsKeyDown(ImGuiKey_D) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_A) ? 1.0f : 0.0f);
     sy += (ImGui::IsKeyDown(ImGuiKey_S) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_W) ? 1.0f : 0.0f);
@@ -5778,9 +5514,15 @@ void Screen() {
         // Kaniel 2026-10-19 ("3d map ... as an optional feature"): L3 (or V) turns the 3D view on
         // and off; it stays as left for the next time.
         if (Pressed({ImGuiKey_GamepadL3, ImGuiKey_V})) {
-            state.three_d = !state.three_d;
-            three_d_kept = state.three_d;
-            std::printf("Map: %s view\n", state.three_d ? "3D" : "flat");
+            if (BbSettings::Get().map_3d || state.three_d) {
+                state.three_d = !state.three_d;
+                three_d_kept = state.three_d;
+                std::printf("Map: %s view\n", state.three_d ? "3D" : "flat");
+            } else {
+                state.notice = T("Turn on the 3D map in the settings (Insert, Display)",
+                                 "Включите 3D-карту в настройках (Insert, Изображение)");
+                state.notice_until = ImGui::GetTime() + 3.0;
+            }
         }
         // Kaniel 2026-10-17 ("one big map"), 2026-10-19 ("just one picture"): Triangle shows every
         // world drawn so far.

@@ -1,4 +1,8 @@
 {
+ "3D map": "3D-kaart",
+ "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "L3 op de kaart toont de plek schuin van boven, getekend uit de modellen van het spel. Elk gebied wordt de eerste keer eenmaal op de achtergrond getekend, wat geheugen en tijd kost; laat het uit op een zwakke pc.",
+ "Turn on the 3D map in the settings (Insert, Display)": "Zet de 3D-kaart aan in de instellingen (Insert, Beeld)",
+ "Preparing the 3D view...": "3D-weergave wordt voorbereid...",
  "On": "Aan",
  "Off": "Uit",
  "HDR: switch HDR on for this display in Windows to get the HDR options here.": "HDR: zet HDR aan voor dit scherm in Windows om hier de HDR-opties te zien.",

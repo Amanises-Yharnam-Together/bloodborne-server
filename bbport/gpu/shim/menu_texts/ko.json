@@ -1,4 +1,8 @@
 {
+ "3D map": "3D 지도",
+ "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "지도에서 L3를 누르면 게임 모델로 그린 장소를 비스듬히 보여 줍니다. 각 지역은 처음에 한 번 백그라운드에서 그려지며 메모리와 시간이 듭니다. 저사양 PC에서는 꺼 두세요.",
+ "Turn on the 3D map in the settings (Insert, Display)": "설정에서 3D 지도를 켜세요 (Insert, 디스플레이)",
+ "Preparing the 3D view...": "3D 보기 준비 중...",
  "On": "ON",
  "Off": "OFF",
  "HDR: switch HDR on for this display in Windows to get the HDR options here.": "HDR: Windows에서 이 디스플레이의 HDR을 켜면 여기에 HDR 설정이 표시됩니다.",
