@@ -69,7 +69,7 @@ const features: {
   {
     title: "Your teammates on screen",
     icon: "tricorn",
-    text: "Each teammate sits on the left under your own bars: a portrait, their name, their Blood Vials and bullets, and their health. When they are on another map the list says so.",
+    text: "Each teammate sits on the left under your own bars: a portrait, their name, their Blood Vials and bullets, and their health. The map shows which area each of them is in.",
     href: "/docs/play#party",
     src: "/docs/party-alive.webp",
     width: 1440,
