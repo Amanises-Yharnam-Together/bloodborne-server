@@ -98,6 +98,17 @@ public:
     };
     [[nodiscard]] Gain GainImage(u32 slot) const;
 
+    /// BB_FRAME_DUMP_TRIGGER: the last copies of the scene (RGBA16F) and the UI-free SDR scene,
+    /// in ShaderReadOnlyOptimal once a valid Job's Record ran.
+    struct Capture {
+        vk::Image image;
+        u32 width = 0, height = 0, bytes_per_pixel = 4;
+    };
+    struct Captures {
+        Capture scene, hudless;
+    };
+    [[nodiscard]] Captures CapturedImages() const;
+
 private:
     struct Pending {
         bool scene = false;

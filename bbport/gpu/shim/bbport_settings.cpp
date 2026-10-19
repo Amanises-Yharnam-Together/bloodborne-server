@@ -435,6 +435,14 @@ int Nearest(const int (&choices)[N], int value, int first = 0) {
     return best;
 }
 
+// The picked peak, else the display's, else 1000.
+float PeakBeforeWhite() {
+    const auto& v = Get();
+    const int picked = v.hdr_peak_nits.load(std::memory_order_relaxed);
+    const float display = v.hdr_display_peak.load(std::memory_order_relaxed);
+    return picked != HdrAuto ? float(picked) : display > 0.0f ? display : 1000.0f;
+}
+
 // Auto is the first choice; a brightness is the nearest of the others.
 template <int N>
 int NearestHdr(const int (&choices)[N], int nits) {
@@ -454,14 +462,16 @@ float HdrPaperWhite() {
     const auto& v = Get();
     const int picked = v.hdr_paper_white.load(std::memory_order_relaxed);
     const float display = v.hdr_display_white.load(std::memory_order_relaxed);
-    return picked != HdrAuto ? float(picked) : display > 0.0f ? display : 200.0f;
+    if (picked != HdrAuto) {
+        return float(picked);
+    }
+    // At most a quarter of the peak: lights get two stops above white. Bloodborne's 16-bit scene
+    // holds nothing brighter than its SDR picture, so that room is all HDR adds.
+    return display > 0.0f ? std::min(display, PeakBeforeWhite() / 4.0f) : 200.0f;
 }
 
 float HdrPeak() {
-    const auto& v = Get();
-    const int picked = v.hdr_peak_nits.load(std::memory_order_relaxed);
-    const float display = v.hdr_display_peak.load(std::memory_order_relaxed);
-    return std::max(picked != HdrAuto ? float(picked) : display > 0.0f ? display : 1000.0f, HdrPaperWhite());
+    return std::max(PeakBeforeWhite(), HdrPaperWhite());
 }
 
 bool FixedRenderSession() {
