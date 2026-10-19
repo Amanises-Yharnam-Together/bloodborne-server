@@ -194,9 +194,6 @@ inline constexpr std::array FirstRows{
     Range(6640, 6649, FlagOwner::PerPlayer, FlagCarriesHome,
           "holds a hunter badge (HeldItemFlags): what this player holds; as the host's (a team "
           "world) a guest never got its own Sword Hunter Badge from the Cleric Beast"),
-    Range(9020, 9026, FlagOwner::PerPlayer, 0,
-          "the Dream's current ritual altar (one of seven, set by its warp event 12107100): each "
-          "player's own, the altar it used"),
     Range(9180, 9199, FlagOwner::Session, 0,
           "the bell's bookkeeping (common events 9181-9198), not progress; kept for the "
           "guest's world it gave Insight again"),
@@ -241,12 +238,6 @@ inline constexpr std::array LastRows{
     Range(52900000, 52999999, FlagOwner::Host, FlagCarriesHome,
           "chalice dungeon item flags: left out of the pickups, kept like any other change"),
     Range(53000000, 53999999, FlagOwner::Host, FlagMapPickup, "map item pickups"),
-    Range(72100300, 72100309, FlagOwner::PerPlayer, 0,
-          "a chalice dungeon's layer to warp to, picked at a ritual altar: a request, each "
-          "player's own (shared, it took everyone in the Dream into the dungeon)"),
-    Range(72100420, 72100429, FlagOwner::PerPlayer, 0,
-          "a ritual altar's \"warp to the layer\" (72100420 + altar, its warp event 12107100 "
-          "runs in each game): a request, each player's own"),
     Range(72101000, 72101099, FlagOwner::PerPlayer, FlagCarriesHome,
           "the pick in the Dream messengers' talk: each player's own"),
     Range(72102000, 72103999, FlagOwner::Session, FlagHeadstoneTrip,
