@@ -371,9 +371,50 @@ int ConvertRealFiles(const char* game, const char* out) {
             }
         }
     }
+    // Every key guide icon the screens draw is in the game's file, 32x32.
+    for (int input = 0; !KeyGuideTexture(input).empty(); ++input) {
+        const auto icon = common ? common->Piece(KeyGuideTexture(input)) : std::nullopt;
+        if (!icon || icon->width != 32 || icon->height != 32) {
+            std::printf("no key guide icon %.*s\n", int(KeyGuideTexture(input).size()), KeyGuideTexture(input).data());
+            return 1;
+        }
+    }
     std::printf("wrote bbmenu.ttf (%zu bytes) and title.ppm (%dx%d)\n", ttf->size(), art->width,
                 art->height);
     return 0;
+}
+
+/// Kaniel 2026-10-19: our screens show the game's own key guide icon for each button. KG_Cancel is
+/// the game's Cross and KG_OK its Circle; Square and Triangle are KG_R_L and KG_R_U.
+void NamesTheKeyGuideIcons() {
+    const char* const expected[] = {"KG_Cancel", "KG_OK", "KG_R_L", "KG_R_U", "KG_L1", "KG_R1", "KG_L2",
+                                    "KG_R2", "KG_L3", "KG_R3", "KG_Start", "KG_TP_L", "KG_TP_R", "KG_L_U",
+                                    "KG_L_D", "KG_L_LR", "KG_L_LR", "KG_LS", "KG_LS", "KG_LS", "KG_LS",
+                                    "KG_RS", "KG_RS", "KG_RS", "KG_RS"};
+    for (int input = 0; input < int(std::size(expected)); ++input) {
+        if (KeyGuideTexture(input) != expected[input]) {
+            std::printf("input %d: %.*s, not %s\n", input, int(KeyGuideTexture(input).size()),
+                        KeyGuideTexture(input).data(), expected[input]);
+            assert(false);
+        }
+    }
+    assert(KeyGuideTexture(-1).empty() && KeyGuideTexture(int(std::size(expected))).empty());
+    // The names our texts write buttons by.
+    assert(KeyGuideTextureNamed("Cross") == "KG_Cancel" && KeyGuideTextureNamed("Circle") == "KG_OK");
+    assert(KeyGuideTextureNamed("Square") == "KG_R_L" && KeyGuideTextureNamed("Triangle") == "KG_R_U");
+    assert(KeyGuideTextureNamed("Dpad") == "KG_L_UDLR" && KeyGuideTextureNamed("RS") == "KG_RS");
+    assert(KeyGuideTextureNamed("TouchLeft") == "KG_TP_L" && KeyGuideTextureNamed("Options") == "KG_Start");
+    assert(KeyGuideTextureNamed("cross").empty() && KeyGuideTextureNamed("").empty());
+}
+
+/// The game's own menus draw a button inline from <img src="KG_..." vspace='-8'>, as in its
+/// controls page ("<img src="KG_R1" vspace='-8'>: Attack").
+void PutsTheGamesIconsInItsMenuTexts() {
+    assert(GameMenuIcons("Toggled with {Cross} + {L3}") ==
+           "Toggled with <img src=\"KG_Cancel\" vspace='-8'> + <img src=\"KG_L3\" vspace='-8'>");
+    assert(GameMenuIcons("{Circle}") == "<img src=\"KG_OK\" vspace='-8'>");
+    // Braces that name no button stay as they are.
+    assert(GameMenuIcons("a {b} {L1") == "a {b} {L1");
 }
 
 int main(int argc, char** argv) {
@@ -387,7 +428,9 @@ int main(int argc, char** argv) {
     DecodesBc1();
     CutsAPieceOfATexture();
     TurnsTheGameFontIntoTrueType();
+    NamesTheKeyGuideIcons();
+    PutsTheGamesIconsInItsMenuTexts();
     std::puts("Game art: PASS (BC7, BC1, PS4 block order, TPF in DCX, gauge texture, texture "
-              "pieces, the game's font)");
+              "pieces, the game's font, key guide icons)");
     return 0;
 }

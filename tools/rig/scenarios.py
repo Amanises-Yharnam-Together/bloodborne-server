@@ -2601,6 +2601,27 @@ SCENARIOS = {
     # the party list: the game's menu art and font. A picture of each page; an effect's row is
     # switched and back, and the menu saves the change when it closes; the menu in Russian (the
     # serif's letters behind the game's font); the quit box, cancelled.
+    "button-icons": {
+        "about": "Kaniel 2026-10-19: every co-op screen's buttons as the game's own key guide icons "
+                 "(no 'L1' or 'Square' written out) and their text clear of the ornaments: "
+                 "pictures of the map, the Insert menu's pages, the Co-op Team page, the downed "
+                 "screen and the revive prompt",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 5", "keys map", "wait 12",
+                     "shot map", "keys circle", "wait 2", "keys toggle", "wait 3", "shot menu-display",
+                     "keys r1 r1 r1", "wait 2", "shot menu-controls", "keys toggle", "wait 2",
+                     "wait-member-vital down 120", "approach-downed", "wait 2", "shot revive-prompt",
+                     "revive-downed 150", "wait-member-vital up 30", "wait 3", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 25", "keys toggle up up up enter",
+                      "wait 3", "shot team-menu", "keys enter", "wait 3",
+                      "wait 27", "hurt self 1", "rise 18", "wait-vital down 30", "wait 2",
+                      "shot down", "wait-vital up 120", "wait 3", "expect-session 2"],
+        },
+        "settings": {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"},
+        "forbid": {"host": [r"sceNpMatching2LeaveRoom: called"],
+                   "guest": [r"sceNpMatching2LeaveRoom: called"]},
+        "timeout": 300,
+    },
     "settings-menu": {
         "about": "the port's settings menu (Insert) drawn with the game's menu art and font: a "
                  "picture of every page, a row's value changed and back, saved on close, the "

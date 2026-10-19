@@ -84,6 +84,27 @@ private:
     std::vector<TpfTexture> textures;
 };
 
+// Kaniel 2026-10-19: every button our screens name is drawn as the game's own key guide icon, never
+// written out ("L1", "Square"). The icons are 32x32 textures in menu/common.tpf.dcx (KG_*); the
+// launcher's button icons (bbport_icons.py) redraw the same textures for Xbox pads and keyboards in
+// the game folder the game runs from, so they always show the player's own buttons.
+// The texture of runtime_pad.c's input `input` (its order: cross, circle, square, triangle, l1, r1,
+// l2, r2, l3, r3, options, touchpad left and right, d-pad up, down, left, right, move x4, look x4);
+// empty past them. KG_OK is the Circle and KG_Cancel the Cross (the Japanese layout's names).
+std::string_view KeyGuideTexture(int input);
+// A button as our texts name it ("Hold {Circle} to give up": scripts/menu_texts.py's BUTTONS) and
+// the game's icon of it; nothing for another name.
+std::string_view KeyGuideTextureNamed(std::string_view name);
+// A text for the game's own menus (the rows we add to its System menu) with each {Button} as the
+// game's inline icon, as its own texts write them: <img src="KG_R1" vspace='-8'>.
+std::string GameMenuIcons(std::string_view text);
+// The icons for both sticks and the d-pad as a whole (move, choose).
+inline constexpr std::string_view KeyGuideLeftStick = "KG_LS";
+inline constexpr std::string_view KeyGuideRightStick = "KG_RS";
+inline constexpr std::string_view KeyGuideDpad = "KG_L_UDLR";
+inline constexpr std::string_view KeyGuideDpadUpDown = "KG_L_UD";
+inline constexpr std::string_view KeyGuideDpadLeftRight = "KG_L_LR";
+
 // The game's menu font (menu/<language>/font.gfx: a Scaleform file whose DefineFont3 holds the
 // glyph outlines, quadratic like TrueType's) as a TrueType font the overlay can load; nothing
 // when the file is not one.

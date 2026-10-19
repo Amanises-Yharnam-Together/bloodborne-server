@@ -5,12 +5,19 @@ naming the game's eboot.bin, the rows the port adds to the game's own menu are c
 game's font of each language: the game draws them, and a letter its font lacks shows as nothing."""
 from paths import ROOT
 import os
+import re
 import struct
 import unittest
 from pathlib import Path
 
 import menu_texts
-from menu_texts import LANGUAGES, english_texts, format_specs, pairs_in, problems, render
+from menu_texts import (LANGUAGES, button_names, english_texts, format_specs, pairs_in, problems, render,
+                        translation_problem)
+
+# The Controls page's names of the inputs it binds (InputLabel), and of the pad's buttons (PadText).
+INPUT_NAMES = {'Cross', 'Circle', 'Square', 'Triangle', 'L1', 'R1', 'L2', 'R2', 'L3', 'R3', 'Options',
+               'Touchpad, left half (gestures)', 'Touchpad, right half (key items)', 'D-pad up', 'D-pad down',
+               'D-pad left', 'D-pad right'}
 
 
 class TableTests(unittest.TestCase):
@@ -31,6 +38,23 @@ class TableTests(unittest.TestCase):
     def test_format_specs(self):
         self.assertEqual(format_specs('%.0f FPS  %.1f ms  %s'), ['%.0f', '%.1f', '%s'])
         self.assertEqual(format_specs('revive %s  %d%%'), ['%s', '%d', '%%'])
+
+    def test_button_names(self):
+        self.assertEqual(button_names('Hold {Cross} and press {L3}'), ['{Cross}', '{L3}'])
+        self.assertEqual(button_names('{a} {L1}x'), ['{L1}'])
+        # A translation that drops or renames a button is a problem, as a lost %d is.
+        english = 'Hold {Cross} and press {L3}'
+        self.assertIsNone(translation_problem(english, 'Удерживайте {Cross} и нажмите {L3}'))
+        self.assertIn('buttons', translation_problem(english, 'Удерживайте {Крест} и нажмите {L3}'))
+
+    def test_buttons_are_icons_not_words(self):
+        """Kaniel 2026-10-19: our screens show the game's own button icons ({L1} in a text), never
+        a button written out; only the Controls page names the inputs it binds."""
+        words = re.compile(r'(?<![{\w])(L1|R1|L2|R2|L3|R3|Square|Triangle|Circle|Cross|D-pad|Options|'
+                           r'Touchpad|Крест|Круг|Квадрат|Треугольник|Крестовина)(?![}\w])')
+        written = [text for english, russian in english_texts().items()
+                   if english not in INPUT_NAMES for text in (english, russian or '') if words.search(text)]
+        self.assertEqual(written, [])
 
 
 class PairTests(unittest.TestCase):

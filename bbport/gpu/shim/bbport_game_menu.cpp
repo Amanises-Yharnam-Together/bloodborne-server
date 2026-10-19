@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "../bbcoop.h"
+#include "bbport_game_art.h"
 #include "bbport_settings.h"
 #include "bbport_trade_menu.h"
 
@@ -114,7 +115,9 @@ std::u16string Utf16(const char* utf8) {
 u32 AddText(const char* english, const char* russian) {
     Text& text = texts.emplace_back();
     for (int l = 0; l < BbSettings::MenuLanguageCount; ++l) {
-        text.by_language[l] = Utf16(BbSettings::Translate(BbSettings::MenuLanguage(l), english, russian));
+        // A {Button} as the game's own inline icon (Kaniel 2026-10-19: never a button's name).
+        text.by_language[l] = Utf16(
+            BbGameArt::GameMenuIcons(BbSettings::Translate(BbSettings::MenuLanguage(l), english, russian)).c_str());
     }
     return IdBase + u32(texts.size() - 1);
 }
@@ -357,8 +360,8 @@ void DefineTexts() {
          "Экранные отражения (не было в оригинале)"},
         {"skip_intro", "Skip intros", "Пропуск заставок", "Skip the startup logos and intro",
          "Пропуск логотипов и заставки при запуске", false},
-        {"debug_camera", "Free camera", "Свободная камера", "Toggled with Cross + L3",
-         "Включается Cross + L3", false},
+        {"debug_camera", "Free camera", "Свободная камера", "Toggled with {Cross} + {L3}",
+         "Включается {Cross} + {L3}", false},
         {"debug_menu", "Debug menu", "Debug menu", "The game's debug menu (requires font files)",
          "Отладочное меню игры (нужны файлы шрифтов)", false},
     };
@@ -826,8 +829,8 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     map_page_help = AddText("The map: where you and your team are, and travel to a lit lamp",
                             "Карта: где вы и ваша команда, и путь к зажжённой лампе");
     map_row_name = AddText("Map screen", "Экран карты");
-    map_row_help = AddText("The map is open over the game: Circle comes back here",
-                           "Карта открыта поверх игры: Круг вернёт сюда");
+    map_row_help = AddText("The map is open over the game: {Circle} comes back here",
+                           "Карта открыта поверх игры: {Circle} вернёт сюда");
 
     for (const Page& p : pages) {
         for (const Row& r : p.rows) {
