@@ -71,6 +71,27 @@ int main() {
     assert(core == 0.69f && "a lamp's core keeps its own luminance");
     assert(edge < 0.69f * 0.6f && HighlightGain(edge, headroom, 0.5f) < 0.5f * HighlightGain(core, headroom, 0.5f));
     assert(glsl::LocalLuma(0.1f, 0.69f) >= 0.1f && "a dark pixel by a lamp is not darkened");
+
+    // Kaniel 2026-10-19, fourth look ("definitely better ... maybe with outside lighting"):
+    // Central Yharnam at dusk, white 480 and peak 1000 (headroom 2.08), highlights 10: the sky
+    // (0.09), lit windows (0.11) and lit walls (0.15) rise by a third or more; the dark grass
+    // (0.007) stays. At the default 5 the sky stays as it was.
+    const float desk = 1000.0f / 480.0f;
+    assert(HighlightGain(0.09f, desk, 1.0f) > 1.3f && "the sky");
+    assert(HighlightGain(0.11f, desk, 1.0f) > 1.4f && "lit windows");
+    assert(HighlightGain(0.15f, desk, 1.0f) > 1.5f && "lit walls");
+    assert(HighlightGain(0.007f, desk, 1.0f) == 1.0f && "the grass");
+    assert(HighlightGain(0.09f, desk, 0.5f) < 1.1f && "the default keeps the sky");
+    for (float l = 0.0f; l <= 1.0f; l += 0.01f) {
+        const float a = l * HighlightGain(l, desk, 1.0f);
+        const float b = (l + 0.01f) * HighlightGain(l + 0.01f, desk, 1.0f);
+        assert(b >= a - 1e-5f && a <= desk * 1.0001f);
+    }
+    // The lifted lights' colour: more saturated the more they rise (into Rec.2020's wider gamut),
+    // at most a quarter more; untouched pixels keep the game's colour.
+    assert(glsl::ChromaScale(1.0f, desk) == 1.0f);
+    assert(glsl::ChromaScale(desk / 0.7f, desk) > 1.2f && glsl::ChromaScale(desk / 0.7f, desk) <= 1.25f);
+    assert(glsl::ChromaScale(1.5f, desk) > 1.0f && glsl::ChromaScale(1.5f, desk) < glsl::ChromaScale(2.5f, desk));
     std::puts("PASS: HDR highlights lift the game's lights, keep its mid-tones");
     return 0;
 }

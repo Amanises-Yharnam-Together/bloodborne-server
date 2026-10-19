@@ -41,9 +41,15 @@ const mat3 Bt709ToBt2020 = mat3(0.627404, 0.069097, 0.016391,
                                 0.329283, 0.919540, 0.088013,
                                 0.043313, 0.011362, 0.895595);
 
-vec3 ExpandHighlights(vec3 linear) {
-    const float luma = dot(linear, vec3(0.2126, 0.7152, 0.0722));
-    return linear * HighlightGain(luma, pc.peak / pc.paper_white, pc.highlights);
+float Luma(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// `linear` lifted by `gain`, its colour richer the more it rises (ChromaScale).
+vec3 Lift(vec3 linear, float gain) {
+    const vec3 lifted = linear * gain;
+    const float luma = Luma(lifted);
+    return luma + (lifted - luma) * ChromaScale(gain, pc.peak / pc.paper_white);
 }
 
 void main() {
@@ -55,9 +61,10 @@ void main() {
     if (ui.a > 0.0) {
         linear = SdrToLinear(clamp(scene * (1.0 - ui.a) + ui.rgb, 0.0, 1.0));
     } else if (pc.use_gain > 0.5) {
-        linear = SdrToLinear(scene) * max(texelFetch(gain_map, texel, 0).r, 1.0);
+        linear = Lift(SdrToLinear(scene), max(texelFetch(gain_map, texel, 0).r, 1.0));
     } else {
-        linear = ExpandHighlights(SdrToLinear(scene));
+        const vec3 sdr = SdrToLinear(scene);
+        linear = Lift(sdr, HighlightGain(Luma(sdr), pc.peak / pc.paper_white, pc.highlights));
     }
     color = vec4(Pq(max(Bt709ToBt2020 * (linear * pc.paper_white), vec3(0.0))), 1.0);
 }
