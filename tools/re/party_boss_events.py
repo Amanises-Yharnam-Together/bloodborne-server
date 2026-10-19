@@ -20,6 +20,8 @@ the cutscene and the night fell only in its world. The Dream's ritual altars war
 chalice dungeon picked at them (m21_00 event 12107100, a slot per altar) only for a non-client,
 so a party guest who joined a teammate's dungeon could not enter it; it runs in the guest's own
 game only (2000:2 0, below).
+A chalice dungeon's multiplayer fog walls (m29 event 12907600, the common wall event 7600 again,
+started per block) never show: their multiplayer checks never match (Kaniel 2026-10-19).
 
 Boss fogs (open_boss_fog_for_guests): a white phantom's fog event waited for the host's
 "entered" flag, so a party guest could not enter a boss fog first (nor after a world reset). It
@@ -161,6 +163,37 @@ def let_guests_earn_insight(emevd: bytes, edits: list | None = None) -> tuple[by
                     data[at + 8] == ALIVE):
                 data[at] = UNUSED_GROUP
                 note(edits, event, k, bank, ident, 'alive check no longer waited on')
+                patched += 1
+    return bytes(data), patched
+
+
+# The chalice maps' multiplayer wall: m29's event 12907600 is common event 7600 again (walls off,
+# then on while 3:6 sees multiplayer state 3 or 2 in condition group -1, off again for group -2).
+# The emulator turns 7600's walls off by the main maps' objects; a chalice dungeon's come from its
+# blocks (2000:0 per block with object and fog), so the "show" checks never match instead.
+CHALICE_WALL_EVENTS = {'m29.emevd.dcx': 12907600}
+IF_MULTIPLAYER_STATE = (3, 6)
+
+
+def patch_chalice_walls(emevd: bytes, edits: list | None = None,
+                        event_id: int = 12907600) -> tuple[bytes, int]:
+    data = bytearray(emevd)
+    fields = struct.unpack_from('<16q', data, 16)
+    event_count, event_offset, instruction_offset, args_offset = (fields[0], fields[1], fields[3],
+                                                                  fields[13])
+    patched = 0
+    for index in range(event_count):
+        event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
+                                                             event_offset + index * 48)
+        if event != event_id:
+            continue
+        for k in range(count):
+            bank, ident, length, offset, _ = struct.unpack_from(
+                '<iiqqq', data, instruction_offset + first + k * 32)
+            at = args_offset + offset
+            if (bank, ident) == IF_MULTIPLAYER_STATE and length >= 2 and data[at] == 0xFF:
+                data[at + 1] = NEVER
+                note(edits, event, k, bank, ident, 'chalice multiplayer wall never shows')
                 patched += 1
     return bytes(data), patched
 
@@ -558,7 +591,7 @@ def patch_file(name: str, original: bytes) -> tuple[bytes | None, list, dict]:
     emevd = load_dcx(original)
     edits: list = []
     counts = {'boss event checks': 0, 'boss fog checks': 0, 'insight event checks': 0,
-              'client event ends': 0, 'local events': 0}
+              'client event ends': 0, 'local events': 0, 'chalice wall checks': 0}
     try:
         if name.startswith('m'):
             emevd, counts['boss event checks'] = patch_events(emevd, edits)
@@ -567,6 +600,9 @@ def patch_file(name: str, original: bytes) -> tuple[bytes | None, list, dict]:
         if name in CLIENT_EVENTS:
             emevd, counts['client event ends'] = patch_client_events(emevd, CLIENT_EVENTS[name],
                                                                      edits)
+        if name in CHALICE_WALL_EVENTS:
+            emevd, counts['chalice wall checks'] = patch_chalice_walls(
+                emevd, edits, CHALICE_WALL_EVENTS[name])
         # Last: validate names changed instructions by their number in the game's event, which
         # only inserts move.
         if name in LOCAL_EVENTS:
