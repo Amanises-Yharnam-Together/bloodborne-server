@@ -12,10 +12,17 @@
 
 const float LightsTop = 0.7; ///< linear luminance of the game's brightest lights
 
-// The SDR picture's encoded value as light: the gamma 2.2 display the game was graded on (the
-// sRGB curve's straight toe lifts the dark shades Bloodborne is made of; Kaniel 2026-10-19).
+// The SDR picture's encoded value as light: the sRGB curve, as Windows shows SDR in HDR mode, so
+// all but the lights look as on the desktop (Kaniel 2026-10-19: gamma 2.2 was too dark).
 float SdrToLinear(float c) {
-    return pow(max(c, 0.0), 2.2);
+    return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+}
+
+// The luminance the gain follows: a pixel's own, or less where its small area (`area`: the mean
+// around it) is darker, so a thin bright edge beside dark pixels is lifted far less than a lamp's
+// core (Kaniel 2026-10-19: "some small harsh edges"). Never above the pixel's own.
+float LocalLuma(float luma, float area) {
+    return min(luma, mix(area, luma, 0.5));
 }
 
 float HighlightGain(float luma, float headroom, float highlights) {

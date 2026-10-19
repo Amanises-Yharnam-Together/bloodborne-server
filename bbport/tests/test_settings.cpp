@@ -187,8 +187,8 @@ int main() {
 
     // Kaniel 2026-10-19 (PG27UCDM, Windows SDR white 480 nits): auto takes the display's values;
     // without them (an unknown display) 200 and 1000; the peak is never below the white. Auto
-    // white stays at a quarter of the peak or less, so lamps have room to be brighter (his
-    // first look at 480 nits: "I would not say anything changed").
+    // white stays at half the peak or less, so lamps have a stop of room (a quarter, 250 nits on
+    // his display, was "too dark, especially on auto").
     {
         char hdr_file[512];
         std::snprintf(hdr_file, sizeof(hdr_file), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
@@ -207,13 +207,16 @@ int main() {
         assert(BbSettings::HdrPaperWhite() == 200.0f && BbSettings::HdrPeak() == 1000.0f);
         s.hdr_display_white = 480.0f;
         s.hdr_display_peak = 1000.0f;
-        assert(BbSettings::HdrPaperWhite() == 250.0f && BbSettings::HdrPeak() == 1000.0f &&
-               "a quarter of the peak");
+        assert(BbSettings::HdrPaperWhite() == 480.0f && BbSettings::HdrPeak() == 1000.0f &&
+               "the desktop's white under half the peak");
+        s.hdr_display_peak = 800.0f;
+        assert(BbSettings::HdrPaperWhite() == 400.0f && "half the peak");
+        s.hdr_display_peak = 1000.0f;
         s.hdr_display_white = 200.0f;
         assert(BbSettings::HdrPaperWhite() == 200.0f && "a dimmer desktop's own white");
         s.hdr_display_white = 480.0f;
         s.hdr_display_peak = 400.0f;
-        assert(BbSettings::HdrPaperWhite() == 100.0f && BbSettings::HdrPeak() == 400.0f);
+        assert(BbSettings::HdrPaperWhite() == 200.0f && BbSettings::HdrPeak() == 400.0f);
         s.hdr_paper_white = 480;
         assert(BbSettings::HdrPeak() == 480.0f && "no peak below a picked white");
         s.hdr_paper_white = BbSettings::HdrAuto;

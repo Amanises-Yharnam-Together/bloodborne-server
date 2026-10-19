@@ -264,7 +264,7 @@ int DlssModelIndex(int preset);
 int HdrPeakIndex(int nits);
 int HdrPaperWhiteIndex(int nits);
 /// The HDR output's paper white and peak in nits: the picked brightness, else the display's
-/// (auto white at most a quarter of the peak), else 200 and 1000. The peak is never below the
+/// (auto white at most half the peak), else 200 and 1000. The peak is never below the
 /// white.
 float HdrPaperWhite();
 float HdrPeak();

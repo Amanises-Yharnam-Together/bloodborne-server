@@ -57,12 +57,20 @@ int main() {
     assert(0.24f * HighlightGain(0.24f, headroom, 1.0f) > halo);
     // No headroom (white at the peak): nothing changes.
     assert(HighlightGain(0.69f, 1.0f, 1.0f) == 1.0f);
-    // Kaniel 2026-10-19, second look ("still looked not right"): the SDR picture is decoded as
-    // the gamma 2.2 display the game was graded on, not the sRGB curve, whose straight toe lifts
-    // the dark shades Bloodborne is made of.
-    assert(std::fabs(glsl::SdrToLinear(0.05f) - std::pow(0.05f, 2.2f)) < 1e-6f && "shadows stay deep");
-    assert(std::fabs(glsl::SdrToLinear(0.5f) - std::pow(0.5f, 2.2f)) < 1e-6f);
-    assert(glsl::SdrToLinear(0.0f) == 0.0f && glsl::SdrToLinear(1.0f) == 1.0f);
+    // Kaniel 2026-10-19, third look: gamma 2.2 made "the whole picture too dark". The SDR
+    // picture is decoded with the sRGB curve, as Windows shows SDR in HDR mode: everything that
+    // is not a light looks as it does on the desktop.
+    assert(std::fabs(glsl::SdrToLinear(0.02f) - 0.02f / 12.92f) < 1e-7f && "the sRGB toe");
+    assert(std::fabs(glsl::SdrToLinear(0.5f) - std::pow((0.5f + 0.055f) / 1.055f, 2.4f)) < 1e-6f);
+    assert(glsl::SdrToLinear(0.0f) == 0.0f && std::fabs(glsl::SdrToLinear(1.0f) - 1.0f) < 1e-6f);
+
+    // Harsh edges: the gain follows a small area's luminance (LocalLuma), so a one-pixel bright
+    // edge beside dark pixels gets far less than a lamp's core, and its neighbours ramp.
+    const float edge = glsl::LocalLuma(0.69f, 0.0f);
+    const float core = glsl::LocalLuma(0.69f, 0.69f);
+    assert(core == 0.69f && "a lamp's core keeps its own luminance");
+    assert(edge < 0.69f * 0.6f && HighlightGain(edge, headroom, 0.5f) < 0.5f * HighlightGain(core, headroom, 0.5f));
+    assert(glsl::LocalLuma(0.1f, 0.69f) >= 0.1f && "a dark pixel by a lamp is not darkened");
     std::puts("PASS: HDR highlights lift the game's lights, keep its mid-tones");
     return 0;
 }
