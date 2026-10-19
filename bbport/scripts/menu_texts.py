@@ -166,6 +166,28 @@ def format_specs(text):
     return [m.group(0) for m in _FORMAT.finditer(text)]
 
 
+# Kaniel 2026-10-19: a button is named as {L1} and drawn as the game's icon (Ui::Keys::Names).
+BUTTONS = ('Cross', 'Circle', 'Square', 'Triangle', 'L1', 'R1', 'L2', 'R2', 'L3', 'R3', 'Options', 'TouchLeft',
+           'TouchRight', 'Up', 'Down', 'LeftRight', 'UpDown', 'Dpad', 'LS', 'RS')
+_BUTTON = re.compile(r'\{(' + '|'.join(BUTTONS) + r')\}')
+
+
+def button_names(text):
+    """The {Button} names in a text, sorted: every translation keeps the same ones."""
+    return sorted(m.group(0) for m in _BUTTON.finditer(text))
+
+
+def translation_problem(english, translated):
+    """What is wrong with a text's translation, or None."""
+    if not translated:
+        return 'missing'
+    if format_specs(translated) != format_specs(english):
+        return f'format {format_specs(translated)} != {format_specs(english)}'
+    if button_names(translated) != button_names(english):
+        return f'buttons {button_names(translated)} != {button_names(english)}'
+    return None
+
+
 def problems(texts=None):
     """What keeps the languages from matching the sources: [(code, english, problem)]."""
     texts = english_texts() if texts is None else texts
@@ -173,11 +195,9 @@ def problems(texts=None):
     for code, _, _ in LANGUAGES:
         table = load_language(code)
         for english in texts:
-            translated = table.get(english)
-            if not translated:
-                out.append((code, english, 'missing'))
-            elif format_specs(translated) != format_specs(english):
-                out.append((code, english, f'format {format_specs(translated)} != {format_specs(english)}'))
+            problem = translation_problem(english, table.get(english))
+            if problem:
+                out.append((code, english, problem))
         for english in table:
             if english not in texts:
                 out.append((code, english, 'not in the sources'))

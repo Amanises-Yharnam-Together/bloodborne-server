@@ -902,4 +902,49 @@ std::optional<std::vector<std::uint8_t>> TtfFromGfxFont(std::span<const std::uin
     return out.data;
 }
 
+std::string_view KeyGuideTexture(int input) {
+    static constexpr std::string_view textures[] = {
+        "KG_Cancel", "KG_OK",   "KG_R_L",  "KG_R_U",  "KG_L1",   "KG_R1",   "KG_L2",
+        "KG_R2",     "KG_L3",   "KG_R3",   "KG_Start", "KG_TP_L", "KG_TP_R", "KG_L_U",
+        "KG_L_D",    "KG_L_LR", "KG_L_LR", "KG_LS",   "KG_LS",   "KG_LS",   "KG_LS",
+        "KG_RS",     "KG_RS",   "KG_RS",   "KG_RS"};
+    return input >= 0 && input < int(std::size(textures)) ? textures[input] : std::string_view{};
+}
+
+std::string_view KeyGuideTextureNamed(std::string_view name) {
+    static constexpr std::pair<std::string_view, std::string_view> names[] = {
+        {"Cross", "KG_Cancel"},  {"Circle", "KG_OK"},   {"Square", "KG_R_L"},  {"Triangle", "KG_R_U"},
+        {"L1", "KG_L1"},         {"R1", "KG_R1"},       {"L2", "KG_L2"},       {"R2", "KG_R2"},
+        {"L3", "KG_L3"},         {"R3", "KG_R3"},       {"Options", "KG_Start"}, {"TouchLeft", "KG_TP_L"},
+        {"TouchRight", "KG_TP_R"}, {"Up", "KG_L_U"},    {"Down", "KG_L_D"},    {"LeftRight", "KG_L_LR"},
+        {"UpDown", "KG_L_UD"},   {"Dpad", "KG_L_UDLR"}, {"LS", "KG_LS"},       {"RS", "KG_RS"}};
+    for (const auto& [text, texture] : names) {
+        if (text == name) {
+            return texture;
+        }
+    }
+    return {};
+}
+
+std::string GameMenuIcons(std::string_view text) {
+    std::string out;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const std::size_t open = text.find('{', at), close = text.find('}', open);
+        const std::string_view texture = open != std::string_view::npos && close != std::string_view::npos
+                                             ? KeyGuideTextureNamed(text.substr(open + 1, close - open - 1))
+                                             : std::string_view{};
+        if (texture.empty()) {
+            const std::size_t next = open == std::string_view::npos ? text.size() : open + 1;
+            out.append(text.substr(at, next - at));
+            at = next;
+            continue;
+        }
+        out.append(text.substr(at, open - at));
+        out.append("<img src=\"").append(texture).append("\" vspace='-8'>");
+        at = close + 1;
+    }
+    return out;
+}
+
 } // namespace BbGameArt

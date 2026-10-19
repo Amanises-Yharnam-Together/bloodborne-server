@@ -15,6 +15,7 @@
 #include <string_view>
 #include <optional>
 #include <map>
+#include <span>
 #include <memory>
 #include <vector>
 
@@ -22,6 +23,7 @@
 #include "../bbcoop.h"
 #include "bbport_game_art.h"
 #include "bbport_coop_art.h"
+#include "bbport_key_guide.h"
 #include "bbport_map_charts.h"
 #include "bbport_pad_rebind.h"
 #include "bbport_party_icons.h"
@@ -452,6 +454,25 @@ enum Piece {
     ButtonCross,   // the pad's Cross
     ButtonCircle,  // the pad's Circle
     ButtonMove,    // the d-pad
+    // Kaniel 2026-10-19: every other button as the game's key guide shows it (BbGameArt's
+    // KeyGuideTexture); the launcher's icons put the player's own Xbox or keyboard ones there.
+    ButtonSquare,
+    ButtonTriangle,
+    ButtonL1,
+    ButtonR1,
+    ButtonL2,
+    ButtonR2,
+    ButtonL3,
+    ButtonR3,
+    ButtonOptions,
+    ButtonTouchLeft,
+    ButtonTouchRight,
+    ButtonDpadUp,
+    ButtonDpadDown,
+    ButtonDpadLeftRight,
+    ButtonDpadUpDown,
+    ButtonLeftStick,
+    ButtonRightStick,
     PieceCount
 };
 
@@ -482,7 +503,34 @@ constexpr Source Sources[PieceCount] = {
     {"menu/common.tpf.dcx", "KG_Cancel", {}, false},
     {"menu/common.tpf.dcx", "KG_OK", {}, false},
     {"menu/common.tpf.dcx", "KG_L_UDLR", {}, false},
+    {"menu/common.tpf.dcx", "KG_R_L", {}, false},
+    {"menu/common.tpf.dcx", "KG_R_U", {}, false},
+    {"menu/common.tpf.dcx", "KG_L1", {}, false},
+    {"menu/common.tpf.dcx", "KG_R1", {}, false},
+    {"menu/common.tpf.dcx", "KG_L2", {}, false},
+    {"menu/common.tpf.dcx", "KG_R2", {}, false},
+    {"menu/common.tpf.dcx", "KG_L3", {}, false},
+    {"menu/common.tpf.dcx", "KG_R3", {}, false},
+    {"menu/common.tpf.dcx", "KG_Start", {}, false},
+    {"menu/common.tpf.dcx", "KG_TP_L", {}, false},
+    {"menu/common.tpf.dcx", "KG_TP_R", {}, false},
+    {"menu/common.tpf.dcx", "KG_L_U", {}, false},
+    {"menu/common.tpf.dcx", "KG_L_D", {}, false},
+    {"menu/common.tpf.dcx", "KG_L_LR", {}, false},
+    {"menu/common.tpf.dcx", "KG_L_UD", {}, false},
+    {"menu/common.tpf.dcx", "KG_LS", {}, false},
+    {"menu/common.tpf.dcx", "KG_RS", {}, false},
 };
+
+/// The key guide piece that shows `texture` (a KG_* name).
+std::optional<Piece> KeyIcon(std::string_view texture) {
+    for (int i = ButtonCross; i < PieceCount && !texture.empty(); ++i) {
+        if (texture == Sources[i].texture) {
+            return Piece(i);
+        }
+    }
+    return std::nullopt;
+}
 
 ImTextureData* textures[PieceCount] = {};
 ImFont* font = nullptr; // the game's menu font
@@ -888,6 +936,144 @@ ImU32 Dim(float alpha = 1.0f) {
     return ImGui::GetColorU32(ImVec4(0.48f, 0.46f, 0.42f, alpha));
 }
 
+/// Kaniel 2026-10-19: the buttons our screens name are the game's own key guide icons (the
+/// launcher's Xbox or keyboard ones in their place for those players), never written out; the
+/// keys only the overlay reads (its menus' Q / E, Escape) are key caps for a keyboard player.
+/// Texts name a button as {L1} ("Hold {Circle} to give up"); translations keep the names.
+namespace Keys {
+
+/// The icon set of this start (run.py's BB_ICONS_SET, as the game's own icons): 'p'layStation,
+/// 'x'box or 'k'eyboard.
+char IconSet() {
+    static const char set = [] {
+        const char* value = std::getenv("BB_ICONS_SET");
+        const std::string_view name = value ? value : "playstation";
+        return name == "xbox" ? 'x' : name == "keyboard" ? 'k' : 'p';
+    }();
+    return set;
+}
+
+/// A button as texts name it (BbGameArt::KeyGuideTextureNamed): the game's icon of it, and what
+/// a key cap says when the game's art could not be read.
+struct Name {
+    MenuArt::Piece piece;
+    std::string_view fallback;
+};
+
+std::optional<Name> Find(std::string_view name) {
+    const auto piece = MenuArt::KeyIcon(BbGameArt::KeyGuideTextureNamed(name));
+    if (!piece) {
+        return std::nullopt;
+    }
+    return Name{*piece, name.size() <= 3 ? name : name.substr(0, 2)};
+}
+
+/// A key cap with `label`, its left edge and middle at `at`, `height` tall (only measured without
+/// `draw`); returns its width.
+float Cap(ImDrawList* draw, std::string_view label, ImVec2 at, float height, float alpha) {
+    ImFont* font = sans_font;
+    const float size = height * 0.55f, r = height * 0.5f;
+    const float text = font->CalcTextSizeA(size, FLT_MAX, 0.0f, label.data(), label.data() + label.size()).x;
+    const float w = std::max(text + height * 0.5f, height);
+    if (draw) {
+        const ImVec2 a(at.x, at.y - r * 0.85f), b(at.x + w, at.y + r * 0.85f);
+        draw->AddRectFilled(a, b, ImGui::GetColorU32(ImVec4(0.06f, 0.05f, 0.05f, 0.85f * alpha)), height * 0.16f);
+        draw->AddRect(a, b, Plain(0.75f * alpha), height * 0.16f, 0, std::max(1.0f, height * 0.06f));
+        draw->AddText(font, size, ImVec2(at.x + (w - text) * 0.5f, at.y - size * 0.55f), Plain(alpha),
+                      label.data(), label.data() + label.size());
+    }
+    return w;
+}
+
+/// The game's icon of `name`, its left edge and middle at `at`, `height` tall (only measured
+/// without `draw`); a key cap when the art could not be read. Returns its width.
+float Icon(ImDrawList* draw, const Name& name, ImVec2 at, float height, float alpha) {
+    if (!MenuArt::Has(name.piece)) {
+        return Cap(draw, name.fallback, at, height, alpha);
+    }
+    if (draw) {
+        MenuArt::Draw(draw, name.piece, ImVec2(at.x, at.y - height * 0.5f), ImVec2(at.x + height, at.y + height * 0.5f),
+                      alpha);
+    }
+    return height;
+}
+
+/// A list of buttons as `"L1 R1"` (side by side) or `"L3+R3"` (pressed together: a '+' between),
+/// as icons (`caps`: key caps with those words) from `at`; returns the width.
+float Glyphs(ImDrawList* draw, std::string_view list, bool caps, ImVec2 at, float height, float alpha) {
+    const float gap = height * 0.12f;
+    float x = at.x;
+    std::size_t start = 0;
+    while (start < list.size()) {
+        std::size_t end = list.find_first_of(" +", start);
+        if (end == std::string_view::npos) {
+            end = list.size();
+        }
+        const std::string_view word = list.substr(start, end - start);
+        if (!word.empty()) {
+            if (x > at.x) {
+                x += gap;
+            }
+            const auto name = caps ? std::nullopt : Find(word);
+            x += name ? Icon(draw, *name, ImVec2(x, at.y), height, alpha) : Cap(draw, word, ImVec2(x, at.y), height, alpha);
+        }
+        if (end < list.size() && list[end] == '+') {
+            const float size = height * 0.6f, w = sans_font->CalcTextSizeA(size, FLT_MAX, 0.0f, "+").x;
+            if (draw) {
+                draw->AddText(sans_font, size, ImVec2(x + gap, at.y - size * 0.55f), Plain(0.8f * alpha), "+");
+            }
+            x += gap + w;
+        }
+        start = end + 1;
+    }
+    return x - at.x;
+}
+
+/// One entry of a key guide: the pad's buttons (Glyphs' list), a keyboard player's keys (key caps;
+/// null: the pad's buttons, whose icons the launcher draws as that player's keys; empty: not for a
+/// keyboard), and what they do.
+struct Hint {
+    const char* pad;
+    const char* keys;
+    const char* text;
+};
+
+/// A key guide as the game's (icons, then what they do) in the current font, centred on [x0, x1]
+/// with its last line's bottom at `bottom`; a little smaller, else on two lines, when it does not
+/// fit (BbKeyGuide). Returns its top.
+float Guide(ImDrawList* draw, std::span<const Hint> hints, float x0, float x1, float bottom, float alpha = 1.0f) {
+    const bool keyboard = IconSet() == 'k';
+    const float icon = ImGui::GetFontSize() * 1.45f, icon_gap = S(6.0f), entry_gap = S(28.0f);
+    std::vector<const Hint*> shown;
+    std::vector<BbKeyGuide::Entry> entries;
+    for (const Hint& hint : hints) {
+        const char* list = keyboard && hint.keys ? hint.keys : hint.pad;
+        if (!list || !*list) {
+            continue;
+        }
+        shown.push_back(&hint);
+        entries.push_back({Glyphs(nullptr, list, keyboard && hint.keys, ImVec2(0, 0), icon, 1.0f),
+                           ImGui::CalcTextSize(hint.text).x});
+    }
+    const BbKeyGuide::Layout layout = BbKeyGuide::Arrange(entries, icon_gap, entry_gap, x1 - x0);
+    const float scale = layout.scale, line_h = icon * scale + S(8.0f);
+    const float top = bottom - float(layout.lines) * line_h + S(8.0f);
+    ImFont* font = ImGui::GetFont();
+    const float size = ImGui::GetFontSize() * scale;
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+        const Hint& hint = *shown[i];
+        const BbKeyGuide::Place& place = layout.places[i];
+        const float mid = top + float(place.line) * line_h + icon * scale * 0.5f;
+        const char* list = keyboard && hint.keys ? hint.keys : hint.pad;
+        float x = x0 + place.x;
+        x += Glyphs(draw, list, keyboard && hint.keys, ImVec2(x, mid), icon * scale, alpha) + icon_gap * scale;
+        draw->AddText(font, size, ImVec2(x, mid - size * 0.5f), Plain(0.85f * alpha), hint.text);
+    }
+    return top;
+}
+
+} // namespace Keys
+
 /// The game's dialog border: a line fading out to both ends, a small diamond in the middle.
 void Ornament(ImDrawList* draw, float x0, float x1, float y) {
     const float mid = (x0 + x1) * 0.5f, t = S(1.2f), d = S(5.0f);
@@ -981,6 +1167,51 @@ float WrappedText(ImDrawList* draw, ImVec2 at, float width, ImU32 color, const c
     const float size = ImGui::GetFontSize(), step = std::round(size * 1.3f);
     const char* end = text + std::strlen(text);
     float y = at.y;
+    if (std::strchr(text, '{')) {
+        // Buttons named as {L3}: the game's icons in the line, the words wrapped round them.
+        const float icon = size * 1.3f, right = at.x + width;
+        float x = at.x;
+        for (const char* run = text; run < end;) {
+            const char* open = std::strchr(run, '{');
+            const char* close = open ? std::strchr(open, '}') : nullptr;
+            const auto name = close ? Keys::Find(std::string_view(open + 1, close - open - 1)) : std::nullopt;
+            const char* stop = name ? open : end;
+            if (!name && open && close) { // not a button: the braces stay words
+                stop = close + 1;
+            }
+            while (run < stop) {
+                const char* cut = font->CalcWordWrapPosition(size, run, stop, right - x);
+                if (cut == run && *cut != '\n') {
+                    if (x > at.x) { // nothing more fits on this line
+                        x = at.x;
+                        y += step;
+                        continue;
+                    }
+                    cut = run + ImTextCountUtf8BytesFromChar(run, stop);
+                }
+                draw->AddText(font, size, ImVec2(x, y), color, run, cut);
+                x += font->CalcTextSizeA(size, FLT_MAX, 0.0f, run, cut).x;
+                if (cut < stop) {
+                    x = at.x;
+                    y += step;
+                    run = ImTextCalcWordWrapNextLineStart(cut, stop);
+                } else {
+                    run = cut;
+                }
+            }
+            if (name) {
+                const float w = Keys::Icon(nullptr, *name, ImVec2(0, 0), icon, 1.0f);
+                if (x + w > right && x > at.x) {
+                    x = at.x;
+                    y += step;
+                }
+                x += Keys::Icon(draw, *name, ImVec2(x, y + size * 0.55f), icon,
+                                float((color >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f);
+                run = close + 1;
+            }
+        }
+        return y + step - at.y;
+    }
     for (const char* line = text; line < end;) {
         const char* cut = font->CalcWordWrapPosition(size, line, end, width);
         if (cut == line && *cut != '\n') {
@@ -1057,7 +1288,11 @@ int Row(const char* id, const char* label, const char* value, const char* hint, 
     }
     const ImU32 label_color = !enabled ? Dim() : focused ? Bright() : Plain();
     const ImVec2 label_size = ImGui::CalcTextSize(label);
-    draw->AddText(ImVec2(at.x + S(28.0f), mid_y - label_size.y * 0.5f), label_color, label);
+    if (std::strchr(label, '{')) { // a button named in it: the game's icon in the line
+        WrappedText(draw, ImVec2(at.x + S(28.0f), mid_y - label_size.y * 0.5f), width * 0.5f, label_color, label);
+    } else {
+        draw->AddText(ImVec2(at.x + S(28.0f), mid_y - label_size.y * 0.5f), label_color, label);
+    }
 
     // The value column: "<  value  >" centred, or a bar for sliders.
     const float col0 = at.x + width * 0.56f, col1 = at.x + width - S(28.0f);
@@ -1571,8 +1806,8 @@ void EffectsTab() {
         const auto& effect = BbSettings::Effects[e];
         const char* hint =
             std::string_view(effect.key) == "debug_camera"
-                ? T("Hold Cross and press L3 (keyboard: Space + Z). Applies after restarting.",
-                    "Удерживайте Cross и нажмите L3 (клавиатура: Space + Z). После перезапуска.")
+                ? T("Hold {Cross} and press {L3}. Applies after restarting.",
+                    "Удерживайте {Cross} и нажмите {L3}. После перезапуска.")
             : std::string_view(effect.key) == "debug_menu"
                 ? T("Left side of the touchpad (Tab). Needs the adhoc folder from Nexus mod #253. "
                     "Applies after restarting.",
@@ -1775,10 +2010,10 @@ void ControlsTab() {
 
     ImGui::Spacing();
     Note(T("Keyboard and mouse  |  gamepad", "Клавиатура и мышь  |  геймпад"), Dim());
-    const char* hint = T("Enter / Cross: assign. The next key, mouse button or wheel step replaces this input's "
+    const char* hint = T("{Cross} or Enter: assign. The next key, mouse button or wheel step replaces this input's "
                          "keyboard binding, a gamepad button its gamepad one; hold Shift, Ctrl or Alt for a "
                          "combination. Delete: no key. Esc or 10 s: cancel.",
-                         "Enter / Крест: назначить. Следующая клавиша, кнопка мыши или шаг колеса заменяет "
+                         "{Cross} или Enter: назначить. Следующая клавиша, кнопка мыши или шаг колеса заменяет "
                          "клавиатурное назначение, кнопка геймпада — геймпадное; Shift, Ctrl или Alt — для "
                          "сочетания. Delete — без клавиши. Esc или 10 с — отмена.");
     const char* waiting_pad = T("Press a key, mouse button or gamepad button...",
@@ -1896,8 +2131,8 @@ void SaveTab() {
     }
     item_index = std::clamp(item_index, 0, int(shown.size()) - 1);
     if (const int step = Row("item", T("Item", "Предмет"), shown[item_index]->name.c_str(),
-                             T("Left/right picks; Cross on the Give row hands it over.",
-                               "Влево/вправо — выбор; Cross на строке «Выдать» — выдать."),
+                             T("Left/right picks; {Cross} on the Give row hands it over.",
+                               "Влево/вправо — выбор; {Cross} на строке «Выдать» — выдать."),
                              true)) {
         item_index = (item_index + step + int(shown.size())) % int(shown.size());
     }
@@ -2038,9 +2273,11 @@ void Menu() {
         const float row_y = ImGui::GetCursorScreenPos().y;
         float widths[tabs], names = 0.0f;
         const float pad_x = S(16.0f), tab_h = S(36.0f);
-        ImGui::PushFont(MenuArt::Font(), 17.0f);
-        const ImVec2 l1 = ImGui::CalcTextSize("L1 / Q");
-        ImGui::PopFont();
+        // The buttons either side: the game's L1 / R1 icons, Q / E key caps for a keyboard player.
+        const bool keyboard = Keys::IconSet() == 'k';
+        const float tab_icon = S(28.0f);
+        const ImVec2 l1(Keys::Glyphs(nullptr, keyboard ? "Q" : "L1", keyboard, ImVec2(0, 0), tab_icon, 1.0f),
+                        tab_icon);
         ImGui::PushFont(MenuArt::Font(), 22.0f);
         for (int i = 0; i < tabs; ++i) {
             widths[i] = ImGui::CalcTextSize(T(tab_en[i], tab_ru[i])).x;
@@ -2052,10 +2289,8 @@ void Menu() {
         const float gap = std::clamp((room - names) / float(tabs + 1), S(20.0f), S(46.0f));
         const float total = names + gap * float(tabs - 1);
         float x = win.x + (size.x - total) * 0.5f;
-        ImGui::PushFont(MenuArt::Font(), 17.0f);
-        draw->AddText(ImVec2(x - gap - l1.x, row_y + (tab_h - l1.y) * 0.5f), Gold(0.6f), "L1 / Q");
-        draw->AddText(ImVec2(x + total + gap, row_y + (tab_h - l1.y) * 0.5f), Gold(0.6f), "E / R1");
-        ImGui::PopFont();
+        Keys::Glyphs(draw, keyboard ? "Q" : "L1", keyboard, ImVec2(x - gap - l1.x, row_y + tab_h * 0.5f), tab_icon, 0.9f);
+        Keys::Glyphs(draw, keyboard ? "E" : "R1", keyboard, ImVec2(x + total + gap, row_y + tab_h * 0.5f), tab_icon, 0.9f);
         ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         for (int i = 0; i < tabs; ++i) {
             const char* name = T(tab_en[i], tab_ru[i]);
@@ -2141,8 +2376,8 @@ void Menu() {
         bbcoop_map_menu(2);
     }
     if (Row("quit", T("Quit to desktop", "Выйти на рабочий стол"), nullptr,
-            T("Asks first: progress since the last autosave is lost. Holding L3 + R3 asks too.",
-              "Сначала спросит: прогресс после последнего автосохранения теряется. Удержание L3 + R3 "
+            T("Asks first: progress since the last autosave is lost. Holding {L3} + {R3} asks too.",
+              "Сначала спросит: прогресс после последнего автосохранения теряется. Удержание {L3} + {R3} "
               "тоже спрашивает."),
             true) != 0) {
         SetOpen(false);
@@ -2189,51 +2424,18 @@ void Menu() {
     }
     ImGui::PopFont();
 
-    // Controls: as the game's own key guide (the team screen's), an icon, then what it does.
-    if (MenuArt::Has(MenuArt::ButtonMove) && MenuArt::Has(MenuArt::ButtonCross) &&
-        MenuArt::Has(MenuArt::ButtonCircle)) {
-        const struct {
-            MenuArt::Piece icon;
-            const char* text;
-        } keys[] = {{MenuArt::ButtonMove, T("Choose, value", "Выбор, значение")},
-                    {MenuArt::ButtonCross, T("Change", "Изменить")},
-                    {MenuArt::ButtonCircle, T("Close", "Закрыть")}};
-        const char* rest = T("L1 / R1, Q / E: tabs     Insert, L3 + R3: menu     hold L3 + R3: quit",
-                             "L1 / R1, Q / E: вкладки     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
-        // Smaller when the line does not fit the panel (the Russian one is longer).
-        float fit = 1.0f, total = 0.0f, icon = 0.0f, space = 0.0f;
-        for (int pass = 0; pass < 2; ++pass) {
-            ImGui::PushFont(MenuArt::Font(), 18.0f * fit);
-            icon = S(26.0f) * fit;
-            space = S(28.0f) * fit;
-            total = ImGui::CalcTextSize(rest).x;
-            for (const auto& key : keys) {
-                total += icon + S(6.0f) + ImGui::CalcTextSize(key.text).x + space;
-            }
-            if (pass == 1 || total <= size.x - S(72.0f)) {
-                break;
-            }
-            ImGui::PopFont();
-            fit = std::max(0.7f, (size.x - S(72.0f)) / total);
-        }
-        float kx = win.x + (size.x - total) * 0.5f;
-        const float ky = win.y + size.y - S(48.0f);
-        for (const auto& key : keys) {
-            MenuArt::Draw(draw, key.icon, ImVec2(kx, ky), ImVec2(kx + icon, ky + icon));
-            kx += icon + S(6.0f);
-            draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.85f), key.text);
-            kx += ImGui::CalcTextSize(key.text).x + space;
-        }
-        draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.6f), rest);
-        ImGui::PopFont();
-    } else {
-        ImGui::PushFont(sans_font, 15.0f);
-        const char* controls = T("Enter / Cross: change     Left / Right: value     Q / E, L1 / R1: tabs     "
-                                 "Esc / Circle: close     Insert, L3 + R3: menu     hold L3 + R3: quit",
-                                 "Enter / Крест: изменить     Влево / Вправо: значение     Q / E, L1 / R1: "
-                                 "вкладки     Esc / Круг: закрыть     Insert, L3 + R3: меню     удерживать L3 + R3: выход");
-        const ImVec2 cs = ImGui::CalcTextSize(controls);
-        draw->AddText(ImVec2(win.x + (size.x - cs.x) * 0.5f, win.y + size.y - S(40.0f)), Gold(0.65f), controls);
+    // Controls: as the game's own key guide (the team screen's), the buttons' icons, then what
+    // they do; a keyboard player's keys as key caps.
+    {
+        const Keys::Hint keys[] = {{"Dpad", "Arrows", T("Choose, value", "Выбор, значение")},
+                                   {"Cross", "Enter", T("Change", "Изменить")},
+                                   {"Circle", "Esc", T("Close", "Закрыть")},
+                                   {"L1 R1", "Q E", T("Tabs", "Вкладки")},
+                                   {"L3+R3", "Insert", T("Menu", "Меню")},
+                                   {"L3+R3", "", T("Hold: quit", "Удерживать: выход")}};
+        ImGui::PushFont(MenuArt::Font(), 18.0f);
+        Keys::Guide(draw, keys, win.x + S(36.0f), win.x + size.x - S(36.0f),
+                    win.y + size.y - S(BbKeyGuide::BottomClearance));
         ImGui::PopFont();
     }
 
@@ -2412,8 +2614,14 @@ void TextPrompt() {
     ImGui::Separator();
     ImGui::Text("%s_", text.c_str());
     ImGui::Separator();
-    ImGui::TextUnformatted("Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel");
-    ImGui::TextUnformatted("Controller: Cross (A) = OK, Circle (B) = cancel");
+    // Kaniel 2026-10-19: the keys as the game's icons, a keyboard player's as key caps.
+    const Ui::Keys::Hint keys[] = {{"Cross", "Enter", Ui::T("OK", "ОК")},
+                                   {"Circle", "Esc", Ui::T("Cancel", "Отмена")},
+                                   {"", "Backspace", Ui::T("Delete", "Удалить")}};
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float width = std::max(ImGui::GetContentRegionAvail().x, Ui::S(380.0f)), height = Ui::S(36.0f);
+    ImGui::Dummy(ImVec2(width, height));
+    Ui::Keys::Guide(ImGui::GetWindowDrawList(), keys, at.x, at.x + width, at.y + height);
     ImGui::End();
 }
 
@@ -2615,10 +2823,11 @@ void MenuHint(ImDrawList* draw, ImVec2 win, ImVec2 size, float y, bool leader_ho
     ImVec2 ts = ImGui::CalcTextSize(line);
     draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, y),
                   lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
-    const char* keys = T("D-pad: move     Cross: choose     Circle: close",
-                         "Крестовина: выбор     Крест: нажать     Круг: закрыть");
-    ts = ImGui::CalcTextSize(keys);
-    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(64.0f)), Plain(0.6f), keys);
+    const Keys::Hint keys[] = {{"Dpad", "Arrows", T("Move", "Выбор")},
+                               {"Cross", "Enter", T("Choose", "Нажать")},
+                               {"Circle", "Esc", T("Close", "Закрыть")}};
+    Keys::Guide(draw, keys, win.x + S(36.0f), win.x + size.x - S(36.0f),
+                win.y + size.y - S(BbKeyGuide::BottomClearance));
     ImGui::PopFont();
 }
 
@@ -2792,7 +3001,7 @@ void DrawWorldPicker(ImDrawList* draw, ImVec2 win, ImVec2 size) {
     const bbcoop_lobby_world* focused_world = picker.row > 0 ? &lobby.worlds[picker.row - 1] : nullptr;
     const bool armed = focused_world && picker.armed == focused_world->id && ImGui::GetTime() - picker.armed_at < 4.0;
     ImGui::PushFont(MenuArt::Font(), 22.0f);
-    const float bw = S(300.0f), bh = S(50.0f), gap = S(24.0f), by = win.y + size.y - S(150.0f);
+    const float bw = S(300.0f), bh = S(50.0f), gap = S(24.0f), by = win.y + size.y - S(176.0f);
     float bx = win.x + (size.x - (2 * bw + gap)) * 0.5f;
     const auto plain_button = [&](const char* id, const char* label, ImVec2 at, bool enabled) {
         ImGui::SetCursorScreenPos(at);
@@ -2822,13 +3031,20 @@ void DrawWorldPicker(ImDrawList* draw, ImVec2 win, ImVec2 size) {
     ImGui::PopFont();
     ImGui::PushFont(MenuArt::Font(), 18.0f);
     const char* line = lobby.notice[0] ? lobby.notice
-                                       : armed ? T("Forgotten worlds go off the list; the server keeps their files aside.",
-                                                   "Забытые миры исчезают из списка; сервер сохраняет их файлы отдельно.")
-                                               : T("D-pad: move     Cross: choose     Triangle: forget     Circle: back",
-                                                   "Крестовина: выбор     Крест: выбрать     Треугольник: забыть     Круг: назад");
-    ts = ImGui::CalcTextSize(line);
-    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(24.0f)),
-                  lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.75f), line);
+                       : armed ? T("Forgotten worlds go off the list; the server keeps their files aside.",
+                                   "Забытые миры исчезают из списка; сервер сохраняет их файлы отдельно.")
+                               : nullptr;
+    if (line) {
+        ts = ImGui::CalcTextSize(line);
+        draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(20.0f)),
+                      lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.75f), line);
+    }
+    const Keys::Hint keys[] = {{"UpDown", "Arrows", T("Move", "Выбор")},
+                               {"Cross", "Enter", T("Choose", "Выбрать")},
+                               {"Triangle", "Delete", T("Forget", "Забыть")},
+                               {"Circle", "Esc", T("Back", "Назад")}};
+    Keys::Guide(draw, keys, win.x + S(36.0f), win.x + size.x - S(36.0f),
+                win.y + size.y - S(BbKeyGuide::BottomClearance));
     ImGui::PopFont();
 
     if (forget && focused_world && !focused_world->busy) {
@@ -3087,7 +3303,8 @@ void Screen() {
     }
     ImGui::PushFont(MenuArt::Font(), 24.0f);
     const float bw = S(260.0f), bh = S(54.0f);
-    const float by = win.y + size.y - S(166.0f);
+    // Kaniel 2026-10-19: high enough for the line under them and the key guide over the ornament.
+    const float by = win.y + size.y - S(180.0f);
     float bx = win.x + (size.x - (3 * bw + 2 * gap)) * 0.5f;
     // The leader hosts the hunt: it leaves only once it is alone in it (its game leaving would
     // end the others' session).
@@ -3183,36 +3400,14 @@ void Screen() {
     draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(20.0f)),
                   lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
     ImGui::PopFont();
-    if (MenuArt::Has(MenuArt::ButtonCross) && MenuArt::Has(MenuArt::ButtonMove)) {
-        // As the game's own key guide: an icon, then what it does.
+    {
+        // As the game's own key guide: the buttons' icons, then what they do.
         ImGui::PushFont(MenuArt::Font(), 18.0f);
-        const struct {
-            MenuArt::Piece icon;
-            const char* text;
-        } keys[] = {{MenuArt::ButtonMove, T("Move", "Выбор")},
-                    {MenuArt::ButtonCross, T("Choose", "Нажать")}};
-        const char* settings = T("L3 + R3 / Insert: settings", "L3 + R3 / Insert: настройки");
-        const float icon = S(26.0f), space = S(28.0f);
-        float total = ImGui::CalcTextSize(settings).x;
-        for (const auto& key : keys) {
-            total += icon + S(6.0f) + ImGui::CalcTextSize(key.text).x + space;
-        }
-        float kx = win.x + (size.x - total) * 0.5f;
-        const float ky = win.y + size.y - S(64.0f);
-        for (const auto& key : keys) {
-            MenuArt::Draw(draw, key.icon, ImVec2(kx, ky), ImVec2(kx + icon, ky + icon));
-            kx += icon + S(6.0f);
-            draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.85f), key.text);
-            kx += ImGui::CalcTextSize(key.text).x + space;
-        }
-        draw->AddText(ImVec2(kx, ky + S(2.0f)), Plain(0.6f), settings);
-        ImGui::PopFont();
-    } else {
-        ImGui::PushFont(sans_font, 15.0f);
-        const char* controls = T("Arrows / D-pad: move     Enter / Cross: choose     Insert, L3 + R3: settings",
-                                 "Стрелки / крестовина: выбор     Enter / Крест: нажать     Insert, L3 + R3: настройки");
-        ts = ImGui::CalcTextSize(controls);
-        draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, win.y + size.y - S(64.0f)), Gold(0.65f), controls);
+        const Keys::Hint keys[] = {{"Dpad", "Arrows", T("Move", "Выбор")},
+                                   {"Cross", "Enter", T("Choose", "Нажать")},
+                                   {"L3+R3", "Insert", T("Settings", "Настройки")}};
+        Keys::Guide(draw, keys, win.x + S(36.0f), win.x + size.x - S(36.0f),
+                    win.y + size.y - S(BbKeyGuide::BottomClearance));
         ImGui::PopFont();
     }
 
@@ -3558,15 +3753,13 @@ int RevivePercent(u32 landed, u32 needed) {
 // The pad inputs party death names (runtime_pad.c's order).
 constexpr int InputCircle = 1, InputR1 = 5, InputR2 = 7;
 
-/// The icon set of this start (run.py's BB_ICONS_SET, as the game's own glyphs): 'p'layStation,
-/// 'x'box or 'k'eyboard.
-char IconSet() {
-    static const char set = [] {
-        const char* value = std::getenv("BB_ICONS_SET");
-        const std::string_view name = value ? value : "playstation";
-        return name == "xbox" ? 'x' : name == "keyboard" ? 'k' : 'p';
-    }();
-    return set;
+using Ui::Keys::IconSet;
+
+/// The game's key guide icon of runtime_pad.c's `input` (the launcher's Xbox or keyboard one for
+/// those players), when it was read from the game's files.
+std::optional<MenuArt::Piece> InputIcon(int input) {
+    const auto piece = MenuArt::KeyIcon(BbGameArt::KeyGuideTexture(input));
+    return piece && MenuArt::Has(*piece) ? piece : std::nullopt;
 }
 
 /// The first of a binding text's entries ("Space, Return" -> "Space").
@@ -3592,6 +3785,9 @@ const char* ShoulderLabel(const std::string& pad) {
 /// How wide ButtonGlyph draws `input` at `height`: a key or a shoulder button's label may be wider
 /// than the round face buttons.
 float ButtonGlyphWidth(int input, float height) {
+    if (InputIcon(input)) {
+        return height;
+    }
     if (IconSet() == 'k') {
         const std::string key = FirstBinding(input, 0);
         const char* label = key.empty() ? "?" : key.c_str();
@@ -3606,6 +3802,12 @@ float ButtonGlyphWidth(int input, float height) {
 }
 
 float ButtonGlyph(ImDrawList* draw, int input, ImVec2 at, float height, float alpha) {
+    // Kaniel 2026-10-19: the game's own icon (the drawn one below only when it could not be read).
+    if (const auto piece = InputIcon(input)) {
+        MenuArt::Draw(draw, *piece, ImVec2(at.x, at.y - height * 0.5f), ImVec2(at.x + height, at.y + height * 0.5f),
+                      alpha);
+        return height;
+    }
     const char set = IconSet();
     const float r = height * 0.5f;
     const ImU32 ink = Bone(alpha), ground = Rgba(0.05f, 0.04f, 0.04f, 0.85f * alpha);
@@ -4211,6 +4413,11 @@ void Draw() {
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     Party::Text(draw, sans_font, S(18.0f), ImVec2(game.x + game.w * 0.5f, game.y + game.h * 0.86f),
                 Ui::Plain(0.9f), line, 0.5f);
+    // Kaniel 2026-10-19: which button votes, as the game's icon.
+    const Ui::Keys::Hint keys[] = {{"Options", nullptr, T("Skip", "Пропустить")}};
+    ImGui::PushFont(MenuArt::Font(), 18.0f);
+    Ui::Keys::Guide(draw, keys, game.x, game.x + game.w, game.y + game.h * 0.86f + S(62.0f));
+    ImGui::PopFont();
 }
 
 } // namespace SkipVote
@@ -5189,40 +5396,22 @@ void DrawQuestion(ImDrawList* draw, ImVec2 display, bool yes_pressed, bool no_pr
     }
 }
 
-/// The game's key guide at the bottom.
-void DrawKeys(ImDrawList* draw, float mid, float y) {
+/// The game's key guide at the bottom: its buttons' icons (a keyboard player's keys as key caps),
+/// then what they do, centred on [x0, x1] above `bottom`.
+void DrawKeys(ImDrawList* draw, float x0, float x1, float bottom) {
     ImGui::PushFont(MenuArt::Font(), 18.0f);
-    const char* text = T("L1 / R1  Area     Sticks, drag  Move     L2 / R2, wheel  Zoom     Square  You",
-                         "L1 / R1  Область     Стики, мышь  Сдвиг     L2 / R2, колесо  Масштаб     Квадрат  Вы");
-    const char* whole = T("Triangle  Whole map", "Треугольник  Вся карта");
-    const char* floors = std::isnan(drawn_floors) ? T("R3  Floors", "R3  Этажи") : T("R3  Roofs", "R3  Крыши");
-    const char* depth = state.three_d ? T("L3  Flat", "L3  Плоско") : T("L3  3D", "L3  3D");
-    const char* choose = T("Travel", "В путь");
-    const char* back = T("Close", "Закрыть");
-    const float icon = S(26.0f), space = S(28.0f);
-    float total = ImGui::CalcTextSize(text).x + space + ImGui::CalcTextSize(whole).x + space +
-                  ImGui::CalcTextSize(floors).x + space + ImGui::CalcTextSize(depth).x + space;
-    const bool art = MenuArt::Has(MenuArt::ButtonCross) && MenuArt::Has(MenuArt::ButtonCircle);
-    if (art) {
-        total += 2 * (icon + S(6.0f)) + ImGui::CalcTextSize(choose).x + ImGui::CalcTextSize(back).x + space;
-    }
-    float x = mid - total * 0.5f;
-    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), text);
-    x += ImGui::CalcTextSize(text).x + space;
-    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), whole);
-    x += ImGui::CalcTextSize(whole).x + space;
-    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), floors);
-    x += ImGui::CalcTextSize(floors).x + space;
-    draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.75f), depth);
-    x += ImGui::CalcTextSize(depth).x + space;
-    if (art) {
-        for (const auto& [piece, label] : {std::pair{MenuArt::ButtonCross, choose}, {MenuArt::ButtonCircle, back}}) {
-            MenuArt::Draw(draw, piece, ImVec2(x, y), ImVec2(x + icon, y + icon));
-            x += icon + S(6.0f);
-            draw->AddText(ImVec2(x, y + S(2.0f)), Plain(0.85f), label);
-            x += ImGui::CalcTextSize(label).x + space;
-        }
-    }
+    const Keys::Hint keys[] = {
+        {"L1 R1", "Q E", T("Area", "Область")},
+        {"LS RS", "WASD", T("Move", "Сдвиг")},
+        {"L2 R2", "- =", T("Zoom", "Масштаб")},
+        {"Square", "C", T("You", "Вы")},
+        {"Triangle", "Tab", T("Whole map", "Вся карта")},
+        {"R3", "F", std::isnan(drawn_floors) ? T("Floors", "Этажи") : T("Roofs", "Крыши")},
+        {"L3", "V", state.three_d ? T("Flat", "Плоско") : T("3D", "3D")},
+        {"Cross", "Enter", T("Travel", "В путь")},
+        {"Circle", "Esc", T("Close", "Закрыть")},
+    };
+    Keys::Guide(draw, keys, x0, x1, bottom);
     ImGui::PopFont();
 }
 
@@ -5413,22 +5602,26 @@ void Screen() {
     draw->AddText(ImVec2(mid - ts.x * 0.5f, win.y + S(30.0f)), Bright(), title.c_str());
     ImGui::PopFont();
     // Kaniel 2026-10-18: an area whose main bosses are down carries the party list's headstone.
+    float title_end = mid + ts.x * 0.5f + S(24.0f);
     for (int i = 0; i < view.cleared_count; ++i) {
         if (view.cleared[i] == (state.shown & 0xFFFF0000u)) {
-            Party::Icon(draw, BbPartyIcons::Icon::Fallen, ImVec2(mid + ts.x * 0.5f + S(26.0f), win.y + S(54.0f)), S(34.0f),
-                        0.8f);
+            Party::Icon(draw, BbPartyIcons::Icon::Fallen, ImVec2(title_end + S(4.0f), win.y + S(54.0f)), S(34.0f), 0.8f);
+            title_end += S(30.0f);
         }
     }
-    if (areas.size() > 1) {
-        ImGui::PushFont(MenuArt::Font(), 22.0f);
-        draw->AddText(ImVec2(mid - ts.x * 0.5f - S(70.0f), win.y + S(42.0f)), Gold(0.8f), "L1");
-        draw->AddText(ImVec2(mid + ts.x * 0.5f + S(44.0f), win.y + S(42.0f)), Gold(0.8f), "R1");
-        ImGui::PopFont();
+    if (areas.size() > 1) { // the buttons to the others: L1 and R1 (Q and E keys) either side
+        const bool keyboard = Keys::IconSet() == 'k';
+        const char* back = keyboard ? "Q" : "L1";
+        const float icon = S(30.0f), y = win.y + S(54.0f);
+        const float w = Keys::Glyphs(nullptr, back, keyboard, ImVec2(0, 0), icon, 1.0f);
+        Keys::Glyphs(draw, back, keyboard, ImVec2(mid - ts.x * 0.5f - S(24.0f) - w, y), icon, 0.9f);
+        Keys::Glyphs(draw, keyboard ? "E" : "R1", keyboard, ImVec2(title_end, y), icon, 0.9f);
     }
     const float ornament = HeaderOrnament(draw, mid, win.y + S(78.0f), 0.9f);
 
     const float list_w = S(430.0f);
-    const float top = win.y + S(84.0f) + ornament + S(20.0f), bottom = win.y + size.y - S(80.0f);
+    // Kaniel 2026-10-19: room under the picture for the key guide, clear of the bottom ornament.
+    const float top = win.y + S(84.0f) + ornament + S(20.0f), bottom = win.y + size.y - S(100.0f);
     const Frame frame{ImVec2(win.x + S(40.0f), top), ImVec2(win.x + size.x - list_w - S(70.0f), bottom)};
     if (const ChartTexture* shown = Shown(); state.zoom <= 0.0f && shown != nullptr) {
         state.zoom = FitZoom(frame, *shown->chart);
@@ -5515,7 +5708,7 @@ void Screen() {
         draw->AddText(ImVec2(mid - ts.x * 0.5f, bottom + S(8.0f)), IM_COL32(220, 150, 110, 255), state.notice.c_str());
         ImGui::PopFont();
     } else {
-        DrawKeys(draw, mid, bottom + S(14.0f));
+        DrawKeys(draw, win.x + S(40.0f), win.x + size.x - S(40.0f), win.y + size.y - S(BbKeyGuide::BottomClearance));
     }
     if (state.asking != 0) {
         if (asked_before && (left || right || up || down)) {
@@ -6092,7 +6285,8 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     if (Party::shown || Joining::open || menu_open) {
         Party::LoadGauge(); // before NewFrame, which hands new textures to the backend
     }
-    if (Team::open || Joining::open || Map::open || menu_open || quit_open) {
+    // The party HUD's prompts and the skip vote show the game's button icons from it too.
+    if (Team::open || Joining::open || Map::open || menu_open || quit_open || Party::shown || SkipVote::shown) {
         MenuArt::Load(); // the same: the game's menu art and font
     }
     MenuArt::LoadLanguage(); // the same: Japanese, Korean or Chinese glyphs once they are needed
