@@ -4632,12 +4632,20 @@ float TopAt(float x, float z) {
     return NAN;
 }
 
-/// Kaniel 2026-10-19 ("3d map ... as an optional feature"): the pictures as landscapes, each a
-/// grid over its tops (BbMapArt::Chart::Storeys) with the picture on it, drawn far to near so the
-/// near ground covers what lies behind it. The grid is coarse enough to stay under ImGui's 16-bit
-/// vertex count (about 40,000 vertices for everything in view); the slopes facing away from the
-/// light are darker, so walls read as walls.
-void DrawLandscapes(ImDrawList* draw, const Frame& frame) {
+/// Kaniel 2026-10-19 ("3d map ... as an optional feature"; "looks veeeery off, are there a way to
+/// look it normal?"): the pictures as a model of the place. Each spot of a grid over the pictures'
+/// tops (BbMapArt::Chart::Storeys, or the floors where the map shows the floors) stands as a block:
+/// its flat top carries the picture, and where the next spot is lower a straight wall drops to it,
+/// shaded by the way it faces (the light from the north-west, as the pictures'). Blocks are drawn
+/// far to near so the near ones cover what lies behind them. ImGui counts a draw list's vertices in
+/// 16 bits, so the blocks go out in child windows of up to 60,000 vertices each, one over another.
+struct Block {
+    ImVec2 at[4];
+    ImVec2 uv[4];
+    ImU32 col;
+    const ChartTexture* c;
+};
+void DrawLandscapes(const Frame& frame) {
     // What the frame can show: the corners taken back to the ground at the middle's height, with
     // room for what stands up into it.
     float vx0 = FLT_MAX, vx1 = -FLT_MAX, vz0 = FLT_MAX, vz1 = -FLT_MAX;
@@ -4682,14 +4690,16 @@ void DrawLandscapes(ImDrawList* draw, const Frame& frame) {
         cells_in_view += double(i1 - i0) * double(j1 - j0);
     }
     std::sort(pieces.begin(), pieces.end(), [](const Piece& a, const Piece& b) { return a.ahead > b.ahead; });
-    // One step for all: the grid's points stay under the budget (the window's other drawing
-    // shares the 65,536 vertices).
-    constexpr double Budget = 36000.0;
+    // One block size for all, the blocks in view kept to a number the frame draws smoothly.
+    constexpr double Budget = 45000.0;
     const int step = std::max(1, int(std::ceil(std::sqrt(cells_in_view / Budget))));
+    // Toward the viewer, in the world: (-s, -c). A wall shows when it faces that way.
+    const ImVec2 toward(-s, -c);
+    std::vector<Block> blocks;
+    blocks.reserve(size_t(std::min(cells_in_view / double(step * step), Budget)) * 3);
     for (const Piece& piece : pieces) {
         const BbMapArt::Chart& chart = *piece.c->chart;
         const BbMapArt::Chart::Storeys& st = chart.storeys;
-        const float cell_m = float(BbMapArt::Chart::FloorCell) / chart.ppm;
         const int nx = (piece.i1 - piece.i0) / step + 1, nz = (piece.j1 - piece.j0) / step + 1;
         if (nx < 2 || nz < 2) {
             continue;
@@ -4701,16 +4711,16 @@ void DrawLandscapes(ImDrawList* draw, const Frame& frame) {
             const int16_t t = BbMapArt::ShownHeight(chart, size_t(j) * size_t(st.width) + size_t(i), drawn_floors);
             return t == BbMapArt::Chart::NoHeight ? NAN : float(t) / 10.0f;
         };
-        // The grid's points: on screen, their place in the picture, their light.
-        draw->PushTexture(piece.c->texture->GetTexRef());
+        // Each block's top: the spot in its middle.
         std::vector<float> heights(size_t(nx) * size_t(nz));
         for (int b = 0; b < nz; ++b) {
             for (int a = 0; a < nx; ++a) {
-                heights[size_t(b) * size_t(nx) + size_t(a)] = top(piece.i0 + a * step, piece.j0 + b * step);
+                heights[size_t(b) * size_t(nx) + size_t(a)] =
+                    top(piece.i0 + a * step + step / 2, piece.j0 + b * step + step / 2);
             }
         }
-        // Lamp posts, trees and spires a point wide stand as needles over the grid: each point
-        // takes the median of the points round it (walls and roofs, many points wide, stay).
+        // Lamp posts, trees and spires a block wide stand as needles: each block takes the median
+        // of the blocks round it (walls and roofs, many blocks wide, stay).
         {
             const std::vector<float> raw = heights;
             for (int b = 0; b < nz; ++b) {
@@ -4738,76 +4748,130 @@ void DrawLandscapes(ImDrawList* draw, const Frame& frame) {
             }
         }
         const auto h_at = [&](int a, int b) {
-            a = std::clamp(a, 0, nx - 1), b = std::clamp(b, 0, nz - 1);
+            if (a < 0 || b < 0 || a >= nx || b >= nz) {
+                return NAN;
+            }
             return heights[size_t(b) * size_t(nx) + size_t(a)];
         };
-        int quads = 0;
-        for (int b = 0; b + 1 < nz; ++b) {
-            for (int a = 0; a + 1 < nx; ++a) {
-                if (!std::isnan(h_at(a, b)) && !std::isnan(h_at(a + 1, b)) && !std::isnan(h_at(a, b + 1)) &&
-                    !std::isnan(h_at(a + 1, b + 1))) {
-                    ++quads;
-                }
-            }
-        }
-        if (quads == 0) {
-            draw->PopTexture();
-            continue;
-        }
-        // The grid's points once each (shared by the quads round them): on screen, their place in
-        // the picture, their light (steep ground, a wall, darker; more so facing away from the
-        // north-west light).
-        draw->PrimReserve(quads * 6, nx * nz);
-        const ImDrawIdx first = ImDrawIdx(draw->_VtxCurrentIdx);
         const float u_scale = 1.0f / float(chart.width), v_scale = 1.0f / float(chart.height);
-        const float run = 2.0f * float(step) * cell_m;
-        for (int b = 0; b < nz; ++b) {
-            for (int a = 0; a < nx; ++a) {
-                const int i = piece.i0 + a * step, j = piece.j0 + b * step;
-                const float px = float(i * BbMapArt::Chart::FloorCell), py = float(j * BbMapArt::Chart::FloorCell);
-                const float x = chart.x0 + px / chart.ppm + piece.p.dx, z = chart.z1 - py / chart.ppm + piece.p.dz;
-                const float h = h_at(a, b);
-                float k = tone;
-                if (!std::isnan(h)) {
-                    const float east = h_at(a + 1, b), west = h_at(a - 1, b), south = h_at(a, b + 1), north = h_at(a, b - 1);
-                    const float rise_x = std::isnan(east) || std::isnan(west) ? 0.0f : east - west;
-                    const float rise_n = std::isnan(north) || std::isnan(south) ? 0.0f : north - south;
-                    const float steep = std::clamp(std::sqrt(rise_x * rise_x + rise_n * rise_n) / run - 0.6f, 0.0f, 1.5f);
-                    // Ground rising to the east or the south faces the light; to the west or north, away.
-                    const float away = std::clamp((-rise_x + rise_n) / std::max(0.01f, std::abs(rise_x) + std::abs(rise_n)),
-                                                  -1.0f, 1.0f);
-                    k *= 1.0f - steep * (0.24f + 0.14f * away);
-                }
-                draw->PrimWriteVtx(frame.Screen(x, z, std::isnan(h) ? 0.0f : h), ImVec2(px * u_scale, py * v_scale),
-                                   Party::Rgba(k, k, k, 1.0f));
-            }
-        }
-        // Quads far to near: along each axis from the end that lies ahead, the axis that runs most
-        // into the view outermost.
+        // A block's corner k (0 north-west, 1 north-east, 2 south-east, 3 south-west) in the
+        // world and in the picture.
+        const auto corner = [&](int a, int b, int k, float h, ImVec2& at, ImVec2& uv) {
+            const int i = piece.i0 + (a + (k == 1 || k == 2 ? 1 : 0)) * step;
+            const int j = piece.j0 + (b + (k >= 2 ? 1 : 0)) * step;
+            const float px = float(i * BbMapArt::Chart::FloorCell), py = float(j * BbMapArt::Chart::FloorCell);
+            at = frame.Screen(chart.x0 + px / chart.ppm + piece.p.dx, chart.z1 - py / chart.ppm + piece.p.dz, h);
+            uv = ImVec2(px * u_scale, py * v_scale);
+        };
+        // The four sides: corners (from, to), the next block's step, the way the wall faces.
+        struct Side {
+            int k0, k1, da, db;
+            float nx, nz, light;
+        };
+        static constexpr Side Sides[4] = {
+            {0, 1, 0, -1, 0.0f, 1.0f, 0.82f},  // north: lit
+            {1, 2, 1, 0, 1.0f, 0.0f, 0.58f},   // east
+            {2, 3, 0, 1, 0.0f, -1.0f, 0.48f},  // south: in shade
+            {3, 0, -1, 0, -1.0f, 0.0f, 0.74f}, // west: lit
+        };
         const bool x_back = s > 0.0f; // east lies ahead: from the east
         const bool z_back = c < 0.0f; // south lies ahead: from the south (rows grow south)
         const bool rows_outer = std::abs(c) >= std::abs(s);
-        const int outer_n = rows_outer ? nz - 1 : nx - 1, inner_n = rows_outer ? nx - 1 : nz - 1;
+        const int outer_n = rows_outer ? nz : nx, inner_n = rows_outer ? nx : nz;
         for (int oo = 0; oo < outer_n; ++oo) {
             for (int ii = 0; ii < inner_n; ++ii) {
                 const int bb = rows_outer ? oo : ii, aa = rows_outer ? ii : oo;
-                const int b = z_back ? nz - 2 - bb : bb;
-                const int a = x_back ? nx - 2 - aa : aa;
-                if (std::isnan(h_at(a, b)) || std::isnan(h_at(a + 1, b)) || std::isnan(h_at(a, b + 1)) ||
-                    std::isnan(h_at(a + 1, b + 1))) {
+                const int b = z_back ? nz - 1 - bb : bb;
+                const int a = x_back ? nx - 1 - aa : aa;
+                const float h = h_at(a, b);
+                if (std::isnan(h) || a + 1 >= nx || b + 1 >= nz) {
                     continue;
                 }
-                const auto idx = [&](int ia, int ib) { return ImDrawIdx(first + ib * nx + ia); };
-                draw->PrimWriteIdx(idx(a, b));
-                draw->PrimWriteIdx(idx(a + 1, b));
-                draw->PrimWriteIdx(idx(a + 1, b + 1));
-                draw->PrimWriteIdx(idx(a, b));
-                draw->PrimWriteIdx(idx(a + 1, b + 1));
-                draw->PrimWriteIdx(idx(a, b + 1));
+                // The walls facing the viewer, down to the lower block beside (or a little way
+                // into the void at the picture's edge).
+                for (const Side& side : Sides) {
+                    if (side.nx * toward.x + side.nz * toward.y <= 0.02f) {
+                        continue;
+                    }
+                    float low = h_at(a + side.da, b + side.db);
+                    if (std::isnan(low)) {
+                        low = h - 3.0f;
+                    }
+                    if (h - low < 0.4f) {
+                        continue;
+                    }
+                    Block wall{};
+                    ImVec2 uv0, uv1;
+                    corner(a, b, side.k0, h, wall.at[0], uv0);
+                    corner(a, b, side.k1, h, wall.at[1], uv1);
+                    corner(a, b, side.k1, low, wall.at[2], wall.uv[2]);
+                    corner(a, b, side.k0, low, wall.at[3], wall.uv[3]);
+                    // The wall takes the colour of its top edge, a facade in its own shade.
+                    wall.uv[0] = wall.uv[3] = uv0;
+                    wall.uv[1] = wall.uv[2] = uv1;
+                    const float k = tone * side.light;
+                    wall.col = Party::Rgba(k, k, k, 1.0f);
+                    wall.c = piece.c;
+                    blocks.push_back(wall);
+                }
+                Block roof{};
+                for (int k = 0; k < 4; ++k) {
+                    corner(a, b, k, h, roof.at[k], roof.uv[k]);
+                }
+                roof.col = Party::Rgba(tone, tone, tone, 1.0f);
+                roof.c = piece.c;
+                blocks.push_back(roof);
             }
         }
-        draw->PopTexture();
     }
+    // Out in child windows over the frame, 15,000 quads (60,000 vertices) each.
+    constexpr size_t PerList = 15000;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    for (size_t first = 0, part = 0; first < blocks.size(); first += PerList, ++part) {
+        ImGui::SetCursorScreenPos(frame.p0);
+        char id[32];
+        std::snprintf(id, sizeof(id), "##map_land_%zu", part);
+        ImGui::BeginChild(id, ImVec2(frame.p1.x - frame.p0.x, frame.p1.y - frame.p0.y), ImGuiChildFlags_None,
+                          ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration |
+                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(frame.p0, frame.p1, false);
+        const ChartTexture* bound = nullptr;
+        const size_t last = std::min(blocks.size(), first + PerList);
+        for (size_t q = first; q < last;) {
+            if (blocks[q].c != bound) {
+                if (bound != nullptr) {
+                    draw->PopTexture();
+                }
+                bound = blocks[q].c;
+                draw->PushTexture(bound->texture->GetTexRef());
+            }
+            size_t run = q;
+            while (run < last && blocks[run].c == bound) {
+                ++run;
+            }
+            draw->PrimReserve(int(run - q) * 6, int(run - q) * 4);
+            for (; q < run; ++q) {
+                const Block& quad = blocks[q];
+                const ImDrawIdx idx = ImDrawIdx(draw->_VtxCurrentIdx);
+                for (int k = 0; k < 4; ++k) {
+                    draw->PrimWriteVtx(quad.at[k], quad.uv[k], quad.col);
+                }
+                draw->PrimWriteIdx(idx);
+                draw->PrimWriteIdx(ImDrawIdx(idx + 1));
+                draw->PrimWriteIdx(ImDrawIdx(idx + 2));
+                draw->PrimWriteIdx(idx);
+                draw->PrimWriteIdx(ImDrawIdx(idx + 2));
+                draw->PrimWriteIdx(ImDrawIdx(idx + 3));
+            }
+        }
+        if (bound != nullptr) {
+            draw->PopTexture();
+        }
+        draw->PopClipRect();
+        ImGui::EndChild();
+    }
+    ImGui::PopStyleVar();
 }
 
 /// A small lamp: its post and its glowing head; `focused` rings it.
@@ -4877,8 +4941,18 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                                       chart.z1 - float(chart.height) / chart.ppm);
             draw->AddImage(c.texture->GetTexRef(), a, b, ImVec2(0, 0), ImVec2(1, 1), Party::Rgba(tone, tone, tone, 1.0f));
         };
+        ImDrawList* const parent = draw;
         if (state.three_d) {
-            DrawLandscapes(draw, frame);
+            DrawLandscapes(frame);
+            // The marks over the landscape's child windows: in one of their own, after them.
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::SetCursorScreenPos(frame.p0);
+            ImGui::BeginChild("##map_marks", ImVec2(frame.p1.x - frame.p0.x, frame.p1.y - frame.p0.y),
+                              ImGuiChildFlags_None,
+                              ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration |
+                                  ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse);
+            draw = ImGui::GetWindowDrawList();
+            draw->PushClipRect(frame.p0, frame.p1, false);
         } else {
             for (const auto& [map, c] : charts) {
                 if (map != state.shown && c.texture != nullptr) {
@@ -4960,6 +5034,12 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                 draw->AddLine(ImVec2(c.x, c.y - r - t), ImVec2(c.x, c.y - r + S(2.0f)), color, width);
                 draw->AddLine(ImVec2(c.x, c.y + r - S(2.0f)), ImVec2(c.x, c.y + r + t), color, width);
             }
+        }
+        if (draw != parent) {
+            draw->PopClipRect();
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            draw = parent;
         }
     } else {
         ImGui::PushFont(MenuArt::Font(), 24.0f);
