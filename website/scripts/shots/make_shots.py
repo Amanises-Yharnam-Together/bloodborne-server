@@ -20,7 +20,6 @@ GAME = (0, 0, 1920, 1080)
 LAUNCHER = (0, 0, 1800, 1170)
 COOP_CARD = (270, 222, 1530, 950)
 INSERT = (360, 130, 1560, 950)
-COMPASS = (680, 28, 1290, 90)
 TOOLTIP = (420, 230, 1260, 445)
 # The FPS counter at the top right of visible rig games (1920x1080), painted over.
 FPS_BOX = (1570, 10, 1910, 48)
@@ -71,9 +70,19 @@ SHOTS = [
     ("map-team", "game-map-team.png", GAME, 1440),
     ("map-hunters", "game-map-hunters-3.png", GAME, 1440),
     ("map-world", "game-map-world.png", GAME, 1440),
-    ("compass-ahead", "game-compass-ahead.png", COMPASS, 1220),
-    ("compass-behind", "game-compass-behind.png", COMPASS, 1220),
-    ("compass-right", "game-compass-right.png", COMPASS, 1220),
+    *[(f"compass-{t}", f"game-compass-world-{t}.png", GAME, 1440) for t in ("ahead", "hall-1", "hall-2", "outside")],
+    # travel apart
+    ("travel-player1", "game-travel-1-player1-central-yharnam.png", GAME, 1440),
+    ("travel-player2", "game-travel-2-player2-hunters-dream.png", GAME, 1440),
+    ("travel-map-player1", "game-travel-4-map-player1.png", GAME, 1440),
+    ("travel-map-player2", "game-travel-5-map-player2.png", GAME, 1440),
+    # chalice dungeons
+    ("chalice-ritual", "game-chalice-1-ritual.png", GAME, 1440),
+    ("chalice-ritual-done", "game-chalice-2-ritual-done.png", GAME, 1440),
+    ("chalice-teammate-altar", "game-chalice-3-teammate-altar.png", GAME, 1440),
+    ("chalice-layers", "game-chalice-4-teammate-layers.png", GAME, 1440),
+    ("chalice-dungeon", "game-chalice-6-dungeon-both.png", GAME, 1440),
+    ("chalice-arrival", "game-chalice-7-dungeon-arrival.png", GAME, 1440),
     # the Insert menu's tabs
     # visible games: the HUD
     ("party-alive", "hud-party-alive.png", GAME, 1440),

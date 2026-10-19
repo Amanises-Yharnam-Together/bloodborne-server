@@ -655,7 +655,7 @@ const play: DocPage = {
   slug: "play",
   title: "Playing together",
   description:
-    "How to make a team in the game or join one in progress, the map and compass, what the party list shows, how going down and reviving work, and how to give items to a teammate.",
+    "How to make a team in the game or join one in progress, travelling apart, chalice dungeons, the map and compass, what the party list shows, how going down and reviving work, and how to give items to a teammate.",
   sections: [
     {
       id: "team",
@@ -854,6 +854,118 @@ const play: DocPage = {
       ],
     },
     {
+      id: "travel",
+      title: "Travel apart",
+      icon: "lantern",
+      blocks: [
+        {
+          type: "p",
+          text: "You stay in the team wherever you go. One hunter can walk Central Yharnam while another rests in the Hunter's Dream: each plays their own map, the party list keeps both, and the **Map** says where the other one is.",
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Player 1",
+              src: S("travel-player1"),
+              width: 1440,
+              height: 810,
+              alt: "Player 1 in a clinic hall in Central Yharnam, with Player 2 in the party list on the left.",
+              caption: "Player 1 in Central Yharnam.",
+            },
+            {
+              label: "Player 2",
+              src: S("travel-player2"),
+              width: 1440,
+              height: 810,
+              alt: "Player 2 on the path of the Hunter's Dream with the Doll nearby, and Player 1 in the party list.",
+              caption: "At the same moment, Player 2 in the Hunter's Dream.",
+            },
+            {
+              label: "Player 1's map",
+              src: S("travel-map-player1"),
+              width: 1440,
+              height: 810,
+              alt: "Player 1's map of Central Yharnam; under Hunters it lists Player 2 in Hunter's Dream.",
+              caption: "Player 1's map lists Player 2 in the Hunter's Dream.",
+            },
+            {
+              label: "Player 2's map",
+              src: S("travel-map-player2"),
+              width: 1440,
+              height: 810,
+              alt: "Player 2's map of the Hunter's Dream; under Hunters it lists Player 1 in Central Yharnam.",
+              caption: "And Player 2's map lists Player 1 in Central Yharnam.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "chalice",
+      title: "Chalice dungeons together",
+      icon: "bell",
+      blocks: [
+        {
+          type: "p",
+          text: "Chalice dungeons are team altars. When one hunter performs a **Chalice Ritual**, the chalice rests on every teammate's altar too, so each of you can enter the same dungeon from your own **Ritual Altar** in the Hunter's Dream. A teammate who does not own that chalice is given it, and keeps it.",
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Ritual",
+              src: S("chalice-ritual"),
+              width: 1440,
+              height: 810,
+              alt: "The Chalice Ritual menu with the Pthumeru Chalice chosen, its depth, area and the ritual materials.",
+              caption: "One hunter performs the ritual.",
+            },
+            {
+              label: "Ritual done",
+              src: S("chalice-ritual-done"),
+              width: 1440,
+              height: 810,
+              alt: "The message: The ritual is finished, and a chalice rests upon the altar. You may now explore the dungeon.",
+              caption: "The chalice rests upon the altar.",
+            },
+            {
+              label: "Teammate's altar",
+              src: S("chalice-teammate-altar"),
+              width: 1440,
+              height: 810,
+              alt: "Another hunter in the Hunter's Dream at the glowing First Ritual Altar.",
+              caption: "A teammate walks up to their own altar.",
+            },
+            {
+              label: "Layers",
+              src: S("chalice-layers"),
+              width: 1440,
+              height: 810,
+              alt: "The teammate's altar menu with Pthumerian Labyrinth and its layer Chamber of the Seal.",
+              caption: "The team's dungeon is already on it.",
+            },
+            {
+              label: "Inside",
+              src: S("chalice-dungeon"),
+              width: 1440,
+              height: 810,
+              alt: "Inside the Pthumerian Labyrinth: two hunters stand before a misty archway.",
+              caption: "Both hunters in the same dungeon.",
+            },
+            {
+              label: "Arrival",
+              src: S("chalice-arrival"),
+              width: 1440,
+              height: 810,
+              alt: "A hunter arrives in the labyrinth with a teammate just ahead at the archway.",
+              caption: "Arriving from the altar, beside the team.",
+            },
+          ],
+        },
+      ],
+    },
+    {
       id: "map",
       title: "Map and compass",
       blocks: [
@@ -903,7 +1015,7 @@ const play: DocPage = {
         },
         {
           type: "p",
-          text: "The compass at the top of the screen shows your teammates while you play: a mark with their initial and how far they are. When someone is behind you or off to the side, the mark waits at the edge with an arrow pointing the way.",
+          text: "The compass at the top of the screen shows your teammates while you play: a mark with their initial and how far away they are. When someone is behind you, the mark waits at the edge with an arrow pointing the way.",
         },
         {
           type: "gallery",
@@ -911,26 +1023,34 @@ const play: DocPage = {
             {
               label: "Ahead",
               src: S("compass-ahead"),
-              width: 1220,
-              height: 124,
-              alt: "The compass strip with a teammate's mark P in the middle, 5.5 m away.",
-              caption: "A teammate straight ahead.",
-            },
-            {
-              label: "Behind",
-              src: S("compass-behind"),
-              width: 1220,
-              height: 124,
-              alt: "The compass with the mark P at the right edge with an arrow, 5.4 m away.",
-              caption: "Behind you: the mark waits at the edge and points the way.",
+              width: 1440,
+              height: 810,
+              alt: "In a dark hall, Player 2 stands ahead; the compass at the top has their mark in the middle.",
+              caption: "A teammate straight ahead: the mark sits in the middle of the compass.",
             },
             {
               label: "To the side",
-              src: S("compass-right"),
-              width: 1220,
-              height: 124,
-              alt: "The compass with the mark P at the right end of the strip, 5.5 m away.",
-              caption: "Off to your right.",
+              src: S("compass-hall-1"),
+              width: 1440,
+              height: 810,
+              alt: "Player 2 stands to the right in a doorway; the compass mark has moved right.",
+              caption: "Off to the side, the mark slides along the strip.",
+            },
+            {
+              label: "Other side",
+              src: S("compass-hall-2"),
+              width: 1440,
+              height: 810,
+              alt: "Player 2 stands to the left; the compass mark is on the left of the strip.",
+              caption: "On your left, the mark is on the left.",
+            },
+            {
+              label: "Outside",
+              src: S("compass-outside"),
+              width: 1440,
+              height: 810,
+              alt: "Outside a lit church at night, Player 2 is ahead on the left with the compass mark above.",
+              caption: "Outdoors it works the same, with the distance under the mark.",
             },
           ],
         },
@@ -943,7 +1063,7 @@ const play: DocPage = {
       blocks: [
         {
           type: "p",
-          text: "Your teammates are listed on the left, under your own bars, in the game's own HUD style: a round portrait, the name, how many **Blood Vials** and **Quicksilver Bullets** they carry, and their health bar. It reads **Down** with the revive progress, **Dead**, or **elsewhere** when they are on another map.",
+          text: "Your teammates are listed on the left, under your own bars, in the game's own HUD style: a round portrait, the name, how many **Blood Vials** and **Quicksilver Bullets** they carry, and their health bar. It reads **Down** with the revive progress, or **Dead**. To see which area a teammate is in, open the **Map**.",
         },
         {
           type: "image",
