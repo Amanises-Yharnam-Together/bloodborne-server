@@ -342,9 +342,27 @@ std::uint32_t Texture::Sample(float u, float v, int level) const {
     if (t.width <= 0 || t.height <= 0) {
         return 0;
     }
-    const int x = int(std::floor((u - std::floor(u)) * float(t.width))) % t.width;
-    const int y = int(std::floor((v - std::floor(v)) * float(t.height))) % t.height;
-    return t.pixels[std::size_t(std::max(0, y)) * std::size_t(t.width) + std::size_t(std::max(0, x))];
+    // Kaniel 2026-10-19 ("increase the quality of the render"): the four texels round the spot,
+    // blended (wrapping at the edges).
+    const float fx = (u - std::floor(u)) * float(t.width) - 0.5f, fy = (v - std::floor(v)) * float(t.height) - 0.5f;
+    const int x0 = int(std::floor(fx)), y0 = int(std::floor(fy));
+    const float ax = fx - float(x0), ay = fy - float(y0);
+    const auto at = [&](int x, int y) {
+        x = ((x % t.width) + t.width) % t.width;
+        y = ((y % t.height) + t.height) % t.height;
+        return t.pixels[std::size_t(y) * std::size_t(t.width) + std::size_t(x)];
+    };
+    const std::uint32_t p[4] = {at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1)};
+    const float w[4] = {(1 - ax) * (1 - ay), ax * (1 - ay), (1 - ax) * ay, ax * ay};
+    std::uint32_t out = 0;
+    for (int c = 0; c < 4; ++c) {
+        float sum = 0;
+        for (int k = 0; k < 4; ++k) {
+            sum += float((p[k] >> (c * 8)) & 0xFF) * w[k];
+        }
+        out |= std::uint32_t(std::clamp(sum + 0.5f, 0.0f, 255.0f)) << (c * 8);
+    }
+    return out;
 }
 
 int Texture::LevelFor(float texels) const {
@@ -1518,7 +1536,7 @@ void FloorView(const Chart& chart, float y, std::uint8_t* rgba) {
 
 std::vector<std::uint8_t> Save(const Chart& chart) {
     std::vector<std::uint8_t> file(32);
-    std::memcpy(file.data(), "BBMAP8\0\0", 8);
+    std::memcpy(file.data(), "BBMAP9\0\0", 8);
     std::memcpy(file.data() + 8, &chart.width, 4);
     std::memcpy(file.data() + 12, &chart.height, 4);
     std::memcpy(file.data() + 16, &chart.x0, 4);
@@ -1568,7 +1586,7 @@ std::vector<std::uint8_t> Save(const Chart& chart) {
 }
 
 std::optional<Chart> Load(std::span<const std::uint8_t> file) {
-    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP8\0\0", 8) != 0) {
+    if (file.size() < 32 || std::memcmp(file.data(), "BBMAP9\0\0", 8) != 0) {
         return std::nullopt;
     }
     Chart chart;
@@ -1640,6 +1658,38 @@ std::optional<Chart> ChartArea(std::uint32_t packed_map, const ReadFile& read, f
                                const ReadRange& read_range, bool textured, int view) {
     const std::array<std::uint32_t, 1> one{packed_map};
     return ChartAreas(one, read, ppm, max_side, threads, read_range, textured, view);
+}
+
+Chart Halved(const Chart& chart) {
+    Chart out;
+    out.width = std::max(1, chart.width / 2);
+    out.height = std::max(1, chart.height / 2);
+    out.x0 = chart.x0;
+    out.z1 = chart.z1;
+    out.ppm = chart.ppm / 2.0f;
+    out.labels = chart.labels;
+    out.rgba.resize(std::size_t(out.width) * std::size_t(out.height) * 4);
+    for (int y = 0; y < out.height; ++y) {
+        for (int x = 0; x < out.width; ++x) {
+            // The colours weighed by their cover, so an edge against the void stays its colour.
+            float sum[3] = {}, cover = 0;
+            for (int k = 0; k < 4; ++k) {
+                const std::uint8_t* p = chart.rgba.data() +
+                                        (std::size_t(y * 2 + (k >> 1)) * std::size_t(chart.width) + std::size_t(x * 2 + (k & 1))) * 4;
+                const float a = float(p[3]) / 255.0f;
+                for (int c = 0; c < 3; ++c) {
+                    sum[c] += float(p[c]) * a;
+                }
+                cover += a;
+            }
+            std::uint8_t* q = out.rgba.data() + (std::size_t(y) * std::size_t(out.width) + std::size_t(x)) * 4;
+            for (int c = 0; c < 3; ++c) {
+                q[c] = cover > 0 ? std::uint8_t(std::clamp(sum[c] / cover + 0.5f, 0.0f, 255.0f)) : 0;
+            }
+            q[3] = std::uint8_t(std::clamp(cover / 4.0f * 255.0f + 0.5f, 0.0f, 255.0f));
+        }
+    }
+    return out;
 }
 
 ObliqueView ViewOf(int view) {

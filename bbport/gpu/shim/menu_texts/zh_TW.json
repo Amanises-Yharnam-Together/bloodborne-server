@@ -1,4 +1,8 @@
 {
+ "3D map": "3D地圖",
+ "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "在地圖上按L3，以遊戲模型繪製的場景斜視顯示。每個區域首次會在背景繪製一次，需要佔用記憶體與時間；配備較低的電腦請保持關閉。",
+ "Turn on the 3D map in the settings (Insert, Display)": "請在設定中開啟3D地圖（Insert，顯示）",
+ "Preparing the 3D view...": "正在準備3D視圖...",
  "On": "開啟",
  "Off": "關閉",
  "HDR: switch HDR on for this display in Windows to get the HDR options here.": "HDR：請在 Windows 中為此顯示器開啟 HDR，這裡才會出現 HDR 選項。",

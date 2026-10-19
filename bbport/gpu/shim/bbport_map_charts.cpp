@@ -93,9 +93,15 @@ std::shared_ptr<const BbMapArt::Chart> Make(std::uint32_t key) {
     // Kaniel 2026-10-18 ("sharper close-up"), 2026-10-19 ("it generally should be sharper"): 6
     // pixels a metre.
     // Kaniel 2026-10-19 ("it looks much better this way"): in the game's own textures.
-    // Kaniel 2026-10-19 ("can we prerender it?"): the 3D view's sides at 4 pixels a metre.
-    auto drawn = view > 0 ? BbMapArt::ChartArea(packed_map, ReadGameFile, 4.0f, 4096, threads, ReadGameRange, true, view)
+    // Kaniel 2026-10-19 ("can we prerender it?", "increase the quality of the render"): the 3D
+    // view's sides drawn at up to 10 pixels a metre and halved (smooth edges), on two threads (a
+    // side's canvas is large).
+    auto drawn = view > 0 ? BbMapArt::ChartArea(packed_map, ReadGameFile, 10.0f, 6144, std::min(threads, 2),
+                                                ReadGameRange, true, view)
                           : BbMapArt::ChartArea(packed_map, ReadGameFile, 6.0f, 6144, threads, ReadGameRange, true);
+    if (drawn && view > 0) {
+        drawn = BbMapArt::Halved(*drawn);
+    }
     if (!drawn) {
         std::printf("Map: no picture of %s in the game's files\n", BbMapArt::MapNameOf(packed_map).c_str());
         return nullptr;

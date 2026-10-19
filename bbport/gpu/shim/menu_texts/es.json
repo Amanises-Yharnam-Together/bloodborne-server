@@ -1,4 +1,8 @@
 {
+ "3D map": "Mapa 3D",
+ "L3 on the map shows the place drawn from the game's own models from an angle. Each area is drawn once, the first time, in the background, using memory and time; leave it off on a low-end PC.": "L3 en el mapa muestra el lugar en perspectiva, dibujado con los modelos del juego. Cada zona se dibuja una vez, la primera vez, en segundo plano, lo que usa memoria y tiempo; déjalo desactivado en un PC modesto.",
+ "Turn on the 3D map in the settings (Insert, Display)": "Activa el mapa 3D en los ajustes (Insert, Pantalla)",
+ "Preparing the 3D view...": "Preparando la vista 3D...",
  "On": "Sí",
  "Off": "No",
  "HDR: switch HDR on for this display in Windows to get the HDR options here.": "HDR: activa HDR para esta pantalla en Windows para ver aquí las opciones HDR.",

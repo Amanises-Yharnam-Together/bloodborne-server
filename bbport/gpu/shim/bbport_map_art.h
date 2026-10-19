@@ -181,6 +181,10 @@ struct Chart {
 
 /// The chart cut to what is drawn in it (a few pixels round it); its frame follows.
 Chart Cropped(const Chart& chart);
+/// Kaniel 2026-10-19 ("increase the quality of the render"): the picture at half its size, each
+/// pixel the four it covers blended (drawn at twice the detail, its edges come out smooth). The
+/// storeys are left out.
+Chart Halved(const Chart& chart);
 
 /// Kaniel 2026-10-18: a roof (the picture's top) more than 3 m over feet at height `y` at (x, z):
 /// the player is indoors, under a bridge or under trees, and the map shows floors.
@@ -254,7 +258,7 @@ private:
     std::vector<std::uint8_t> grade;
 };
 
-/// A chart as kept in the user folder ("BBMAP8": the number goes up whenever the drawing changes,
+/// A chart as kept in the user folder ("BBMAP9": the number goes up whenever the drawing changes,
 /// so pictures drawn the old way are drawn again; the frame, the pixels zlib-compressed, the
 /// labels, then the storeys zlib-compressed), and
 /// read back (nothing when it is not one).
