@@ -1,4 +1,7 @@
 {
+ "Map fog of war": "地图迷雾",
+ "The map hides what your hunter has not walked near yet. Off shows the whole map.": "地图会隐藏你的猎人尚未走近的地方。关闭后显示整张地图。",
+ "Turn": "旋转",
  "Prerendered": "预先绘制",
  "Live": "实时",
  "{L3} on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "在地图上按{L3}，以游戏模型斜视显示场景。预先绘制：每个区域首次在后台绘制一次。实时：转动和倾斜视角（右摇杆）时由显卡使用其显存绘制模型。配置较低的电脑请保持关闭。",

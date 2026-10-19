@@ -1,4 +1,7 @@
 {
+ "Map fog of war": "Kaartmist",
+ "The map hides what your hunter has not walked near yet. Off shows the whole map.": "De kaart verbergt waar je jager nog niet in de buurt is geweest. Uit toont de hele kaart.",
+ "Turn": "Draaien",
  "Prerendered": "Vooraf getekend",
  "Live": "Live",
  "{L3} on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "{L3} op de kaart toont de plek schuin van boven uit de modellen van het spel. Vooraf getekend: elk gebied wordt één keer getekend, de eerste keer, op de achtergrond. Live: de videokaart tekent de modellen terwijl je het beeld draait en kantelt (rechterstick), met haar geheugen. Laat het uit op een zwakke pc.",

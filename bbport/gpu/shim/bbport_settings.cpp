@@ -106,6 +106,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.compass = i != 0;
     } else if (key == "map_3d") {
         v.map_3d = std::clamp(i, 0, Map3dCount - 1);
+    } else if (key == "map_fog") {
+        v.map_fog = i != 0;
     } else if (key == "compass_position") {
         for (int p = 0; p < CompassPositionCount; ++p) {
             if (value == CompassPositionNames[p]) {
@@ -325,6 +327,7 @@ void Load() {
         {"BB_FRAME_GEN", "frame_generation"},       {"BB_FRAME_GEN_PROVIDER", "frame_gen_provider"},
         {"BB_FRAME_GEN_MULTIPLIER", "frame_gen_multiplier"},
         {"BB_FRAME_GEN_FIT_DISPLAY", "frame_gen_fit_display"},
+        {"BB_MAP_3D", "map_3d"},                    {"BB_MAP_FOG", "map_fog"}, // the rig's map scenarios
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -536,6 +539,7 @@ void Save() {
     put("compass_position",
         CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);
     put("map_3d", std::to_string(std::clamp(v.map_3d.load(), 0, Map3dCount - 1)));
+    put("map_fog", flag(v.map_fog));
     put("fps_limit", std::to_string(v.fps_limit.load()));
     put("dlss_model", DlssModelNames[DlssModelIndex(v.dlss_model)]);
     put("window_mode", WindowModeNames[std::clamp(v.window_mode.load(), 0, WindowModeCount - 1)]);

@@ -262,6 +262,8 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_M: return ImGuiKey_M;
     case SDLK_F: return ImGuiKey_F;
     case SDLK_V: return ImGuiKey_V;
+    case SDLK_Z: return ImGuiKey_Z;
+    case SDLK_X: return ImGuiKey_X;
     case SDLK_EQUALS: return ImGuiKey_Equal;
     case SDLK_MINUS: return ImGuiKey_Minus;
     default: return ImGuiKey_None;
@@ -1693,6 +1695,9 @@ void DisplayTab() {
              "реальном времени: модели рисуются видеокартой, пока вы поворачиваете и наклоняете "
              "вид (правый стик), используя её память. На слабом ПК оставьте выключенным."),
            true, [&](int i) { Store(s.map_3d, i, true); });
+    Toggle("map_fog", T("Map fog of war", "Туман на карте"), s.map_fog,
+           T("The map hides what your hunter has not walked near yet. Off shows the whole map.",
+             "Карта скрывает то, рядом с чем ваш охотник ещё не проходил. Выкл. показывает всю карту."));
     Choice("fps_limit", T("FPS limit", "Лимит FPS"), BbSettings::FpsLimitIndex(s.fps_limit),
            BbSettings::FpsLimitCount,
            [&](int i) {
@@ -4661,6 +4666,9 @@ void Fogged(const BbMapArt::Chart& chart, uint32_t map, std::uint8_t* out) {
     if (!std::isnan(drawn_floors)) {
         BbMapArt::FloorView(chart, drawn_floors, out);
     }
+    if (!BbSettings::Get().map_fog) {
+        return; // Kaniel 2026-10-19: the fog turned off in the settings, the whole map shows
+    }
     for (int i = 0; i < view.cleared_count; ++i) {
         if (view.cleared[i] == (map & 0xFFFF0000u)) {
             return;
@@ -4740,6 +4748,11 @@ void Refresh() {
     }
     const bool same_floors = std::isnan(floors) ? std::isnan(drawn_floors)
                                                 : !std::isnan(drawn_floors) && std::abs(floors - drawn_floors) < 1.0f;
+    static bool drawn_fog = true; // the fog setting the pictures were made with
+    if (drawn_fog != BbSettings::Get().map_fog) {
+        drawn_fog = BbSettings::Get().map_fog;
+        rebuild = true;
+    }
     if ((rebuild || !same_floors) && view.lamp_count > 0) { // once the first reading since opening is in
         if (!same_floors) {
             drawn_floors = floors;
@@ -4820,7 +4833,7 @@ void Refresh() {
             if (map != 0 && charts.contains(map) && !BbMap3d::Has(map)) {
                 if (const auto mesh = BbMapCharts::GetMesh(map)) {
                     const Place p = AtlasOffset(map);
-                    BbMap3d::Upload(map, mesh, p.dx, p.dz);
+                    BbMap3d::Upload(map, mesh, charts[map].chart, p.dx, p.dz);
                 }
             }
         }
@@ -4878,7 +4891,9 @@ std::string AreaName(uint32_t map) {
     return name;
 }
 
-/// The areas the screen goes through: each with a lit lamp, and the player's own.
+/// The areas the screen goes through: each with a lit lamp, and the player's own. Kaniel 2026-10-19
+/// ("I lifted fog of war. why don't I see the whole map? only yaharnam"): with the fog off, every
+/// area with a lamp, lit or not.
 std::vector<uint32_t> Areas() {
     std::vector<uint32_t> areas;
     const auto add = [&](uint32_t map) {
@@ -4887,8 +4902,9 @@ std::vector<uint32_t> Areas() {
         }
     };
     add(view.map);
+    const bool fog = BbSettings::Get().map_fog;
     for (int i = 0; i < view.lamp_count; ++i) {
-        if (view.lamps[i].lit) {
+        if (view.lamps[i].lit || !fog) {
             add(view.lamps[i].map);
         }
     }
@@ -5195,7 +5211,7 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
         // The cursor: a ring with four ticks, in the compass's light gray.
         if (state.cursor.x >= 0.0f) {
             const ImVec2 c = state.cursor;
-            const float r = S(11.0f), t = S(7.0f);
+            const float r = S(16.0f), t = S(10.0f); // Kaniel 2026-10-19: "a bit bigger"
             const ImU32 ink = Party::Rgba(0, 0, 0, 0.6f), gray = Gray(0.95f);
             for (const auto& [color, width] : {std::pair{ink, S(3.5f)}, {gray, S(1.6f)}}) {
                 draw->AddCircle(c, r, color, 32, width);
@@ -5364,12 +5380,15 @@ void DrawKeys(ImDrawList* draw, float x0, float x1, float bottom) {
     // Kaniel 2026-10-19 ("make it opt in"): L3 only while the 3D map is on in the settings.
     std::vector<Keys::Hint> keys = {
         {"L1 R1", "Q E", T("Area", "Область")},
-        {"LS RS", "WASD", T("Move", "Сдвиг")},
-        {"L2 R2", "- =", T("Zoom", "Масштаб")},
+        {"LS", "WASD", T("Move", "Сдвиг")},
+        {state.three_d && Live() ? "L2 R2" : "RS", "- =", T("Zoom", "Масштаб")},
         {"Square", "C", T("You", "Вы")},
         {"Triangle", "Tab", T("Whole map", "Вся карта")},
         {"R3", "F", std::isnan(drawn_floors) ? T("Floors", "Этажи") : T("Roofs", "Крыши")},
     };
+    if (state.three_d && Live()) {
+        keys.insert(keys.begin() + 3, {"RS", "Z X", T("Turn", "Поворот")});
+    }
     if (state.three_d || BbSettings::Get().map_3d) {
         keys.push_back({"L3", "V", state.three_d ? T("Flat", "Плоско") : T("3D", "3D")});
     }
@@ -5389,38 +5408,67 @@ bool Pressed(std::initializer_list<ImGuiKey> keys, bool repeat = false) {
 }
 
 /// Moving and zooming the picture: the right stick, the arrow-free keys, the mouse.
+/// Kaniel 2026-10-19 ("more like elden ring"): the cross stays in the middle; the left stick (or
+/// WASD, or a left drag) moves the map under it, the right stick zooms (up: in), as L2 / R2, the
+/// wheel and = / - do. In the live 3D view the right stick turns (Z / X) and tilts it (a right drag
+/// does both), and only L2 / R2 zoom. Near a lit lamp the map slows and, once the stick lets go, settles
+/// with the lamp under the cross.
 void MoveView(const Frame& frame) {
     ImGuiIO& io = ImGui::GetIO();
     const float dt = std::min(io.DeltaTime, 0.1f);
     const auto analog = [](ImGuiKey key) { return ImGui::GetKeyData(key)->AnalogValue; };
-    float sx = analog(ImGuiKey_GamepadRStickRight) - analog(ImGuiKey_GamepadRStickLeft);
-    float sy = analog(ImGuiKey_GamepadRStickDown) - analog(ImGuiKey_GamepadRStickUp);
+    float lx = analog(ImGuiKey_GamepadLStickRight) - analog(ImGuiKey_GamepadLStickLeft);
+    float ly = analog(ImGuiKey_GamepadLStickDown) - analog(ImGuiKey_GamepadLStickUp);
+    const float rx = analog(ImGuiKey_GamepadRStickRight) - analog(ImGuiKey_GamepadRStickLeft);
+    const float ry = analog(ImGuiKey_GamepadRStickDown) - analog(ImGuiKey_GamepadRStickUp);
     const bool inside = io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x && io.MousePos.y >= frame.p0.y &&
                         io.MousePos.y < frame.p1.y;
-    if (state.three_d) {
-        if (Live()) {
-            // Kaniel 2026-10-19 (live 3D): the right stick (or a right drag) turns and tilts it;
-            // the left stick's cursor and a left drag move it.
-            state.yaw += sx * 1.8f * dt;
-            state.pitch = std::clamp(state.pitch - sy * 0.9f * dt, 0.35f, 1.5707f);
-            if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
-                state.yaw += io.MouseDelta.x * 0.006f;
-                state.pitch = std::clamp(state.pitch + io.MouseDelta.y * 0.004f, 0.35f, 1.5707f);
-            }
-            sx = sy = 0.0f;
-        } else {
-            // Kaniel 2026-10-19 ("we need just one side"): the 3D view is seen from the south;
-            // the sticks and drags move it as on the flat map.
-            const BbMapArt::ObliqueView seen = BbMapArt::ViewOf(state.side);
-            state.yaw = seen.yaw;
-            state.pitch = seen.pitch;
+    const bool live = state.three_d && Live();
+    if (state.three_d && !live) {
+        // Kaniel 2026-10-19 ("we need just one side"): the prerendered 3D view is seen from the south.
+        const BbMapArt::ObliqueView seen = BbMapArt::ViewOf(state.side);
+        state.yaw = seen.yaw;
+        state.pitch = seen.pitch;
+    }
+    if (live) {
+        // Kaniel 2026-10-19 ("in 3d right stick should rotate, r2/l2 zoom"): sideways turns, up and
+        // down tilts.
+        const float turn = (ImGui::IsKeyDown(ImGuiKey_X) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_Z) ? 1.0f : 0.0f);
+        state.yaw += (rx + turn) * 1.8f * dt;
+        state.pitch = std::clamp(state.pitch - ry * 0.9f * dt, 0.35f, 1.5707f);
+        if (inside && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
+            state.yaw += io.MouseDelta.x * 0.006f;
+            state.pitch = std::clamp(state.pitch + io.MouseDelta.y * 0.004f, 0.35f, 1.5707f);
         }
     }
-    sx += (ImGui::IsKeyDown(ImGuiKey_D) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_A) ? 1.0f : 0.0f);
-    sy += (ImGui::IsKeyDown(ImGuiKey_S) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_W) ? 1.0f : 0.0f);
-    const float speed = S(700.0f); // screen pixels a second at full tilt
-    {
-        const auto [mx, mz] = frame.Metres(sx * speed * dt, sy * speed * dt);
+    lx += (ImGui::IsKeyDown(ImGuiKey_D) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_A) ? 1.0f : 0.0f);
+    ly += (ImGui::IsKeyDown(ImGuiKey_S) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(ImGuiKey_W) ? 1.0f : 0.0f);
+    // The lit lamp nearest the middle, on screen.
+    const ImVec2 mid = frame.Mid();
+    const bbcoop_map_lamp* near_lamp = nullptr;
+    ImVec2 near_at{};
+    float near_d = S(56.0f) * S(56.0f);
+    for (int i = 0; i < view.lamp_count; ++i) {
+        const bbcoop_map_lamp& lamp = view.lamps[i];
+        if (!lamp.lit || !charts.contains(lamp.map)) {
+            continue;
+        }
+        const ImVec2 at = frame.At(lamp.map, lamp.x, lamp.z, lamp.y);
+        const float d = (at.x - mid.x) * (at.x - mid.x) + (at.y - mid.y) * (at.y - mid.y);
+        if (d < near_d) {
+            near_d = d, near_lamp = &lamp, near_at = at;
+        }
+    }
+    const bool steering = std::abs(lx) > 0.15f || std::abs(ly) > 0.15f;
+    const float speed = S(700.0f) * (near_lamp != nullptr ? 0.55f : 1.0f); // screen pixels a second
+    if (steering) {
+        const auto [mx, mz] = frame.Metres(lx * speed * dt, ly * speed * dt);
+        state.cx += mx;
+        state.cz += mz;
+    } else if (near_lamp != nullptr && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        // Let go near a lamp: the map settles with it under the cross.
+        const float ease = std::min(1.0f, dt * 10.0f);
+        const auto [mx, mz] = frame.Metres((near_at.x - mid.x) * ease, (near_at.y - mid.y) * ease);
         state.cx += mx;
         state.cz += mz;
     }
@@ -5429,11 +5477,17 @@ void MoveView(const Frame& frame) {
         state.cx -= mx;
         state.cz -= mz;
     }
-    float zoom = 1.0f;
-    if (ImGui::IsKeyDown(ImGuiKey_GamepadR2) || ImGui::IsKeyDown(ImGuiKey_Equal)) {
+    float zoom = live ? 1.0f : std::pow(2.0f, -ry * dt * 1.6f);
+    if (ImGui::IsKeyDown(ImGuiKey_GamepadR2)) {
         zoom *= std::pow(2.0f, dt * 1.5f);
     }
-    if (ImGui::IsKeyDown(ImGuiKey_GamepadL2) || ImGui::IsKeyDown(ImGuiKey_Minus)) {
+    if (ImGui::IsKeyDown(ImGuiKey_GamepadL2)) {
+        zoom /= std::pow(2.0f, dt * 1.5f);
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_Equal)) {
+        zoom *= std::pow(2.0f, dt * 1.5f);
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_Minus)) {
         zoom /= std::pow(2.0f, dt * 1.5f);
     }
     if (inside && io.MouseWheel != 0.0f) {
@@ -5452,45 +5506,27 @@ void MoveView(const Frame& frame) {
     }
 }
 
-/// The cursor: the left stick moves it (the picture scrolls once it reaches the frame's edge, as
-/// Elden Ring's map), the mouse puts it where it points; the lit lamp of the world nearest under
-/// it becomes `state.hover`.
+/// The cross: always in the middle of the picture (a mouse pointing into the picture picks what
+/// is under it instead); the lit lamp under it becomes `state.hover`.
 void MoveCursor(const Frame& frame) {
     ImGuiIO& io = ImGui::GetIO();
-    const float dt = std::min(io.DeltaTime, 0.1f);
-    if (state.cursor.x < 0.0f) {
-        state.cursor = frame.Mid();
-    }
-    const auto analog = [](ImGuiKey key) { return ImGui::GetKeyData(key)->AnalogValue; };
-    const float sx = analog(ImGuiKey_GamepadLStickRight) - analog(ImGuiKey_GamepadLStickLeft);
-    const float sy = analog(ImGuiKey_GamepadLStickDown) - analog(ImGuiKey_GamepadLStickUp);
-    const float speed = S(650.0f); // screen pixels a second at full tilt
-    ImVec2 next(state.cursor.x + sx * speed * dt, state.cursor.y + sy * speed * dt);
+    state.cursor = frame.Mid();
     const bool inside = io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x && io.MousePos.y >= frame.p0.y &&
                         io.MousePos.y < frame.p1.y;
+    static double mouse_moved_at = -10.0;
     if (inside && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)) {
-        next = io.MousePos;
+        mouse_moved_at = ImGui::GetTime();
     }
-    const float edge = S(48.0f);
-    const ImVec2 lo(frame.p0.x + edge, frame.p0.y + edge), hi(frame.p1.x - edge, frame.p1.y - edge);
-    const ImVec2 kept(std::clamp(next.x, lo.x, hi.x), std::clamp(next.y, lo.y, hi.y));
-    if (state.zoom > 0.0f && (sx != 0.0f || sy != 0.0f)) {
-        // Past the edge: the picture scrolls under the cursor instead.
-        const auto [mx, mz] = frame.Metres(next.x - kept.x, next.y - kept.y);
-        state.cx += mx;
-        state.cz += mz;
-    }
-    state.cursor = kept;
-    // The lit lamp nearest the cursor, within reach.
+    const ImVec2 pick = inside && ImGui::GetTime() - mouse_moved_at < 2.0 ? io.MousePos : state.cursor;
     state.hover = 0;
-    float best = S(26.0f) * S(26.0f);
+    float best = S(30.0f) * S(30.0f);
     for (int i = 0; i < view.lamp_count; ++i) {
         const bbcoop_map_lamp& lamp = view.lamps[i];
         if (!lamp.lit || !charts.contains(lamp.map)) {
             continue;
         }
         const ImVec2 at = frame.At(lamp.map, lamp.x, lamp.z, lamp.y);
-        const float d = (at.x - state.cursor.x) * (at.x - state.cursor.x) + (at.y - state.cursor.y) * (at.y - state.cursor.y);
+        const float d = (at.x - pick.x) * (at.x - pick.x) + (at.y - pick.y) * (at.y - pick.y);
         if (d < best) {
             best = d;
             state.hover = lamp.warp_point;

@@ -1,4 +1,7 @@
 {
+ "Map fog of war": "Kartan sumu",
+ "The map hides what your hunter has not walked near yet. Off shows the whole map.": "Kartta piilottaa sen, minkä lähellä metsästäjäsi ei ole vielä käynyt. Pois näyttää koko kartan.",
+ "Turn": "Käännä",
  "Prerendered": "Esipiirretty",
  "Live": "Reaaliaikainen",
  "{L3} on the map shows the place from the game's own models, from an angle. Prerendered: each area is drawn once, the first time, in the background. Live: the models are drawn on the graphics card as you turn and tilt the view (right stick), using its memory. Leave it off on a low-end PC.": "{L3} kartalla näyttää paikan viistosti pelin malleista. Esipiirretty: jokainen alue piirretään kerran, ensimmäisellä kerralla, taustalla. Reaaliaikainen: näytönohjain piirtää mallit, kun käännät ja kallistat näkymää (oikea sauva), käyttäen muistiaan. Pidä pois päältä heikolla tietokoneella.",

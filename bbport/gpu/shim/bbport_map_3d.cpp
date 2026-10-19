@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <tuple>
 
 #include <vk_mem_alloc.h>
 
@@ -30,17 +31,12 @@ struct PushConstants {
     float middle[4];
     float turn[4];
     float frame[4];
+    float chart[4]; // the map picture's frame: x0, z1, width and height in metres
 };
 
 struct Buffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VmaAllocation allocation = nullptr;
-};
-
-struct Mesh {
-    Buffer positions, colors, indices;
-    std::uint32_t index_count = 0;
-    float dx = 0, dz = 0;
 };
 
 struct Target {
@@ -49,12 +45,29 @@ struct Target {
     vk::UniqueImageView view;
 };
 
+struct Mesh {
+    Buffer positions, colors, indices;
+    std::uint32_t index_count = 0;
+    float dx = 0, dz = 0;
+    // Kaniel 2026-10-19 ("it looks much worse"): the area's map picture and its tops, copied in by
+    // the first Draw after the upload.
+    Target picture, tops;
+    Buffer picture_staging, tops_staging;
+    std::uint32_t picture_w = 0, picture_h = 0, tops_w = 0, tops_h = 0;
+    bool copied = false;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    float chart[4] = {};
+};
+
 const Vulkan::Instance* instance = nullptr;
 vk::Device device;
 VmaAllocator allocator = nullptr;
 vk::UniquePipeline pipeline;
 vk::UniquePipelineLayout layout;
 vk::UniqueSampler sampler;
+vk::UniqueSampler nearest; // the tops (whole decimetres, no blending)
+vk::UniqueDescriptorSetLayout set_layout;
+vk::UniqueDescriptorPool pool;
 Target color, depth;
 std::uint32_t target_width = 0, target_height = 0;
 bool color_was_drawn = false; // the colour image has been in the shader-read layout before
@@ -75,6 +88,28 @@ bool MakeBuffer(Buffer& out, const void* data, std::size_t size, VkBufferUsageFl
     const VmaAllocationCreateInfo alloc_ci{
         .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
         .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+    };
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(allocator, &buffer_ci, &alloc_ci, &out.buffer, &out.allocation, &info) != VK_SUCCESS ||
+        info.pMappedData == nullptr) {
+        out = {};
+        return false;
+    }
+    std::memcpy(info.pMappedData, data, size);
+    vmaFlushAllocation(allocator, out.allocation, 0, VK_WHOLE_SIZE);
+    return true;
+}
+
+bool MakeStaging(Buffer& out, const void* data, std::size_t size) {
+    const VkBufferCreateInfo buffer_ci{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size,
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    const VmaAllocationCreateInfo alloc_ci{
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
     };
     VmaAllocationInfo info{};
     if (vmaCreateBuffer(allocator, &buffer_ci, &alloc_ci, &out.buffer, &out.allocation, &info) != VK_SUCCESS ||
@@ -137,6 +172,16 @@ bool MakeTarget(Target& target, vk::Format format, VkImageUsageFlags usage, vk::
     return true;
 }
 
+void FreeMesh(Mesh& mesh) {
+    FreeBuffer(mesh.positions);
+    FreeBuffer(mesh.colors);
+    FreeBuffer(mesh.indices);
+    FreeBuffer(mesh.picture_staging);
+    FreeBuffer(mesh.tops_staging);
+    FreeTarget(mesh.picture);
+    FreeTarget(mesh.tops);
+}
+
 /// The pictures big enough for `w` x `h` (made again, waiting for the GPU, only when they grow).
 bool EnsureTargets(std::uint32_t w, std::uint32_t h) {
     if (w <= target_width && h <= target_height && color.image != VK_NULL_HANDLE) {
@@ -184,7 +229,33 @@ static bool MakePipeline() {
         .offset = 0,
         .size = sizeof(PushConstants),
     };
+    const std::array set_bindings{
+        vk::DescriptorSetLayoutBinding{.binding = 0, .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                                       .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+        vk::DescriptorSetLayoutBinding{.binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                                       .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+    };
+    auto made_set_layout = device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{
+        .bindingCount = static_cast<std::uint32_t>(set_bindings.size()),
+        .pBindings = set_bindings.data(),
+    });
+    if (made_set_layout.result != vk::Result::eSuccess) {
+        return false;
+    }
+    set_layout = std::move(made_set_layout.value);
+    const vk::DescriptorPoolSize pool_size{.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 128};
+    auto made_pool = device.createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo{
+        .maxSets = 64,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    });
+    if (made_pool.result != vk::Result::eSuccess) {
+        return false;
+    }
+    pool = std::move(made_pool.value);
     auto made_layout = device.createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
+        .setLayoutCount = 1,
+        .pSetLayouts = &*set_layout,
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &push,
     });
@@ -279,6 +350,17 @@ static bool MakePipeline() {
         return false;
     }
     sampler = std::move(made_sampler.value);
+    auto made_nearest = device.createSamplerUnique(vk::SamplerCreateInfo{
+        .magFilter = vk::Filter::eNearest,
+        .minFilter = vk::Filter::eNearest,
+        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
+        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+    });
+    if (made_nearest.result != vk::Result::eSuccess) {
+        pipeline.reset();
+        return false;
+    }
+    nearest = std::move(made_nearest.value);
     std::printf("Map 3D: live view ready\n");
     return true;
 }
@@ -290,8 +372,10 @@ bool Init(const Vulkan::Instance& vulkan) {
     return true;
 }
 
-void Upload(std::uint32_t map, const std::shared_ptr<const BbMapArt::AreaMesh>& mesh, float dx, float dz) {
-    if (instance == nullptr || !MakePipeline() || !mesh || mesh->indices.empty() || meshes.contains(map)) {
+void Upload(std::uint32_t map, const std::shared_ptr<const BbMapArt::AreaMesh>& mesh,
+            const std::shared_ptr<const BbMapArt::Chart>& chart, float dx, float dz) {
+    if (instance == nullptr || !MakePipeline() || !mesh || mesh->indices.empty() || !chart ||
+        chart->storeys.width <= 0 || meshes.contains(map)) {
         return;
     }
     Mesh made;
@@ -302,13 +386,46 @@ void Upload(std::uint32_t map, const std::shared_ptr<const BbMapArt::AreaMesh>& 
                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) ||
         !MakeBuffer(made.colors, mesh->colors.data(), mesh->colors.size() * 4, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) ||
         !MakeBuffer(made.indices, mesh->indices.data(), mesh->indices.size() * 4, VK_BUFFER_USAGE_INDEX_BUFFER_BIT)) {
-        FreeBuffer(made.positions);
-        FreeBuffer(made.colors);
-        FreeBuffer(made.indices);
+        FreeMesh(made);
         std::printf("Map 3D: no room for %s's mesh\n", BbMapArt::MapNameOf(map).c_str());
         return;
     }
-    meshes[map] = made;
+    // The map picture and its tops, copied into images by the next Draw.
+    made.picture_w = std::uint32_t(chart->width), made.picture_h = std::uint32_t(chart->height);
+    made.tops_w = std::uint32_t(chart->storeys.width), made.tops_h = std::uint32_t(chart->storeys.height);
+    made.chart[0] = chart->x0;
+    made.chart[1] = chart->z1;
+    made.chart[2] = float(chart->width) / chart->ppm;
+    made.chart[3] = float(chart->height) / chart->ppm;
+    if (!MakeStaging(made.picture_staging, chart->rgba.data(), chart->rgba.size()) ||
+        !MakeStaging(made.tops_staging, chart->storeys.roof.data(), chart->storeys.roof.size() * 2) ||
+        !MakeTarget(made.picture, vk::Format::eR8G8B8A8Unorm, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                    vk::ImageAspectFlagBits::eColor, made.picture_w, made.picture_h) ||
+        !MakeTarget(made.tops, vk::Format::eR16Sint, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                    vk::ImageAspectFlagBits::eColor, made.tops_w, made.tops_h)) {
+        FreeMesh(made);
+        std::printf("Map 3D: no room for %s's picture\n", BbMapArt::MapNameOf(map).c_str());
+        return;
+    }
+    auto sets = device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{
+        .descriptorPool = *pool, .descriptorSetCount = 1, .pSetLayouts = &*set_layout});
+    if (sets.result != vk::Result::eSuccess || sets.value.empty()) {
+        FreeMesh(made);
+        return;
+    }
+    made.set = sets.value[0];
+    const vk::DescriptorImageInfo picture_info{.sampler = *sampler, .imageView = *made.picture.view,
+                                               .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+    const vk::DescriptorImageInfo tops_info{.sampler = *nearest, .imageView = *made.tops.view,
+                                            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+    const std::array writes{
+        vk::WriteDescriptorSet{.dstSet = made.set, .dstBinding = 0, .descriptorCount = 1,
+                               .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &picture_info},
+        vk::WriteDescriptorSet{.dstSet = made.set, .dstBinding = 1, .descriptorCount = 1,
+                               .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &tops_info},
+    };
+    device.updateDescriptorSets(writes, {});
+    meshes[map] = std::move(made);
     std::printf("Map 3D: %s on the GPU (%u triangles)\n", BbMapArt::MapNameOf(map).c_str(), made.index_count / 3);
 }
 
@@ -322,11 +439,10 @@ void Clear() {
     }
     (void)device.waitIdle();
     for (auto& [map, mesh] : meshes) {
-        FreeBuffer(mesh.positions);
-        FreeBuffer(mesh.colors);
-        FreeBuffer(mesh.indices);
+        FreeMesh(mesh);
     }
     meshes.clear();
+    (void)device.resetDescriptorPool(*pool);
 }
 
 ImTextureRef Request(const Camera& wanted, ImVec2& uv1) {
@@ -348,6 +464,40 @@ void Draw(vk::CommandBuffer cmdbuf) {
     }
     asked = false;
     const vk::ImageSubresourceRange color_range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    // The pictures uploaded since the last frame: staged bytes into their images.
+    for (auto& [map, mesh] : meshes) {
+        if (mesh.copied) {
+            continue;
+        }
+        for (auto [target, staging, w, h] : {std::tuple{&mesh.picture, &mesh.picture_staging, mesh.picture_w, mesh.picture_h},
+                                              std::tuple{&mesh.tops, &mesh.tops_staging, mesh.tops_w, mesh.tops_h}}) {
+            const vk::ImageMemoryBarrier2 to_copy{
+                .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .oldLayout = vk::ImageLayout::eUndefined,
+                .newLayout = vk::ImageLayout::eTransferDstOptimal,
+                .image = target->image,
+                .subresourceRange = color_range,
+            };
+            cmdbuf.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_copy});
+            cmdbuf.copyBufferToImage(vk::Buffer(staging->buffer), vk::Image(target->image),
+                                     vk::ImageLayout::eTransferDstOptimal,
+                                     vk::BufferImageCopy{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                                         .imageExtent = {w, h, 1}});
+            const vk::ImageMemoryBarrier2 to_read{
+                .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .image = target->image,
+                .subresourceRange = color_range,
+            };
+            cmdbuf.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_read});
+        }
+        mesh.copied = true; // the staging buffers go with the mesh (Clear), once the GPU is done with them
+    }
     const vk::ImageSubresourceRange depth_range{vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1};
     const std::array before{
         vk::ImageMemoryBarrier2{
@@ -406,7 +556,9 @@ void Draw(vk::CommandBuffer cmdbuf) {
             {camera.cx, camera.cy, camera.cz, camera.zoom},
             {c, s, std::sin(camera.pitch), std::cos(camera.pitch)},
             {float(width) * 0.5f, float(height) * 0.5f, mesh.dx, mesh.dz},
+            {mesh.chart[0], mesh.chart[1], mesh.chart[2], mesh.chart[3]},
         };
+        cmdbuf.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *layout, 0, vk::DescriptorSet(mesh.set), {});
         cmdbuf.pushConstants(*layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
                              sizeof(push), &push);
         const std::array<vk::Buffer, 2> vertex_buffers{vk::Buffer(mesh.positions.buffer), vk::Buffer(mesh.colors.buffer)};

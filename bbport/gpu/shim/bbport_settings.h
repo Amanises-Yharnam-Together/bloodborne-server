@@ -129,6 +129,9 @@ struct Values {
     /// option to view rendered in real time 3d map"): the map screen's 3D view (bbport.ini map_3d,
     /// Map3d*, off by default): prerendered pictures, or the models drawn live on the GPU.
     std::atomic<int> map_3d{Map3dOff};
+    /// Kaniel 2026-10-19 ("a setting to remove fog of war"): the map screen hides what this
+    /// character has not walked near (bbport.ini map_fog, on by default); off shows the whole map.
+    std::atomic<bool> map_fog{true};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.

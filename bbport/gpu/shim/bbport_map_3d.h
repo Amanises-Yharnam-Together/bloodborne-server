@@ -29,8 +29,10 @@ struct Camera {
 
 /// With the overlay's Vulkan instance (once); the pass itself is made when the live view is first used.
 bool Init(const Vulkan::Instance& instance);
-/// An area's mesh on the GPU, placed at (dx, dz) on the atlas (kept until Clear).
-void Upload(std::uint32_t map, const std::shared_ptr<const BbMapArt::AreaMesh>& mesh, float dx, float dz);
+/// An area's mesh on the GPU, placed at (dx, dz) on the atlas (kept until Clear), with its map
+/// picture from above (`chart`: its pixels and tops) for what faces up at the picture's top.
+void Upload(std::uint32_t map, const std::shared_ptr<const BbMapArt::AreaMesh>& mesh,
+            const std::shared_ptr<const BbMapArt::Chart>& chart, float dx, float dz);
 bool Has(std::uint32_t map);
 /// The meshes go (the live view was turned off): waits for the GPU first.
 void Clear();
