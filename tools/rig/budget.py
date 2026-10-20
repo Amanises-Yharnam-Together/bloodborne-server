@@ -49,6 +49,7 @@ LONG = {
     "chalice-team3": "a ritual, three dungeon loads and three trips back, one at a time",
     "guest-drops": "a 70 s wait for the drops (Kaniel's playtest 2026-10-16)",
     "boss-guest-runs": "50 s and 90 s waits by the boss (Kaniel's playtest 2026-10-16)",
+    "witch-summons": "a 90 s wait for the Witch of Hemwick to summon her Mad Ones",
     "boss-whole-fight": "a lamp trip, then 70 s of fixed waits in the fight (#292)",
     "cutscene-skip": "two stages (two boots), the opening cutscene played in between",
     "dead-in-host-save": "two stages (two boots): the host's game starts again after its kill",
