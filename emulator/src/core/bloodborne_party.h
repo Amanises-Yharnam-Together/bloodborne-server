@@ -3355,13 +3355,13 @@ constexpr float BossLeaveMetres = 45.0f;
 // boss stood in a T-pose: the pick handed it to him at once, but his fresh game did not run it.
 // While the game's own runner (the map's `owner`) is in the arena, the boss stays with it; and a
 // stale board keeps the last pick (Last) rather than flipping back.
-// Kaniel's playtest 2026-10-19: a chalice dungeon's enemies, scaled by its depth (and the harder
-// enemies), pass the boss size by the dozen; there only the game's bosses (NpcParam npcType 1,
-// `npc_type` unknown: none) are handed out, and the map's own runner keeps every other enemy.
-// Elsewhere the boss size alone decides.
+// Kaniel's playtest 2026-10-19: with the harder enemies (x3 HP) the boss size caught giants in
+// Yharnam and dozens of a chalice dungeon's scaled enemies, and the pick handed them out. Only the
+// game's bosses (NpcParam npcType 1) are handed out; a row that does not read (`npc_type` none)
+// falls back on the boss size.
 constexpr u64 NpcTypeOffset = 0x12E;
 constexpr u8 NpcTypeBoss = 1;
-bool BossRunnerFor(u32 packed_map, std::optional<u8> npc_type);
+bool HandsOutBoss(std::optional<u8> npc_type, bool boss_sized);
 class BossRunnerPick {
 public:
     // The member whose game runs the boss at `boss` on `map` now, "" for the game's own (the map's
