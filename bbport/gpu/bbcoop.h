@@ -81,12 +81,9 @@ typedef struct bbcoop_compass_marker {
     int vital;
     float revive;
 } bbcoop_compass_marker;
-/* Kaniel 2026-10-20: the party's bloodstains on this map, placed as the markers: this player's
- * own (`own`) and the members' (`name` the character's, "" when unknown). */
-enum { BBCOOP_COMPASS_STAINS = 4 };
+/* Kaniel 2026-10-20: this player's own bloodstain on this map, placed as the markers (only its
+ * own: Kaniel after v1.0.2). */
 typedef struct bbcoop_compass_stain {
-    char name[20];
-    int own;
     float bearing, distance, x;
     int pinned;
 } bbcoop_compass_stain;
@@ -94,8 +91,8 @@ typedef struct bbcoop_compass {
     float heading; /* the camera's, for the strip's ticks */
     int count;
     bbcoop_compass_marker markers[BBCOOP_COMPASS_MARKERS];
-    int stain_count;
-    bbcoop_compass_stain stains[BBCOOP_COMPASS_STAINS];
+    int has_stain;
+    bbcoop_compass_stain stain;
 } bbcoop_compass;
 int bbcoop_compass_view(bbcoop_compass *compass);
 /* Kaniel 2026-10-17: the map screen (an Elden Ring style map). What it shows as the game thread
@@ -122,12 +119,9 @@ typedef struct bbcoop_map_member {
     float x, y, z;
     int vital; /* BBCOOP_VITAL_* */
 } bbcoop_map_member;
-/* Kaniel 2026-10-20: a party bloodstain on its map (any map): this player's own (`own`) or a
- * member's (`name` the character's, "" when unknown), with its echoes. */
-enum { BBCOOP_MAP_STAINS = 4 };
+/* Kaniel 2026-10-20: this player's own bloodstain on its map (any map), with its echoes (only its
+ * own: Kaniel after v1.0.2). */
 typedef struct bbcoop_map_stain {
-    char name[20];
-    int own;
     uint32_t map;
     float x, y, z;
     int32_t echoes;
@@ -148,8 +142,8 @@ typedef struct bbcoop_map {
     /* Kaniel 2026-10-18: the areas whose main bosses are down (the map shows all of them). */
     int cleared_count;
     uint32_t cleared[24];
-    int stain_count;
-    bbcoop_map_stain stains[BBCOOP_MAP_STAINS];
+    int has_stain;
+    bbcoop_map_stain stain;
 } bbcoop_map;
 int bbcoop_map_view(bbcoop_map *map, int open);
 /* A trip from the map to the lamp (a warp point of the view's lamps), started by the game thread

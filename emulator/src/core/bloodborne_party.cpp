@@ -5531,13 +5531,11 @@ VitalsBoard MergeDirectVitals(const VitalsBoard& board, std::span<const DirectVi
         const u32 board_damage = same_down ? same->revive_damage : 0;
         const u32 board_cutscene = same->cutscene;
         const u32 board_vials = same->vials, board_bullets = same->bullets;
-        const Bloodstain board_stain = same->stain;
         *same = update.self;
         same->revive_damage = board_damage;
         same->cutscene = board_cutscene; // the direct line does not carry these
         same->vials = board_vials;
         same->bullets = board_bullets;
-        same->stain = board_stain;
     }
     for (MemberVitals& member : merged.members) {
         u32 hits = 0;
@@ -6012,7 +6010,6 @@ PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view
             .map = entry.map,
             .vials = entry.vials,
             .bullets = entry.bullets,
-            .stain = entry.stain,
         });
     }
     return panel;

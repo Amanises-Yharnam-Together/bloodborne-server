@@ -784,40 +784,6 @@ int TheBoardsGoToEveryMember() {
   return 0;
 }
 
-// Kaniel 2026-10-20 (bloodstains on the compass and map): a member's bloodstain
-// rides on its vitals to the others, and goes when its vitals come without one
-// (picked up).
-int AMembersBloodstainReachesTheOthers() {
-  constexpr u32 Up = 1;
-  Service service{{}};
-  Game host{1000, "host", 11};
-  Game guest{1001, "guest", 12};
-  qint64 now = 1'000'000;
-  host.Hello(now);
-  guest.Hello(now);
-  Pump(service, {&host, &guest}, now);
-  bbcoop::Envelope stained = VitalsOf(0x18010000, Up);
-  bbcoop::Bloodstain &stain = *stained.mutable_vitals()->mutable_stain();
-  stain.set_map(0x18010000);
-  stain.mutable_at()->set_x(-209.0f);
-  stain.mutable_at()->set_z(169.0f);
-  stain.set_echoes(4694);
-  guest.Send(stained, now);
-  host.Send(VitalsOf(0x18010000, Up), now);
-  Pump(service, {&host, &guest}, now);
-  const auto *seen = VitalsFor(host, "guest");
-  CHECK(seen != nullptr && seen->vitals().has_stain());
-  CHECK(seen->vitals().stain().map() == 0x18010000);
-  CHECK(seen->vitals().stain().at().x() == -209.0f);
-  CHECK(seen->vitals().stain().echoes() == 4694);
-
-  guest.Send(VitalsOf(0x18010000, Up), now + 500);
-  Pump(service, {&host, &guest}, now + 500);
-  seen = VitalsFor(host, "guest");
-  CHECK(seen != nullptr && !seen->vitals().has_stain());
-  return 0;
-}
-
 // Kaniel's playtest 2026-10-16: Lisara went down alone in the Hunter's Dream
 // (a wipe of her map) while Kaniel and krolebord stood in Central Yharnam; her
 // WIPE started a new log for the whole party, so Kaniel's game showed every
@@ -2230,8 +2196,6 @@ int main() {
       {"TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember",
        TheHostsWorldAndEveryonesFlagsAndHpReachEveryMember},
       {"TheBoardsGoToEveryMember", TheBoardsGoToEveryMember},
-      {"AMembersBloodstainReachesTheOthers",
-       AMembersBloodstainReachesTheOthers},
       {"ThePartyIsWipedWhenNobodyOnTheMapStands",
        ThePartyIsWipedWhenNobodyOnTheMapStands},
       {"AMembersOwnWipeKeepsThePartysLog", AMembersOwnWipeKeepsThePartysLog},

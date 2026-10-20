@@ -1277,12 +1277,9 @@ TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
     const PartyPanel stocked = BuildPartyPanel(supplied, Kaniel, CentralYharnam, LampPosition{});
     EXPECT_EQ(stocked.members[0].vials, 11u);
     EXPECT_EQ(stocked.members[0].bullets, 4u);
-    // Kaniel 2026-10-20: each member's bloodstain, on whatever map it lies (the map screen shows
-    // the others' too).
-    supplied[2].stain = Bloodstain{.map = CentralYharnam, .at = {3.0f, 1.0f, 2.0f}, .echoes = 900};
-    const PartyPanel stained = BuildPartyPanel(supplied, Kaniel, CentralYharnam, LampPosition{});
-    EXPECT_EQ(stained.members[1].stain, supplied[2].stain) << "third is in the Dream";
-    EXPECT_EQ(stained.members[0].stain, Bloodstain{});
+    // Kaniel after v1.0.2 (2026-10-20): "you only see your bloodstain on compass and map": a
+    // member's never reaches the panel (nor its vitals); only the local player's own is filled.
+    EXPECT_EQ(stocked.own_stain, Bloodstain{});
 
     EXPECT_EQ(BuildPartyPanel(board, Kaniel, CentralYharnam, LampPosition{9.0f, 0.0f, 0.0f})
                   .revive_target,

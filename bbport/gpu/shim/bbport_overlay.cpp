@@ -1684,10 +1684,10 @@ void DisplayTab() {
            s.compass, [&](int i) { Store(s.compass_position, i, true); });
     // Kaniel 2026-10-20 ("bloodstains of ours will be displayed on compass and map").
     Toggle("bloodstains", T("Bloodstains on compass and map", "Пятна крови на компасе и карте"), s.bloodstains,
-           T("Where your echoes and your party's lie after a death: on the compass on this map, on "
-             "the map on every map.",
-             "Где лежат ваши отголоски и отголоски вашей группы после смерти: на компасе на этой "
-             "карте, на карте на всех картах."));
+           T("Where your echoes lie after a death: on the compass on this map, on the map on "
+             "every map. Only you see your bloodstain.",
+             "Где лежат ваши отголоски после смерти: на компасе на этой карте, на карте на всех "
+             "картах. Ваше пятно крови видите только вы."));
     // Kaniel 2026-10-19 ("make it opt in", "an opt in option to view rendered in real time"):
     // the map's 3D view.
     const char* map_3d_names[] = {T("Off", "Выкл."), T("Prerendered", "Заранее нарисованная"),
@@ -4280,9 +4280,9 @@ BbPartyLayout::Rect game{};
 bool Read() {
     shown = BbSettings::Get().compass && bbcoop_compass_view(&view) != 0;
     if (!BbSettings::Get().bloodstains) {
-        view.stain_count = 0; // Kaniel 2026-10-20: the Insert menu turned the bloodstains off
+        view.has_stain = 0; // Kaniel 2026-10-20: the Insert menu turned the bloodstains off
     }
-    shown = shown && (view.count > 0 || view.stain_count > 0);
+    shown = shown && (view.count > 0 || view.has_stain);
     return shown;
 }
 
@@ -4434,8 +4434,8 @@ void Drop(ImDrawList* draw, ImVec2 at, float r, ImU32 color, ImU32 shadow) {
                             ImVec2(at.x - round * 0.93f, belly.y - round * 0.37f), color);
 }
 
-/// A bloodstain on the compass: the drop, its distance under it and, for a teammate's, its
-/// character's name; `arrow` as a member marker's.
+/// This player's bloodstain on the compass: the drop and its distance under it; `arrow` as a member
+/// marker's.
 void StainMarker(ImDrawList* draw, ImVec2 at, const bbcoop_compass_stain& stain, int arrow) {
     using Ui::S;
     const float r = S(11.0f);
@@ -4447,10 +4447,6 @@ void StainMarker(ImDrawList* draw, ImVec2 at, const bbcoop_compass_stain& stain,
     char line[48];
     std::snprintf(line, sizeof(line), stain.distance < 10.0f ? "%.1f m" : "%.0f m", stain.distance);
     Party::Text(draw, sans_font, S(12.0f), ImVec2(at.x, at.y + r + S(3.0f)), Gray(0.85f), line, 0.5f);
-    if (!stain.own) {
-        const char* name = stain.name[0] != '\0' ? stain.name : Ui::T("Hunter", "Охотник");
-        Party::Text(draw, sans_font, S(11.0f), ImVec2(at.x, at.y + r + S(17.0f)), Gray(0.7f), name, 0.5f);
-    }
 }
 
 void Strip(ImDrawList* draw, float y) {
@@ -4488,9 +4484,9 @@ void Strip(ImDrawList* draw, float y) {
     // Straight ahead: a small notch above the line.
     draw->AddTriangleFilled(ImVec2(mid - S(5.0f), y - S(14.0f)), ImVec2(mid + S(5.0f), y - S(14.0f)),
                             ImVec2(mid, y - S(7.0f)), Gray(0.9f));
-    // The bloodstains first: the members' markers go over them.
-    for (int i = 0; i < view.stain_count; ++i) {
-        const bbcoop_compass_stain& stain = view.stains[i];
+    // The bloodstain first: the members' markers go over it.
+    if (view.has_stain) {
+        const bbcoop_compass_stain& stain = view.stain;
         StainMarker(draw, ImVec2(mid + half * stain.x, y), stain, stain.pinned ? (stain.x < 0.0f ? -1 : 1) : 0);
     }
     for (int i = 0; i < view.count; ++i) {
@@ -4505,8 +4501,8 @@ void Ring(ImDrawList* draw) {
     const ImVec2 mid(game.x + game.w * 0.5f, game.y + game.h * 0.5f);
     const float r = S(150.0f);
     draw->AddCircle(mid, r, Gray(0.18f), 96, S(1.0f));
-    for (int i = 0; i < view.stain_count; ++i) {
-        const bbcoop_compass_stain& stain = view.stains[i];
+    if (view.has_stain) {
+        const bbcoop_compass_stain& stain = view.stain;
         StainMarker(draw, ImVec2(mid.x + r * std::sin(stain.bearing), mid.y - r * std::cos(stain.bearing)), stain, 0);
     }
     for (int i = 0; i < view.count; ++i) {
@@ -5126,18 +5122,13 @@ void MemberMark(ImDrawList* draw, ImVec2 at, int index, bool label = true) {
     }
 }
 
-/// Kaniel 2026-10-20: a bloodstain: the compass's drop, its echoes under it and, for a teammate's,
-/// its character's name over it.
+/// Kaniel 2026-10-20: this player's bloodstain: the compass's drop and its echoes under it.
 void StainMark(ImDrawList* draw, const bbcoop_map_stain& stain, ImVec2 at) {
     const float r = S(12.0f);
     Compass::Drop(draw, at, r, Gray(0.95f), Party::Rgba(0, 0, 0, 0.55f));
     char echoes[16];
     std::snprintf(echoes, sizeof(echoes), "%d", int(stain.echoes));
     Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y + r + S(3.0f)), Gray(0.9f), echoes, 0.5f);
-    if (!stain.own) {
-        const char* name = stain.name[0] != '\0' ? stain.name : Ui::T("Hunter", "Охотник");
-        Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y - r - S(19.0f)), Gray(0.85f), name, 0.5f);
-    }
 }
 
 /// The picture with its marks, inside the game's card art.
@@ -5248,12 +5239,9 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
         for (size_t i = 0; i < lamps.size(); ++i) {
             LampMark(draw, frame.At(lamps[i]->map, lamps[i]->x, lamps[i]->z, lamps[i]->y), int(i) == state.focus, pulse);
         }
-        // Kaniel 2026-10-20: the party's bloodstains on their maps, under the members.
-        for (int i = 0; BbSettings::Get().bloodstains && i < view.stain_count; ++i) {
-            if (charts.contains(view.stains[i].map)) {
-                StainMark(draw, view.stains[i], frame.At(view.stains[i].map, view.stains[i].x, view.stains[i].z,
-                                                         view.stains[i].y));
-            }
+        // Kaniel 2026-10-20: this player's bloodstain on its map, under the members.
+        if (BbSettings::Get().bloodstains && view.has_stain && charts.contains(view.stain.map)) {
+            StainMark(draw, view.stain, frame.At(view.stain.map, view.stain.x, view.stain.z, view.stain.y));
         }
         for (int i = 0; i < view.member_count; ++i) {
             const bbcoop_map_member& m = view.members[i];
