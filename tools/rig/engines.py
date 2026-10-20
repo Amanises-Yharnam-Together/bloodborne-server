@@ -46,6 +46,7 @@ LOW_SPEC_SETTINGS = """# The rig's low-spec profile (tools/rig/engines.py).
 upscaler=off
 preset=0
 output_res=1280x720
+window_mode=windowed
 frame_generation=0
 show_fps=0
 live_resolution=0
