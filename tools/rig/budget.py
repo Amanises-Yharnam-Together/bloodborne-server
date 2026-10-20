@@ -38,6 +38,7 @@ LONG = {
     "chalice-altar-host": "a ritual and two dungeon loads, measured 315 s",
     "chalice-altar-team": "a ritual and two dungeon loads, measured 315 s",
     "chalice-altar-no-chalice": "a ritual and two dungeon loads, measured 353 s",
+    "chalice-root-team": "a root ritual and two dungeon loads, waits for the ritual",
     "guest-drops": "a 70 s wait for the drops (Kaniel's playtest 2026-10-16)",
     "boss-guest-runs": "50 s and 90 s waits by the boss (Kaniel's playtest 2026-10-16)",
     "cutscene-skip": "two stages (two boots), the opening cutscene played in between",

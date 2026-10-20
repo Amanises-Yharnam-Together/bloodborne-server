@@ -2904,3 +2904,43 @@ SCENARIOS["chalice-altar-no-chalice"] = {
     "allow": CRASH_CLEANUP,
     "timeout": 1200,
 }
+
+# Kaniel 2026-10-20: random (root) chalice dungeons with team altars, both players by the altar.
+# The host conducts the Pthumeru Root Chalice's ritual (the game makes a random dungeon and uploads
+# it) and enters its Layer One; the guest, standing 2 m away the whole time, is not taken along
+# (each game's altar talk sets the warp only for its own talker), then enters the same dungeon
+# from its own altar (the team's record) and they meet.
+PTHUMERU_ROOT_CHALICE = "goods:6100"
+ROOT_RITUAL_MATERIALS = [f"trade-stock goods:{item} 20" for item in (7000, 7001, 7012, 7020, 7050)]
+HUNTERS_DREAM_MAP = "0x15000000"
+BESIDE_ALTAR_SPOT = "-17.27 -5.23 -14.88 1.571"
+SCENARIOS["chalice-root-team"] = {
+    "about": "a root chalice's random dungeon with both players by the altar: the host's ritual "
+             "and entry do not take the guest along; the guest then enters from its own altar "
+             "and they meet in the same dungeon",
+    "roles": {
+        "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                 "godmode", "wait-session 2 300", f"trade-stock {PTHUMERU_ROOT_CHALICE} 1",
+                 *ROOT_RITUAL_MATERIALS, "trade-stock echoes 20000", f"travel {HUNTERS_DREAM}",
+                 "wait 20", f"teleport {ALTAR_SPOT}", "wait 2", "press cross 200", "wait 7",
+                 *[step for _ in range(4) for step in ("press cross 200", "wait 7")],
+                 "press left 200", "wait 1", "press cross 200", "wait 25", "log host ritual done",
+                 *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
+                 f"wait-map {CHALICE_DUNGEON} 180", "wait 10", "snapshot",
+                 "log host in the dungeon", "wait-members 2 400", "wait 20", "expect-session 2",
+                 "snapshot"],
+        "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300",
+                  f"travel {HUNTERS_DREAM}", "wait 5", f"teleport {BESIDE_ALTAR_SPOT}",
+                  *["wait 30"] * 5, f"expect-map {HUNTERS_DREAM_MAP}",
+                  "log guest still in the Dream", f"teleport {ALTAR_SPOT}", "wait 2",
+                  *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
+                  f"wait-map {CHALICE_DUNGEON} 180", "wait 10", "snapshot",
+                  "log guest in the dungeon", "wait-members 2 300", "wait 20",
+                  "expect-session 2", "snapshot"],
+    },
+    "expect": {"host": [r"host ritual done", r"host in the dungeon"],
+               "guest": [r"guest still in the Dream", r"guest in the dungeon"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "allow": CRASH_CLEANUP,
+    "timeout": 1200,
+}
