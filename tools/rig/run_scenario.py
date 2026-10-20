@@ -66,6 +66,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "re"))
 import budget  # noqa: E402
+import build_lock  # noqa: E402
 import check_party_log  # noqa: E402
 import engines  # noqa: E402
 import lanes  # noqa: E402
@@ -957,6 +958,7 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
     set_aside(log_path(role))
     menu_keys_path(role).unlink(missing_ok=True)  # a key the last game never took
     ENGINE.prepare(role, backend_port=server_port(BACKEND_PORT))
+    build_lock.wait_for_builds()  # never beside a build (Kaniel 2026-10-20)
     env = game_environment(role, script_path, party, settings)
     if ENGINE.name == "emulator":
         game = subprocess.Popen(ENGINE.command(role), cwd=folder, env=env,

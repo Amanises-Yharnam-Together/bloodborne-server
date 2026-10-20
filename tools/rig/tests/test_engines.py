@@ -101,7 +101,7 @@ class EngineTest(unittest.TestCase):
             port.prepare("host")
             lines = (port.role_dir("host") / "bbport.ini").read_text(encoding="utf-8").splitlines()
             for line in ("output_res=1280x720", "show_fps=0", "frame_generation=0", "preset=0",
-                         "upscaler=off", "button_icons=xbox"):
+                         "upscaler=off", "window_mode=windowed", "button_icons=xbox"):
                 self.assertIn(line, lines)
             self.assertNotIn("output_res=3840x2160", lines)
             self.assertEqual(len([line for line in lines if line.startswith("show_fps=")]), 1)

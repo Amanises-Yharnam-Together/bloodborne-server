@@ -92,12 +92,34 @@ def block(rig: pathlib.Path, lane: int, pids: list[int]):
     (folder / BLOCKED_FILE).write_text(" ".join(map(str, pids)) + "\n", encoding="utf-8")
 
 
+def max_lanes() -> int:
+    """How many lanes may play at once (Kaniel 2026-10-20, his PC froze: two rig runs at most).
+    BB_RIG_MAX_LANES changes it."""
+    value = os.environ.get("BB_RIG_MAX_LANES", "")
+    return int(value) if value.isdigit() and int(value) > 0 else 2
+
+
+def held_elsewhere(rig: pathlib.Path, lane: int, pid: int, alive=pid_alive) -> int:
+    """The other lanes live runs hold, unless `pid` holds `lane` already (its claim stands)."""
+    held = read_claim(rig, lane)
+    if held is not None and held["pid"] == pid and alive(pid):
+        return 0
+    count = 0
+    for other in available(rig):
+        claim_ = read_claim(rig, other)
+        if other != lane and claim_ is not None and alive(claim_["pid"]):
+            count += 1
+    return count
+
+
 def claim(rig: pathlib.Path, lane: int, owner: str, pid: int | None = None,
           alive=pid_alive, now=time.time) -> bool:
     """Takes the lane for `owner` (process `pid`), unless a live run holds it or it is blocked.
     The owner file is made exclusively: of two runs taking one lane at once, one gets it."""
     pid = os.getpid() if pid is None else pid
     if blocked_by(rig, lane, alive):
+        return False
+    if held_elsewhere(rig, lane, pid, alive) >= max_lanes():
         return False
     folder = lane_folder(rig, lane)
     folder.mkdir(parents=True, exist_ok=True)

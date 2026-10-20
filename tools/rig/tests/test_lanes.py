@@ -7,8 +7,10 @@ Run: py -3.12 -m unittest discover -s tools\\rig\\tests
 """
 import pathlib
 import sys
+import os
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import lanes  # noqa: E402
@@ -32,12 +34,25 @@ class LaneClaimTest(unittest.TestCase):
     def test_the_lanes_set_up(self):
         self.assertEqual(lanes.available(self.rig), [0, 1, 2, 3])
 
+    @unittest.mock.patch.dict(os.environ, {"BB_RIG_MAX_LANES": "4"})
     def test_a_held_lane_is_skipped(self):
         self.assertEqual(lanes.claim_free(self.rig, 2, "phase7", 100, self.alive), [0, 1])
         self.assertEqual(lanes.claim_free(self.rig, 2, "phase8", 200, self.alive), [2, 3])
         self.assertEqual(lanes.claim_free(self.rig, 1, "rig", 300, self.alive), [],
                          "every lane is taken")
         self.assertEqual(lanes.read_claim(self.rig, 2)["owner"], "phase8")
+
+    def test_two_lanes_at_most_play_at_once(self):
+        # Kaniel 2026-10-20 (his PC froze): no more than two rig runs at once.
+        with unittest.mock.patch.dict(os.environ, {"BB_RIG_MAX_LANES": ""}):
+            self.assertTrue(lanes.claim(self.rig, 1, "headstones", 100, self.alive))
+            self.assertTrue(lanes.claim(self.rig, 2, "witch", 200, self.alive))
+            self.assertFalse(lanes.claim(self.rig, 3, "mist", 300, self.alive), "a third waits")
+            self.assertTrue(lanes.claim(self.rig, 2, "witch", 200, self.alive), "already ours")
+            lanes.release(self.rig, 1, 100)
+            self.assertTrue(lanes.claim(self.rig, 3, "mist", 300, self.alive))
+            self.running.discard(200)  # a dead run's lane counts no more
+            self.assertTrue(lanes.claim(self.rig, 0, "chstory", 100, self.alive))
 
     def test_one_lane_one_owner(self):
         self.assertTrue(lanes.claim(self.rig, 1, "phase7", 100, self.alive))
@@ -58,6 +73,7 @@ class LaneClaimTest(unittest.TestCase):
         self.assertIsNone(lanes.read_claim(self.rig, 1))
         self.assertIn("lane 1: free", lanes.status(self.rig, self.alive))
 
+    @unittest.mock.patch.dict(os.environ, {"BB_RIG_MAX_LANES": "4"})
     def test_a_blocked_lane_is_skipped_until_its_games_are_gone(self):
         lanes.block(self.rig, 2, [300])
         self.assertEqual(lanes.claim_free(self.rig, 4, "phase7", 100, self.alive), [0, 1, 3])
