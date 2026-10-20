@@ -853,11 +853,7 @@ std::optional<u8> NpcTypeOf(u64 character) {
 }
 
 std::string BossRunnerOf(u64 character) {
-    if (!IsBossSized(character)) {
-        return {};
-    }
-    if (const u32 map = PlayingMap();
-        !BossRunnerFor(map, map >> 24 == 0x1D ? NpcTypeOf(character) : std::optional<u8>{})) {
+    if (!HandsOutBoss(NpcTypeOf(character), IsBossSized(character))) {
         return {};
     }
     const auto at = CharacterPosition(character);

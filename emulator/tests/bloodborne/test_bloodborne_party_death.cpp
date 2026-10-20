@@ -1389,15 +1389,16 @@ TEST(PartyDeath, AWipeHoldsEnemyHpUntilItsTripLoadedTheMap) {
     EXPECT_FALSE(hold.Holds(10, 50'001));
 }
 
-// Kaniel's playtest 2026-10-19: in a chalice dungeon big enemies' AI lagged again and again. The
-// dungeon's enemies, scaled by its depth and the harder enemies, pass the boss size (1500 HP) by
-// the dozen, so the boss pick handed ordinary enemies to whichever guest came near, flipping at
-// every load. There only the game's bosses (NpcParam npcType 1, the chalice bosses' rows too) are
-// handed out; elsewhere the boss size alone decides, as before.
-TEST(BloodbornePartyDeath, InAChaliceDungeonOnlyBossesAreHandedOut) {
-    EXPECT_TRUE(BossRunnerFor(0x1d000000, 1)) << "a chalice boss";
-    EXPECT_FALSE(BossRunnerFor(0x1d000000, 0)) << "a scaled ordinary enemy";
-    EXPECT_FALSE(BossRunnerFor(0x1d000000, std::nullopt)) << "its row unread";
-    EXPECT_TRUE(BossRunnerFor(0x18000000, 0)) << "Central Yharnam: the boss size decides";
-    EXPECT_TRUE(BossRunnerFor(0x19000000, std::nullopt));
+// Kaniel's playtest 2026-10-19: big enemies' AI lagged in chalice dungeons, and with the harder
+// enemies (x3 HP) giants in Yharnam acted strangely too: the boss size (1500 HP) caught them, so
+// the boss pick handed them to whichever member came near. Only the game's bosses (NpcParam
+// npcType 1, the chalice bosses' rows too) are handed out; a row that does not read falls back on
+// the boss size.
+TEST(BloodbornePartyDeath, OnlyBossesAreHandedOut) {
+    EXPECT_TRUE(HandsOutBoss(1, true)) << "a boss";
+    EXPECT_TRUE(HandsOutBoss(1, false)) << "a boss under 1500 HP (no harder enemies)";
+    EXPECT_FALSE(HandsOutBoss(0, true)) << "a giant at x3 HP, a scaled chalice enemy";
+    EXPECT_FALSE(HandsOutBoss(2, true));
+    EXPECT_TRUE(HandsOutBoss(std::nullopt, true)) << "its row unread: the boss size";
+    EXPECT_FALSE(HandsOutBoss(std::nullopt, false));
 }
