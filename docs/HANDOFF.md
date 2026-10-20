@@ -363,6 +363,11 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
   72101000-99 alone (`KeepsLocalFlag`), and `party_boss_events.py` prepends 2000:2 0 (no network
   sync) to the m21_00 gift events 12101020-28; map events are otherwise kept in step between
   players. Diagnostic: `the other player sends flag ...` for 1210xxxx/7210xxxx.
+- **Mist ambushes** (not play-tested): enemies that rise out of the mist (2003:18 anim 6200) woke
+  only for the host's approach: their event waits for player 10000 near the enemy and alive in
+  its own world (4:3 type 0) in one group. `party_boss_events.py` (AMBUSH_EVENTS) moves that
+  check to an unused group in m22_00 12204000 (Hemwick woods), m24_01 12414000, m25_00
+  12504000, m26_00 12604000 and m29 12905406, so a guest's approach wakes them too.
 - **Death triggers** (rig-confirmed): events set the respawn point on a death (common 9400: first
   death -> Dream 2102962; 9404: Dream 2102961; 9421: kidnapping (flag 9420) -> Gaol 2802959). A
   party revive goes there, travelling 0.2 s later when it is on another map
