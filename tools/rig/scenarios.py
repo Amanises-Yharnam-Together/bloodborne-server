@@ -3100,3 +3100,35 @@ SCENARIOS["story-hostless"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 600,
 }
+
+
+# #289 (Kaniel 2026-10-20: summoned enemies, the chalice bell woman's skeletons and the Witch of
+# Hemwick's Mad Ones): a kill is taken back when a map generator brings the same enemy back. The
+# Witch's Abode lamp stands in her arena; the rig's saves have her alive once her flag is off.
+# The Mad One walking at the start dies in the host's game and comes back about 30 s later (rig
+# 2026-10-20): in the guest's game it is hidden as killed, then shown and alive again.
+HEMWICK = "0x16000000"
+WITCH_ABODE_LAMP = 2202951
+WITCH_DEFEATED = 12201800
+MAD_ONE = "0x1000801b"  # entity 2200810
+HEMWICK_START = [START, f"set-flag {WITCH_DEFEATED} 0", f"travel {WITCH_ABODE_LAMP}", "godmode",
+                 f"expect-map {HEMWICK}"]
+SCENARIOS["mad-one-back"] = {
+    "about": "#289: the host kills one of the Witch of Hemwick's Mad Ones; when her generator "
+             "brings it back the guest's copy is shown and alive (not hidden as killed)",
+    "roles": {
+        "host": [*HEMWICK_START, "wait-session 2 300", "wait 10", "census 60", "sync mob-ready",
+                 f"kill {MAD_ONE}", "wait 3", f"expect-hp {MAD_ONE} == 0", "sync mob-killed",
+                 "wait 25", "wait 20", "census 60", f"expect-hp {MAD_ONE} > 0",
+                 f"expect-hidden {MAD_ONE} 0", "sync mob-checked", "expect-session 2"],
+        "guest": [*HEMWICK_START, "wait-session 2 300", "wait 10", "census 60", "sync mob-ready",
+                  "sync mob-killed", "wait 12", "census 60", f"expect-hidden {MAD_ONE} 1 10",
+                  "wait 18", "wait 15", "census 60", f"expect-hp {MAD_ONE} > 0",
+                  f"expect-hidden {MAD_ONE} 0 15", f"expect-disabled {MAD_ONE} 0",
+                  "sync mob-checked", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "mad-one-back", "roles": ["host", "guest"]}
+              for name in ("mob-ready", "mob-killed", "mob-checked")},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
+}
