@@ -1511,26 +1511,29 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
-    # Kaniel 2026-10-20 ("bloodstains of ours will be displayed on compass and map"): the guest
-    # (given echoes) dies by the lamp and wakes there; its own stain is on its compass and map, the
-    # host's show it too (through the server); the guest stands on it, and it goes from both.
+    # Kaniel 2026-10-20 ("bloodstains of ours will be displayed on compass and map"; after v1.0.2:
+    # "you only see your bloodstain on compass and map"): the guest (given echoes) dies by the lamp
+    # and wakes there; its own stain is on its compass and map, the host's show none while it lies
+    # there; the guest picks it up, and it goes from its own.
     "bloodstain": {
-        "about": "the party's bloodstains: a member's stain on its own and the others' compass "
-                 "and map, gone from both once picked up",
+        "about": "bloodstains: a player's own on its compass and map, never on a teammate's, gone "
+                 "once picked up",
         "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait-member-vital dead 180",
-                     "expect-stains members 1 1 60", "shot host-stain-compass",
-                     "expect-stains members 0 0 120", "wait 5"],
+                     "wait-member-vital up 60", "wait 1", "expect-stains 0 0 2",
+                     "shot host-stain-compass", "wait 30"],
+            # The stain is recorded as the guest gets up; it picks it up 6 s later (the host has
+            # looked by then). A longer wait first missed the pickup twice (rig 2026-10-21).
             "guest": [START, "wait-session 2 300", "trade-give echoes 500", "wait 15", *GIVE_UP,
-                      "wait-vital up 60", "wait 5", "expect-stains own 1 1 30",
+                      "wait-vital up 60", "wait 6", "expect-stains 1 1 30",
                       "shot guest-stain-compass", "pickup-stain 15", "wait 3",
-                      "expect-stains own 0 0 30", "wait 30"],
+                      "expect-stains 0 0 30", "wait 10"],
         },
         "expect": {
-            "host": [r"autoplay stains \(members\): \[compass", r"autoplay stains \(members\): none"],
-            "guest": [r"autoplay stains \(own\): \[compass own", r"bloodstain picked up",
-                      r"autoplay stains \(own\): none"],
+            "host": [r"autoplay stains: none"],
+            "guest": [r"autoplay stains: \[compass own", r"bloodstain picked up",
+                      r"autoplay stains: none"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,

@@ -1,6 +1,6 @@
 {
  "Bloodstains on compass and map": "コンパスと地図に血痕を表示",
- "Where your echoes and your party's lie after a death: on the compass on this map, on the map on every map.": "死んだ後、あなたと仲間の血の遺志が落ちている場所。コンパスにはこのマップのもの、地図にはすべてのマップのものを表示します。",
+ "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "死んだ後、あなたの血の遺志が落ちている場所。コンパスにはこのマップのもの、地図にはすべてのマップのものを表示します。自分の血痕は自分にしか見えません。",
  "Map fog of war": "マップの霧",
  "The map hides what your hunter has not walked near yet. Off shows the whole map.": "まだ近くを歩いていない場所はマップで隠されます。オフにするとマップ全体が表示されます。",
  "Turn": "回転",

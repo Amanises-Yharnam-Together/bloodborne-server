@@ -1206,8 +1206,7 @@ void PostVitalsWithoutPartyDeath() {
                                 .vital = in_session ? Vital::Up : Vital::Off,
                                 .hp = ReadValue<s32>(data, 0xF8),
                                 .max = ReadValue<s32>(data, 0xFC),
-                                .at = LocalPlayerPosition().value_or(LampPosition{}),
-                                .stain = Coop::ReadOwnBloodstain().value_or(Bloodstain{})},
+                                .at = LocalPlayerPosition().value_or(LampPosition{})},
                    {});
     }
 }
@@ -1385,7 +1384,6 @@ void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
             .landed = run.downed.DamageLanded(),
             .needed = run.downed.DamageNeeded(),
             .at = at.value_or(LampPosition{}),
-            .stain = own_stain.value_or(Bloodstain{}),
         },
         run.revive_hits.Totals(tick.board, tick.view.Fresh()));
 
@@ -2115,23 +2113,16 @@ bool ReadCompass(CompassView& view) {
         view.vitals.push_back(static_cast<int>(member.vital));
         view.revives.push_back(ReviveShare(member.landed, member.needed));
     }
-    // Kaniel 2026-10-20: the party's bloodstains on this map.
-    const auto here = [&](const Bloodstain& stain) {
-        return panel.map != 0 && stain.map == panel.map ? std::optional{stain.at} : std::nullopt;
-    };
-    std::vector<std::optional<LampPosition>> stains;
-    for (const PanelMember& member : panel.members) {
-        stains.push_back(here(member.stain));
-    }
-    view.stains = CompassStains(here(panel.own_stain), stains, *panel.me, view.heading);
-    for (const CompassStain& stain : view.stains) {
-        view.stain_names.push_back(stain.owner < 0 ? std::string{}
-                                                   : panel.members[stain.owner].shown);
-    }
-    if (view.markers.empty() && view.stains.empty()) {
+    // Kaniel 2026-10-20: this player's own bloodstain on this map (only its own: Kaniel after
+    // v1.0.2).
+    const Bloodstain& own = panel.own_stain;
+    view.stain = CompassStainOf(panel.map != 0 && own.map == panel.map ? std::optional{own.at}
+                                                                       : std::nullopt,
+                                *panel.me, view.heading);
+    if (view.markers.empty() && !view.stain) {
         view.why = "nobody else on this map";
     }
-    return !view.markers.empty() || !view.stains.empty();
+    return !view.markers.empty() || view.stain.has_value();
 }
 
 bool ReadPartyPanel(PartyPanel& panel) {

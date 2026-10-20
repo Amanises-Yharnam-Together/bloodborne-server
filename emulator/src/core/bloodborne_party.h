@@ -3173,8 +3173,9 @@ constexpr s64 GiveUpHoldMs = 3'000;
 // and its revive damage on others as "<target>:<down>:<damage>" totals. The answer has the same
 // line per member with the party's revive damage on that member's down added at the end, then a
 // "wipe <id> <map> <member>..." line for each wipe shadNet declared lately.
-// Kaniel 2026-10-20 (bloodstains on the compass and map): a player's bloodstain, the echoes it
-// dropped where it died. The game keeps one, the latest; map 0: none.
+// Kaniel 2026-10-20 (bloodstains on the compass and map): this player's bloodstain, the echoes it
+// dropped where it died. The game keeps one, the latest; map 0: none. Only its own player sees it
+// (Kaniel after v1.0.2: "you only see your bloodstain on compass and map").
 struct Bloodstain {
     u32 map = 0;
     LampPosition at{};
@@ -3200,8 +3201,6 @@ struct MemberVitals {
     // Kaniel 2026-10-18: its Blood Vials and Quicksilver Bullets (the server only, as cutscene).
     u32 vials = 0;
     u32 bullets = 0;
-    // Kaniel 2026-10-20: its bloodstain (the server only, as cutscene).
-    Bloodstain stain;
     bool operator==(const MemberVitals&) const = default;
 };
 // Where the team's host stands (up or down, on a map) on the vitals board, as a resume point.
@@ -3615,8 +3614,6 @@ struct PanelMember {
     // Kaniel 2026-10-18: its vials and bullets, shown beside its name.
     u32 vials = 0;
     u32 bullets = 0;
-    // Kaniel 2026-10-20: its bloodstain, on whatever map it lies (map 0: none).
-    Bloodstain stain;
     bool operator==(const PanelMember&) const = default;
 };
 struct PartyPanel {

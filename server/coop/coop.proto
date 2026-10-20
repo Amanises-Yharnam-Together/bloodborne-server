@@ -206,14 +206,9 @@ message Vitals {
     // in the others' party lists.
     uint32 vials = 11;
     uint32 bullets = 12;
-    // Kaniel 2026-10-20: this member's bloodstain (the echoes it dropped where it died; the game
-    // keeps one, the latest), shown on the others' compasses and maps. None while unset.
-    Bloodstain stain = 13;
-}
-message Bloodstain {
-    uint32 map = 1;
-    Position at = 2;
-    sint32 echoes = 3;
+    // Kaniel 2026-10-20: was a member's bloodstain, shown to the others (v1.0.2 only); each player
+    // sees only its own now.
+    reserved 13;
 }
 message VitalsBoard {
     message Member {
