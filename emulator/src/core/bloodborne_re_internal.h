@@ -501,6 +501,7 @@ void TickPartyDeath();
 
 void ReopenClosedPartySession();
 void WatchSummonJoin();
+void LogUnsharedNearbyCharacters();
 bool PartyTripActive();
 s64 SteadyMilliseconds();
 void TickPartyController();

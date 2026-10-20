@@ -2276,6 +2276,17 @@ std::vector<std::pair<s32, bool>> VisitKills::Observe(u64 visit,
     }
     for (const auto& [handle, now, instance, settling, untouched_boss, others_kill] : characters) {
         const auto [it, added] = seen.try_emplace(handle, Seen{now, instance, untouched_boss});
+        // The same object dead, now alive: a map generator brought it back (the chalice widow's
+        // skeletons, the Witch of Hemwick's Mad Ones; Kaniel 2026-10-20). Its kill is taken back.
+        if (const auto at = std::ranges::find(killed, handle);
+            !added && !settling && at != killed.end() && it->second.instance == instance &&
+            it->second.hp <= 0 && now > 0) {
+            killed.erase(at);
+            killed_on.erase(handle);
+            changes.emplace_back(static_cast<s32>(handle), false);
+            it->second = {now, instance, untouched_boss};
+            continue;
+        }
         // The same object seen alive, now dead: a world that loaded brings new objects, some
         // dead already (in a save that killed them for good), and one that settles after a
         // takeover puts such ones down where they stand. Nor a boss-sized one last seen

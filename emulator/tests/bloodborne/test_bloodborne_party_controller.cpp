@@ -1662,6 +1662,32 @@ TEST(BloodborneSharedKills, AMembersKillsLastForItsVisit) {
     EXPECT_EQ(fresh.Observe(3, one_dead), Changes{});
 }
 
+// Kaniel's playtest 2026-10-19 and the Witch of Hemwick: a map generator (the chalice widow's
+// skeletons, the witch's Mad Ones) brings its dead enemies back, the same characters in their
+// slots. A kill of one that is alive again is taken back, so the other games show it again.
+TEST(BloodborneSharedKills, AnEnemyBroughtBackTakesItsKillBack) {
+    VisitKills kills;
+    using Changes = std::vector<std::pair<s32, bool>>;
+    constexpr u32 Skeleton = 0x1002c030;
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{Skeleton, 398, 7}}), Changes{});
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{Skeleton, 0, 7}}),
+              (Changes{{Skeleton, true}}));
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{Skeleton, 398, 7}}),
+              (Changes{{Skeleton, false}}))
+        << "the generator brought it back";
+    EXPECT_TRUE(kills.Killed().empty());
+    EXPECT_TRUE(kills.Standing().empty());
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{Skeleton, 0, 7}}),
+              (Changes{{Skeleton, true}}))
+        << "killed again";
+    // Another object in the slot (the world loaded again) is no revive; nor a read while the
+    // copy settles after a takeover.
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{Skeleton, 398, 8}}), Changes{});
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{Skeleton, 0, 8}}), Changes{})
+        << "already this visit's kill";
+    EXPECT_EQ(kills.Observe(1, std::vector<SeenCharacter>{{Skeleton, 398, 8, true}}), Changes{});
+}
+
 // Rig smoke 2026-10-12 (run 143240): Father Gascoigne (0x1001409c/0x1001409e), dead in the
 // guests' saves, was put down by their worlds 5.7 s after the join's load, past the settling
 // time, and both guests posted him; every other game then hid his body, and the second guest
