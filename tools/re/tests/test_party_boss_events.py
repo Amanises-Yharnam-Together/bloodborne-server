@@ -476,6 +476,66 @@ class GuestsPickUpGlowingItems(unittest.TestCase):
         self.assertEqual(parameters_of(tool.load_dcx(output), 12600125), [(6, 0, 4, 4)])
 
 
+class GuestsWakeMistAmbushes(unittest.TestCase):
+    """Kaniel's playtest 2026-10-20: in the woods on the way into Hemwick the enemies that rise
+    out of the mist rose for everyone, but only when the host came near; a guest running past
+    them woke nothing. Their event (m22_00 12204000, a slot per enemy) waits for the local
+    player near the enemy (3:3) and alive in its own world (4:3 type 0) in one condition group."""
+
+    HEMWICK = 'm22_00_00_00.emevd.dcx'
+
+    def ambush_event(self) -> list[tuple[int, int, bytes]]:
+        return [(1003, 101, struct.pack('<BBxxi', 0, 1, 12204011)),
+                (2004, 5, struct.pack('<iBxxx', 0, 0)),
+                (1000, 4, struct.pack('<i', 0)),
+                (1014, 0, b''),
+                (2004, 5, struct.pack('<iBxxx', 0, 0)),
+                (3, 0, struct.pack('<bBBxi', -1, 1, 0, 9801)),
+                (3, 0, struct.pack('<bBBxi', -1, 1, 0, 9802)),
+                (0, 0, struct.pack('<bBbx', 1, 1, -1)),
+                (3, 3, struct.pack('<bBxxiif', 1, 1, 10000, 0, 0.0)),
+                (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0)),
+                (3, 0, struct.pack('<bBBxi', 2, 1, 2, 0)),
+                (0, 0, struct.pack('<bBbx', -2, 1, 1)),
+                (0, 0, struct.pack('<bBbx', -2, 1, 2)),
+                (0, 0, struct.pack('<bBbx', 0, 1, -2)),
+                (2004, 5, struct.pack('<iBxxx', 0, 1)),
+                (2003, 18, struct.pack('<iii', 0, 6200, 0))]
+
+    def patch(self, event):
+        original = build_emevd({12204000: event})
+        patched, count = tool.let_guests_wake_ambushes(original, tool.AMBUSH_EVENTS[self.HEMWICK])
+        return read_events(original)[12204000], read_events(patched)[12204000], count, patched
+
+    def test_a_guest_coming_near_wakes_the_enemy(self):
+        before, events, count, _ = self.patch(self.ambush_event())
+        self.assertEqual(count, 1)
+        self.assertEqual(events[9][2][0], tool.UNUSED_GROUP)
+        self.assertEqual(events[:9] + events[10:], before[:9] + before[10:])
+
+    def test_patching_twice_changes_nothing(self):
+        _, _, _, patched = self.patch(self.ambush_event())
+        self.assertEqual(tool.let_guests_wake_ambushes(patched, {12204000}), (patched, 0))
+
+    def test_an_alive_check_in_another_group_stays(self):
+        event = self.ambush_event()
+        event[9] = (4, 3, struct.pack('<bxxxiBxxx', 3, 10000, 0))
+        with self.assertRaises(tool.EventPatchError):
+            self.patch(event)
+
+    def test_an_event_without_the_appear_animation_is_refused(self):
+        event = self.ambush_event()
+        event[15] = (2003, 18, struct.pack('<iii', 0, 3006, 0))
+        with self.assertRaises(tool.EventPatchError):
+            self.patch(event)
+
+    def test_every_map_with_the_template_is_listed(self):
+        self.assertEqual(tool.AMBUSH_EVENTS[self.HEMWICK], {12204000})
+        self.assertEqual(set(tool.AMBUSH_EVENTS),
+                         {self.HEMWICK, 'm24_01_00_00.emevd.dcx', 'm25_00_00_00.emevd.dcx',
+                          'm26_00_00_00.emevd.dcx', 'm29.emevd.dcx'})
+
+
 class LocalEventsKeepTheirParameters(unittest.TestCase):
     """Kaniel 2026-10-12: after the Dream patch the messengers sold weapons whose badges nobody
     had. Event 12101000 is started per slot with arguments (2000:0) that its parameter entries

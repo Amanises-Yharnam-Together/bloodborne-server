@@ -37,6 +37,10 @@ Items picked up with the action button at a glowing spot (ACTION_PICKUP_EVENTS: 
 Old Workshop's Small Hair Ornament, Third Umbilical Cord and Old Hunter Bone, and seven more) ended
 for a party guest and gave a client nothing; each player now picks up its own copy.
 
+Enemies that rise out of the mist as a player comes near (AMBUSH_EVENTS: the woods on the way
+into Hemwick and four more) woke only for an alive player in its own world, the host; a guest's
+approach wakes them too.
+
 Events are kept in step between the players of a session unless they start with 2000:2 (network
 sync) 0, as the first visit does. The Hunter's Dream messengers' gift events (m21_00
 12101020-12101028) get that instruction, so one player's gift pick no longer finishes the other's
@@ -359,6 +363,65 @@ def let_guests_pick_up_items(emevd: bytes, wanted: dict[int, tuple[int, int]],
                 note(edits, event, k, bank, AWARD_ITEM_LOT_INCLUDING_CLIENTS,
                      'item for clients too')
                 patched += 1
+    return bytes(data), patched
+
+
+# Enemies that rise out of the mist when a player comes near (2004:5 enable, 2003:18 animation
+# 6200), per file: one event slot per enemy. Each waits for the local player to be within reach
+# (3:3 player 10000 near the enemy) and alive in its own world (4:3 player 10000 type 0) in the
+# same condition group, so only the host's approach woke them; a guest, a white phantom, saw them
+# rise only when the host came near (Kaniel 2026-10-20: the woods on the way into Hemwick, m22_00
+# 12204000, nine slots). The alive check moves to a condition group nothing waits on, so any party
+# member's approach wakes the enemy, and the event (kept in step) wakes it in every member's game.
+# The same template (without the slot flag path m22's has) stands in m24_01, m25_00 and m26_00 and
+# in the chalice dungeons (m29 12905406).
+AMBUSH_EVENTS = {
+    'm22_00_00_00.emevd.dcx': {12204000},
+    'm24_01_00_00.emevd.dcx': {12414000},
+    'm25_00_00_00.emevd.dcx': {12504000},
+    'm26_00_00_00.emevd.dcx': {12604000},
+    'm29.emevd.dcx': {12905406},
+}
+IF_NEAR_ENTITY = (3, 3)
+APPEAR_ANIMATION = 6200
+
+
+def let_guests_wake_ambushes(emevd: bytes, wanted: set[int],
+                             edits: list | None = None) -> tuple[bytes, int]:
+    data = bytearray(emevd)
+    fields = struct.unpack_from('<16q', data, 16)
+    event_count, event_offset, instruction_offset, args_offset = (fields[0], fields[1], fields[3],
+                                                                  fields[13])
+    patched = 0
+    for index in range(event_count):
+        event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
+                                                             event_offset + index * 48)
+        if event not in wanted:
+            continue
+        records = [struct.unpack_from('<iiqqq', data, instruction_offset + first + k * 32)
+                   for k in range(count)]
+        if not any((bank, ident) == (2003, 18) and length >= 8 and
+                   struct.unpack_from('<i', data, args_offset + offset + 4)[0] == APPEAR_ANIMATION
+                   for bank, ident, length, offset, _ in records):
+            raise EventPatchError(f'event {event} plays no appear animation {APPEAR_ANIMATION}')
+        near_groups = {data[args_offset + offset] for bank, ident, length, offset, _ in records
+                       if (bank, ident) == IF_NEAR_ENTITY and length >= 8 and
+                       struct.unpack_from('<i', data, args_offset + offset + 4)[0] ==
+                       LOCAL_PLAYER}
+        moved = 0
+        for k, (bank, ident, length, offset, _) in enumerate(records):
+            at = args_offset + offset
+            if ((bank, ident) == (4, 3) and length >= 9 and data[at] in near_groups and
+                    struct.unpack_from('<i', data, at + 4)[0] == LOCAL_PLAYER and
+                    data[at + 8] == ALIVE):
+                data[at] = UNUSED_GROUP
+                note(edits, event, k, bank, ident, 'alive check no longer waited on')
+                moved += 1
+        if not moved and UNUSED_GROUP not in {data[args_offset + offset]
+                                              for bank, ident, length, offset, _ in records
+                                              if (bank, ident) == (4, 3)}:
+            raise EventPatchError(f'event {event} has no alive check beside its approach')
+        patched += moved
     return bytes(data), patched
 
 
@@ -739,7 +802,7 @@ def patch_file(name: str, original: bytes) -> tuple[bytes | None, list, dict]:
     edits: list = []
     counts = {'boss event checks': 0, 'boss fog checks': 0, 'insight event checks': 0,
               'client event ends': 0, 'local events': 0, 'chalice wall checks': 0,
-              'item pickup checks': 0, 'host door effects': 0}
+              'item pickup checks': 0, 'host door effects': 0, 'ambush checks': 0}
     try:
         if name.startswith('m'):
             emevd, counts['boss event checks'] = patch_events(emevd, edits)
@@ -751,6 +814,9 @@ def patch_file(name: str, original: bytes) -> tuple[bytes | None, list, dict]:
         if name in ACTION_PICKUP_EVENTS:
             emevd, counts['item pickup checks'] = let_guests_pick_up_items(
                 emevd, ACTION_PICKUP_EVENTS[name], edits)
+        if name in AMBUSH_EVENTS:
+            emevd, counts['ambush checks'] = let_guests_wake_ambushes(emevd, AMBUSH_EVENTS[name],
+                                                                      edits)
         if name in CHALICE_WALL_EVENTS:
             emevd, counts['chalice wall checks'] = patch_chalice_walls(
                 emevd, edits, CHALICE_WALL_EVENTS[name])
