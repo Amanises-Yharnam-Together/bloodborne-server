@@ -261,6 +261,21 @@ TEST(BloodborneFlagRules, DoorsOneMemberOpenedOpenForTheParty) {
     EXPECT_EQ(std::ranges::adjacent_find(DoorFlags), DoorFlags.end());
 }
 
+// Kaniel 2026-10-20: the enemies rising out of the mist in the Hemwick woods rose only for the
+// host's approach. A guest's own copy of the ambush event (m22_00 12204000, slot k for enemy
+// 2200500 + k) woke the enemy in its game only (rig mist-ambush-guest); the host's copy also rises
+// once its slot's done flag 12204000 + k is on, so the party shares those.
+TEST(BloodborneFlagRules, AnAmbushAGuestWokeRisesForTheHost) {
+    for (s32 flag = 12204000; flag <= 12204008; ++flag) {
+        EXPECT_TRUE(SharedWithParty(flag)) << flag;
+        EXPECT_FALSE(SharesClearsWithParty(flag)) << flag;
+        EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
+        EXPECT_TRUE(TakesHostMapFlag(flag)) << flag;
+    }
+    EXPECT_FALSE(SharedWithParty(12204009));
+    EXPECT_FALSE(SharedWithParty(12204011)); // the ambush armed: the host's Insight decides
+}
+
 TEST(BloodborneFlagRules, BossFoundFlagsArePerPlayer) {
     std::set<s32> found;
     for (const EncounterInsight& boss : EncounterInsights()) {
