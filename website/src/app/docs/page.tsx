@@ -12,13 +12,14 @@ import {
 import { docs } from "@/content/docs";
 import { faq } from "@/content/faq";
 import { JsonLd } from "@/lib/json-ld";
+import { pageMetadata } from "@/lib/metadata";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Guide",
   description:
     "The Yharnam Together (Bloodborne Seamless Co-op) guide: installing, the launcher, playing as a team, and how the port and its server work.",
-  alternates: { canonical: "/docs" },
-};
+  path: "/docs",
+});
 
 export default function DocsIndex() {
   return (

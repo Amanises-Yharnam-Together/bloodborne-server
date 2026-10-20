@@ -7,14 +7,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatBytes, getLatestRelease, type Release } from "@/lib/github";
+import { pageMetadata } from "@/lib/metadata";
 import { RELEASES_URL } from "@/lib/site";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Download",
   description:
     "Download the latest release of Yharnam Together (Bloodborne Seamless Co-op) for Windows: one installer for every player, free and open source. Requires your own Bloodborne 1.09.",
-  alternates: { canonical: "/download" },
-};
+  path: "/download",
+});
 
 export default function DownloadPage() {
   return (

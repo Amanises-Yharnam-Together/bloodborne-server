@@ -13,16 +13,18 @@ npm run check    # format, lint, type check, tests, production build
 
 ## Where things are
 
-| Path                         | What it is                                                                |
-| ---------------------------- | ------------------------------------------------------------------------- |
-| `src/content/docs.ts`        | the documentation as data; the pages and `/llms-full.txt` both render it  |
-| `src/content/faq.ts`         | the landing page's questions (also FAQPage structured data)               |
-| `src/components/figures.tsx` | the docs' diagrams and the traffic chart, as server-rendered SVG/HTML     |
-| `public/docs/`               | screenshots used in the docs (test-rig accounts only)                     |
-| `src/components/ui/`         | shadcn/ui components (`components.json` is set up for `npx shadcn add`)   |
-| `src/app/globals.css`        | the theme: colours, type, the gilt frame                                  |
-| `src/lib/site.ts`            | names, links, the deployment URL, the trailer id, the netcode status line |
-| `src/assets/mark.svg`        | the logo; `npm run icons` redraws the favicon and app icons from it       |
+| Path                          | What it is                                                                |
+| ----------------------------- | ------------------------------------------------------------------------- |
+| `src/content/docs.ts`         | the documentation as data; the pages and `/llms-full.txt` both render it  |
+| `src/content/faq.ts`          | the landing page's questions (also FAQPage structured data)               |
+| `src/components/figures.tsx`  | the docs' diagrams and the traffic chart, as server-rendered SVG/HTML     |
+| `public/docs/`                | screenshots used in the docs (test-rig accounts only)                     |
+| `src/components/ui/`          | shadcn/ui components (`components.json` is set up for `npx shadcn add`)   |
+| `src/app/globals.css`         | the theme: colours, type, the gilt frame                                  |
+| `src/lib/site.ts`             | names, links, the deployment URL, the trailer id, the netcode status line |
+| `assets-src/logo.png`         | the logo; `npm run icons` redraws the favicon and app icons from it       |
+| `src/app/opengraph-image.tsx` | the link preview; `npm run og` redraws its backdrop from `public/art`     |
+| `src/lib/metadata.ts`         | a page's title, description, canonical URL and link-card tags             |
 
 Everything a crawler or a language model looks for is generated: `sitemap.xml`, `robots.txt`,
 `manifest.webmanifest`, `llms.txt`, `llms-full.txt`, the Open Graph image, canonical URLs and
@@ -36,8 +38,9 @@ and the "Play together" section of `src/content/docs.ts`.
 
 1. Import the repository in Vercel and set **Root Directory** to `website`. The framework preset
    (Next.js), build command and output are detected; nothing else needs changing.
-2. Set the environment variables from `.env.example`: `NEXT_PUBLIC_SITE_URL` once the domain is
-   known, `NEXT_PUBLIC_TRAILER_YOUTUBE_ID` when the trailer is up.
+2. Set the environment variables from `.env.example`: `NEXT_PUBLIC_SITE_URL` only to override
+   the site's address (builds on Vercel use `SITE_DOMAIN` from `src/lib/site.ts`,
+   bloodborne.seamlesscoop.dev), `NEXT_PUBLIC_TRAILER_YOUTUBE_ID` when the trailer is up.
 3. Deploy. The download page refreshes the release from GitHub at most once an hour.
 
 ## Fonts and art

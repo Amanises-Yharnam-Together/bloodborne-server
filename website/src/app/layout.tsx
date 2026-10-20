@@ -33,6 +33,9 @@ export const metadata: Metadata = {
     url: "/",
     locale: "en",
   },
+  authors: [{ name: "lKaniel", url: REPO_URL }],
+  creator: "lKaniel",
+  formatDetection: { telephone: false, address: false, email: false },
   twitter: {
     card: "summary_large_image",
     title: site.name,
@@ -68,6 +71,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             "@context": "https://schema.org",
             "@type": "WebSite",
             name: site.name,
+            alternateName: [site.shortName, "Bloodborne Seamless Co-op"],
+            inLanguage: "en",
             url: siteUrl,
             description: site.description,
             sameAs: [REPO_URL],

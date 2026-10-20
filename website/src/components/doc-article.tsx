@@ -6,22 +6,18 @@ import { DocBody } from "@/components/doc-blocks";
 import { Heading } from "@/components/ornament";
 import { docs, getDoc } from "@/content/docs";
 import { JsonLd } from "@/lib/json-ld";
+import { pageMetadata } from "@/lib/metadata";
 import { absoluteUrl, site } from "@/lib/site";
 
 export function docMetadata(slug: string): Metadata {
   const page = getDoc(slug);
   if (!page) return {};
-  return {
+  return pageMetadata({
     title: page.title,
     description: page.description,
-    alternates: { canonical: `/docs/${slug}` },
-    openGraph: {
-      type: "article",
-      title: page.title,
-      description: page.description,
-      url: `/docs/${slug}`,
-    },
-  };
+    path: `/docs/${slug}`,
+    type: "article",
+  });
 }
 
 /** The guide's pages: a column beside the text on wide screens, a wrapped row above it on

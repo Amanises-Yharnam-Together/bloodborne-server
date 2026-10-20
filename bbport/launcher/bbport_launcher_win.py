@@ -1309,14 +1309,14 @@ def console_encoding():
 
 # The home page's banner (Kaniel 2026-10-16): news and patch notes from the website, a file the site
 # serves as it is (website/public/launcher/news.json). The last copy read is kept for a start offline.
-NEWS_URL = 'https://bloodborne-seamless-coop.vercel.app/launcher/news.json'
+NEWS_URL = 'https://bloodborne.seamlesscoop.dev/launcher/news.json'
 NEWS_FALLBACK = {
     'kicker': 'Seamless Co-op',
     'title': 'Hunt Yharnam together',
     'intro': 'Up to four hunters share one world: no bells, no signs, no peer-to-peer. Set the co-op up once, '
              'press PLAY, then make or join a team on the screen after Continue.',
     'notes': [],
-    'link': {'text': 'Open the website', 'url': 'https://bloodborne-seamless-coop.vercel.app'},
+    'link': {'text': 'Open the website', 'url': 'https://bloodborne.seamlesscoop.dev'},
     'info': [],
 }
 
