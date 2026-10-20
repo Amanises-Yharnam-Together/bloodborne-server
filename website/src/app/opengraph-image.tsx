@@ -4,7 +4,8 @@ import { ImageResponse } from "next/og";
 
 import { site } from "@/lib/site";
 
-// The social preview: the emblem and the name, set like the game's title screen.
+// The social preview (link cards in chats, search and social sites): the site's own backdrop of
+// moon, city and fog (src/assets/og-backdrop.png, from `npm run og`) with the logo and the name.
 export const alt = `${site.shortName}: Bloodborne seamless co-op on PC`;
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
@@ -12,7 +13,9 @@ export const contentType = "image/png";
 const fonts = join(process.cwd(), "src/assets/fonts");
 const regular = await readFile(join(fonts, "EBGaramond-Regular.ttf"));
 const italic = await readFile(join(fonts, "EBGaramond-Italic.ttf"));
-const emblem = `data:image/png;base64,${(await readFile(join(process.cwd(), "public/logo.png"))).toString("base64")}`;
+const png = (data: Buffer) => `data:image/png;base64,${data.toString("base64")}`;
+const backdrop = png(await readFile(join(process.cwd(), "src/assets/og-backdrop.png")));
+const emblem = png(await readFile(join(process.cwd(), "public/logo.png")));
 
 export default function Image() {
   return new ImageResponse(
@@ -21,31 +24,53 @@ export default function Image() {
         width: "100%",
         height: "100%",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 64,
-        background:
-          "radial-gradient(ellipse 80% 70% at 50% 0%, rgba(190,186,176,0.13), rgba(5,5,5,1) 70%), #0d0f13",
-        color: "#f3ead8",
+        position: "relative",
+        background: "#0d0f13",
+        color: "#f0e2c2",
         fontFamily: "Garamond",
       }}
     >
-      <img src={emblem} width={300} height={300} alt="" />
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        <div style={{ fontSize: 88, lineHeight: 1 }}>Yharnam Together</div>
-        <div style={{ fontSize: 54, color: "#d9b878", marginTop: 8 }}>
-          Bloodborne Seamless Co-op
-        </div>
-        <div
-          style={{
-            fontSize: 30,
-            color: "#b9b4aa",
-            marginTop: 30,
-            fontStyle: "italic",
-            maxWidth: 560,
-          }}
-        >
-          {site.tagline}
+      <img
+        src={backdrop}
+        width={size.width}
+        height={size.height}
+        alt=""
+        style={{ position: "absolute", top: 0, left: 0 }}
+      />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 56,
+          width: "100%",
+          padding: "0 80px 70px",
+        }}
+      >
+        <img src={emblem} width={300} height={300} alt="" />
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: 92, lineHeight: 1 }}>{site.shortName}</div>
+          <div style={{ fontSize: 50, color: "#d9b878", marginTop: 10 }}>
+            Bloodborne Seamless Co-op
+          </div>
+          <div
+            style={{
+              width: 520,
+              height: 1,
+              marginTop: 28,
+              background: "linear-gradient(90deg, rgba(201,168,106,0.9), rgba(201,168,106,0))",
+            }}
+          />
+          <div
+            style={{
+              fontSize: 30,
+              color: "#aea590",
+              marginTop: 22,
+              fontStyle: "italic",
+              maxWidth: 700,
+            }}
+          >
+            {site.tagline}
+          </div>
         </div>
       </div>
     </div>,

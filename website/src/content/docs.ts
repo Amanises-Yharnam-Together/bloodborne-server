@@ -1724,7 +1724,7 @@ const netcode: DocPage = {
       blocks: [
         {
           type: "p",
-          text: `The rewrite was built in phases on a branch, each with tests first and runs on the multi-game rig: a packet trace, a channel policy table, one UDP link to the server, the world log on the server, enemy owners from the server, the native team lobby, the server owning the session (faster joins, host migration, resuming after a drop), one owner per map with a single HP path, server routing with the old peer-to-peer paths deleted, and crash-safe world saves with a server that restarts without ending sessions. It is in main and ships in the pre-releases.`,
+          text: `The rewrite was built in phases on a branch, each with tests first and runs on the multi-game rig: a packet trace, a channel policy table, one UDP link to the server, the world log on the server, enemy owners from the server, the native team lobby, the server owning the session (faster joins, host migration, resuming after a drop), one owner per map with a single HP path, server routing with the old peer-to-peer paths deleted, and crash-safe world saves with a server that restarts without ending sessions. It is in main and ships in every release since v0.3 (1.0.0 included).`,
         },
         {
           type: "p",

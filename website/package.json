@@ -10,6 +10,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "icons": "node scripts/generate-icons.mjs",
+    "og": "node scripts/generate-og-backdrop.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

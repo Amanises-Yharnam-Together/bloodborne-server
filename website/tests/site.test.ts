@@ -14,9 +14,9 @@ describe("resolveSiteUrl", () => {
   it("adds https to a bare host", () => {
     expect(resolveSiteUrl({ NEXT_PUBLIC_SITE_URL: "hunt.example" })).toBe("https://hunt.example");
   });
-  it("falls back to Vercel's production domain, then localhost", () => {
-    expect(resolveSiteUrl({ VERCEL_PROJECT_PRODUCTION_URL: "bb.vercel.app" })).toBe(
-      "https://bb.vercel.app",
+  it("uses the site's own domain on Vercel, never Vercel's production URL, then localhost", () => {
+    expect(resolveSiteUrl({ VERCEL: "1", VERCEL_PROJECT_PRODUCTION_URL: "bb.vercel.app" })).toBe(
+      "https://bloodborne.seamlesscoop.dev",
     );
     expect(resolveSiteUrl({})).toBe("http://localhost:3000");
   });

@@ -9,7 +9,7 @@ import { StartSteps, type StartStep } from "@/components/start-steps";
 import { VideoSlot } from "@/components/video-slot";
 import type { IconName } from "@/content/docs";
 import { JsonLd } from "@/lib/json-ld";
-import { REPO_URL, site, siteUrl } from "@/lib/site";
+import { REPO_URL, absoluteUrl, site, siteUrl } from "@/lib/site";
 
 // The rest of what changes: four short ones with an icon, then two with a picture.
 const changes: { term: string; icon: IconName; text: string }[] = [
@@ -328,8 +328,13 @@ export default function Home() {
           "@context": "https://schema.org",
           "@type": "SoftwareApplication",
           name: site.name,
+          alternateName: [site.shortName, "Bloodborne Seamless Co-op"],
           description: site.description,
+          image: absoluteUrl("/opengraph-image"),
           applicationCategory: "GameApplication",
+          applicationSubCategory: "Game mod",
+          keywords: site.keywords.join(", "),
+          author: { "@type": "Person", name: "lKaniel", url: "https://github.com/lKaniel" },
           operatingSystem: "Windows 10, Windows 11",
           url: siteUrl,
           downloadUrl: `${siteUrl}/download`,

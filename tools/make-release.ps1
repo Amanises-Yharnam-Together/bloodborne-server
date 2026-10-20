@@ -298,6 +298,8 @@ Seamless co-op for Bloodborne on Bloodborne PC (the native Windows port).
 3. Press **PLAY**. The host's co-op server starts by itself; Windows asks once to let co-op through its firewall. Everyone must reach the host's UDP port 31314 (and TCP 31313, 31315, 20443).
 4. Continue, Load Game or New Game opens the team screen: make a team of up to four, Ready, and the leader begins the hunt.
 
+The full setup guide, with pictures: https://bloodborne.seamlesscoop.dev/docs/install
+
 Everyone in a team must use this same release. Co-op always runs at 60 FPS.
 
 Built from $commit. SHA-256 of the setup: ``$sha``

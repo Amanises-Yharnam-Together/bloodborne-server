@@ -5,16 +5,16 @@ Seamless co-op for **Bloodborne** on PC, in the spirit of
 make a team, share one world, join each other without bells, signs or Insight, and keep playing
 together through lamp trips, deaths, boss fights and chalice dungeons.
 
-**Website, download and guides: <https://bloodborne-seamless-coop.vercel.app>**
+**Website, download and guides: <https://bloodborne.seamlesscoop.dev>**
 
-- [Download](https://bloodborne-seamless-coop.vercel.app/download): the newest release
-- [Install and set up](https://bloodborne-seamless-coop.vercel.app/docs/install): the setup, the
+- [Download](https://bloodborne.seamlesscoop.dev/download): the newest release
+- [Install and set up](https://bloodborne.seamlesscoop.dev/docs/install): the setup, the
   launcher's Co-op page, reaching the host
-- [Playing together](https://bloodborne-seamless-coop.vercel.app/docs/play): teams, the party
+- [Playing together](https://bloodborne.seamlesscoop.dev/docs/play): teams, the party
   list, going down, giving items
-- [How it works](https://bloodborne-seamless-coop.vercel.app/docs/architecture) and
-  [the server netcode](https://bloodborne-seamless-coop.vercel.app/docs/netcode)
-- [Build from source](https://bloodborne-seamless-coop.vercel.app/docs/build)
+- [How it works](https://bloodborne.seamlesscoop.dev/docs/architecture) and
+  [the server netcode](https://bloodborne.seamlesscoop.dev/docs/netcode)
+- [Build from source](https://bloodborne.seamlesscoop.dev/docs/build)
 
 It runs on **Bloodborne PC**, the native Windows port of the PS4 game (the game's own code runs on
 your CPU, its graphics go through Vulkan; there is no emulator in between). The co-op server and
@@ -77,10 +77,10 @@ expect rough edges and keep backups of your saves. New builds come out as GitHub
 ## Play it
 
 The illustrated version of this is the
-[install guide](https://bloodborne-seamless-coop.vercel.app/docs/install).
+[install guide](https://bloodborne.seamlesscoop.dev/docs/install).
 
 1. Download the setup `.exe` from the
-   [download page](https://bloodborne-seamless-coop.vercel.app/download) (or the
+   [download page](https://bloodborne.seamlesscoop.dev/download) (or the
    [releases page](https://github.com/lKaniel/bloodborne-server/releases)) and run it. Everyone in a
    team, the host included, uses the same release.
 2. Open **Bloodborne Seamless Co-op** (the launcher) and go to its **Co-op** page: your Bloodborne
@@ -156,7 +156,7 @@ More detail: [docs/BBPORT.md](docs/BBPORT.md) (the port and its co-op wiring),
 | `backend/` | stand-in for the game's online services | the LocalServer of the Bloodborne PC Online community package |
 | `tools/` | build, local CI, the co-op kits and releases, the test rig (`tools/rig`), RE helpers (`tools/re`) | |
 | `docs/` | design notes and handovers | |
-| `website/` | the project's website ([live](https://bloodborne-seamless-coop.vercel.app)): landing page, download and docs (Next.js, deploys to Vercel) | |
+| `website/` | the project's website ([live](https://bloodborne.seamlesscoop.dev)): landing page, download and docs (Next.js, deploys to Vercel) | |
 
 All upstreams are imported with their full history (subtree merges), so `git log` shows their
 authors. The shadPS4 build of the co-op (`emulator/`) still works but the port is the main target;

@@ -2,6 +2,10 @@
 
 export const REPO = "lKaniel/bloodborne-server";
 export const REPO_URL = `https://github.com/${REPO}`;
+// The site's own address. seamlesscoop.dev is the project's domain; this game's site is its
+// bloodborne. subdomain (the old bloodborne-seamless-coop.vercel.app address redirects).
+export const SITE_DOMAIN = "bloodborne.seamlesscoop.dev";
+
 export const RELEASES_URL = `${REPO_URL}/releases`;
 export const LATEST_RELEASE_URL = `${RELEASES_URL}/latest`;
 export const ISSUES_URL = `${REPO_URL}/issues`;
@@ -14,20 +18,25 @@ export const site = {
   description:
     "Free, open-source seamless co-op for Bloodborne on PC. Up to four players share one world on a native port of the PS4 game, connected through a small server one of them runs.",
   keywords: [
+    "Yharnam Together",
     "Bloodborne",
     "Bloodborne PC",
+    "Bloodborne PC port",
     "Bloodborne seamless co-op",
     "Bloodborne co-op mod",
-    "Bloodborne multiplayer",
-    "Bloodborne PC port",
-    "seamless co-op",
+    "Bloodborne multiplayer mod",
+    "Bloodborne online co-op",
+    "Bloodborne 4 player co-op",
+    "play Bloodborne with friends",
+    "Bloodborne chalice dungeons co-op",
+    "seamless co-op mod",
     "self-hosted game server",
     "open source",
   ],
   license: "GPL-2.0-or-later",
 } as const;
 
-// Where the server netcode stands: it ships in the pre-releases (v0.3.x), which the download
+// Where the server netcode stands: it ships in every release since v0.3 (1.0.0 included), which the download
 // page offers and the guide describes. The note shows on the install page while it is not shipped.
 export const netcodeStatus = {
   shippedInRelease: true,
@@ -38,14 +47,15 @@ export const netcodeStatus = {
 type Env = Record<string, string | undefined>;
 
 /**
- * The deployment's public origin, without a trailing slash. NEXT_PUBLIC_SITE_URL wins (set it to
- * the real domain); on Vercel the production domain is the fallback, then localhost.
+ * The deployment's public origin, without a trailing slash: what canonical links, the sitemap,
+ * llms.txt and the social preview's address use. NEXT_PUBLIC_SITE_URL wins; any build on Vercel
+ * (previews too, so they never claim to be the real page) uses SITE_DOMAIN, not Vercel's own
+ * production URL, which can be the old vercel.app address; a local build uses localhost.
  */
 export function resolveSiteUrl(env: Env = process.env): string {
   const explicit = env.NEXT_PUBLIC_SITE_URL?.trim();
   if (explicit) return withProtocol(explicit);
-  const vercel = env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
-  if (vercel) return withProtocol(vercel);
+  if (env.VERCEL) return withProtocol(SITE_DOMAIN);
   return "http://localhost:3000";
 }
 
