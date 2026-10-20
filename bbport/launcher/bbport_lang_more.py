@@ -43,6 +43,9 @@ MORE_KEYS = [
     'The WebAPI box holds the game server address; it is ignored.',
     '"Play online" is off: the game starts offline.',
     'Could not add the game to Steam: {}',
+    'Updating to v{}',
+    "Downloading the update. Don't close the launcher or start the game: the installer opens next, then the launcher opens again by itself.",
+    "The installer window shows the progress. Don't close it or start the game: the launcher opens again when it is done.",
 ]
 
 MORE = {
@@ -87,6 +90,9 @@ MORE = {
         'В поле WebAPI указан адрес игрового сервера; он не используется.',
         '«Играть онлайн» выключено: игра запустится офлайн.',
         'Не удалось добавить игру в Steam: {}',
+        'Обновление до v{}',
+        'Загружается обновление. Не закрывайте лаунчер и не запускайте игру: дальше откроется установщик, затем лаунчер откроется сам.',
+        'Окно установщика показывает ход установки. Не закрывайте его и не запускайте игру: лаунчер откроется снова, когда она закончится.',
     ],
     'ar': [
         'اللعب التعاوني عبر الإنترنت',
@@ -129,6 +135,9 @@ MORE = {
         'حقل WebAPI يحتوي على عنوان خادم اللعبة، ولن يُستخدم.',
         'خيار «العب عبر الإنترنت» متوقف: ستبدأ اللعبة بدون إنترنت.',
         'تعذّرت إضافة اللعبة إلى Steam: {}',
+        'جارٍ التحديث إلى v{}',
+        'يجري تنزيل التحديث. لا تغلق المشغّل ولا تبدأ اللعبة: سيفتح المثبّت بعد ذلك، ثم يفتح المشغّل من جديد تلقائيًا.',
+        'تعرض نافذة المثبّت سير التثبيت. لا تغلقها ولا تبدأ اللعبة: سيفتح المشغّل من جديد عند الانتهاء.',
     ],
     'es': [
         'Cooperativo en línea',
@@ -171,6 +180,9 @@ MORE = {
         'El campo WebAPI contiene la dirección del servidor del juego; se ignora.',
         '«Jugar en línea» está desactivado: el juego se inicia sin conexión.',
         'No se pudo añadir el juego a Steam: {}',
+        'Actualizando a v{}',
+        'Descargando la actualización. No cierres el lanzador ni inicies el juego: después se abre el instalador y luego el lanzador vuelve a abrirse solo.',
+        'La ventana del instalador muestra el progreso. No la cierres ni inicies el juego: el lanzador se abre de nuevo al terminar.',
     ],
     'pt': [
         'Cooperativo online',
@@ -213,6 +225,9 @@ MORE = {
         'O campo WebAPI contém o endereço do servidor do jogo; ele é ignorado.',
         '"Jogar online" está desligado: o jogo abre offline.',
         'Não foi possível adicionar o jogo à Steam: {}',
+        'Atualizando para v{}',
+        'Baixando a atualização. Não feche o launcher nem inicie o jogo: o instalador abre em seguida e depois o launcher abre de novo sozinho.',
+        'A janela do instalador mostra o progresso. Não a feche nem inicie o jogo: o launcher abre de novo quando terminar.',
     ],
     'fr': [
         'Coopération en ligne',
@@ -255,6 +270,9 @@ MORE = {
         "Le champ WebAPI contient l'adresse du serveur du jeu ; elle est ignorée.",
         '« Jouer en ligne » est désactivé : le jeu démarre hors ligne.',
         "Impossible d'ajouter le jeu à Steam : {}",
+        'Mise à jour vers v{}',
+        'Téléchargement de la mise à jour. Ne fermez pas le lanceur et ne lancez pas le jeu : l’installateur s’ouvre ensuite, puis le lanceur se rouvre tout seul.',
+        'La fenêtre de l’installateur montre la progression. Ne la fermez pas et ne lancez pas le jeu : le lanceur se rouvre une fois terminé.',
     ],
     'de': [
         'Online-Koop',
@@ -297,6 +315,9 @@ MORE = {
         'Das WebAPI-Feld enthält die Adresse des Spielservers; sie wird ignoriert.',
         '„Online spielen“ ist aus: Das Spiel startet offline.',
         'Das Spiel konnte nicht zu Steam hinzugefügt werden: {}',
+        'Update auf v{}',
+        'Das Update wird heruntergeladen. Schließe den Launcher nicht und starte das Spiel nicht: Danach öffnet sich das Setup, dann startet der Launcher von selbst neu.',
+        'Das Setup-Fenster zeigt den Fortschritt. Schließe es nicht und starte das Spiel nicht: Der Launcher öffnet sich wieder, wenn es fertig ist.',
     ],
     'it': [
         'Cooperativa online',
@@ -339,6 +360,9 @@ MORE = {
         "Il campo WebAPI contiene l'indirizzo del server di gioco; viene ignorato.",
         '"Gioca online" è disattivato: il gioco parte offline.',
         'Impossibile aggiungere il gioco a Steam: {}',
+        'Aggiornamento a v{}',
+        'Download dell’aggiornamento in corso. Non chiudere il launcher e non avviare il gioco: subito dopo si apre il programma di installazione, poi il launcher si riapre da solo.',
+        'La finestra del programma di installazione mostra l’avanzamento. Non chiuderla e non avviare il gioco: il launcher si riapre al termine.',
     ],
     'pl': [
         'Kooperacja online',
@@ -381,6 +405,9 @@ MORE = {
         'Pole WebAPI zawiera adres serwera gry; zostanie pominięte.',
         '„Graj online” jest wyłączone: gra uruchomi się offline.',
         'Nie udało się dodać gry do Steam: {}',
+        'Aktualizacja do v{}',
+        'Pobieranie aktualizacji. Nie zamykaj launchera i nie uruchamiaj gry: zaraz otworzy się instalator, a potem launcher uruchomi się ponownie sam.',
+        'Okno instalatora pokazuje postęp. Nie zamykaj go i nie uruchamiaj gry: launcher otworzy się ponownie po zakończeniu.',
     ],
     'tr': [
         'Çevrim içi ortak oyun',
@@ -423,6 +450,9 @@ MORE = {
         'WebAPI alanında oyun sunucusunun adresi var; yok sayılıyor.',
         '"Çevrim içi oyna" kapalı: oyun çevrim dışı başlar.',
         "Oyun Steam'e eklenemedi: {}",
+        'v{} sürümüne güncelleniyor',
+        'Güncelleme indiriliyor. Başlatıcıyı kapatmayın ve oyunu başlatmayın: ardından kurulum açılacak, sonra başlatıcı kendiliğinden yeniden açılacak.',
+        'Kurulum penceresi ilerlemeyi gösteriyor. Pencereyi kapatmayın ve oyunu başlatmayın: bittiğinde başlatıcı yeniden açılacak.',
     ],
     'zh': [
         '在线合作',
@@ -465,6 +495,9 @@ MORE = {
         'WebAPI 栏中填写的是游戏服务器地址，将被忽略。',
         '“在线游玩”未开启：游戏将以离线方式启动。',
         '无法将游戏添加到 Steam：{}',
+        '正在更新到 v{}',
+        '正在下载更新。请勿关闭启动器或启动游戏：接下来会打开安装程序，之后启动器会自动重新打开。',
+        '安装程序窗口会显示进度。请勿关闭该窗口或启动游戏：完成后启动器会重新打开。',
     ],
     'ja': [
         'オンライン協力プレイ',
@@ -507,6 +540,9 @@ MORE = {
         'WebAPI 欄にゲームサーバーのアドレスが入っているため、無視されます。',
         '「オンラインでプレイ」がオフのため、オフラインで起動します。',
         'ゲームを Steam に追加できませんでした: {}',
+        'v{} に更新しています',
+        'アップデートをダウンロードしています。ランチャーを閉じたりゲームを起動したりしないでください。次にインストーラーが開き、その後ランチャーが自動で開き直します。',
+        'インストーラーのウィンドウに進行状況が表示されます。閉じたりゲームを起動したりしないでください。完了するとランチャーが再び開きます。',
     ],
     'ko': [
         '온라인 협동',
@@ -549,5 +585,8 @@ MORE = {
         'WebAPI 칸에 게임 서버 주소가 들어 있어 무시됩니다.',
         '"온라인으로 플레이"가 꺼져 있어 오프라인으로 시작합니다.',
         '게임을 Steam에 추가할 수 없습니다: {}',
+        'v{}(으)로 업데이트 중',
+        '업데이트를 다운로드하고 있습니다. 런처를 닫거나 게임을 시작하지 마세요. 다음에 설치 프로그램이 열리고, 그 후 런처가 자동으로 다시 열립니다.',
+        '설치 프로그램 창에 진행 상황이 표시됩니다. 창을 닫거나 게임을 시작하지 마세요. 완료되면 런처가 다시 열립니다.',
     ],
 }

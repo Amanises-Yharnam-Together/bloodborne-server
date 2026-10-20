@@ -868,6 +868,8 @@ def download_update(release, folder, progress=None, timeout=30):
 
 
 def setup_command(setup, install):
-    """The setup run that updates this install in place, without a window, and starts the launcher again."""
-    return [str(setup), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS',
+    """The setup run that updates this install in place and starts the launcher again: no questions, but
+    its progress window stays on screen with a note not to close anything (/SILENT, and /NOCANCEL takes
+    its Cancel button away), so the update does not look like the launcher vanished (Kaniel 2026-10-20)."""
+    return [str(setup), '/SILENT', '/NOCANCEL', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS',
             f'/DIR={Path(install)}']

@@ -360,9 +360,44 @@ class UpdateTests(unittest.TestCase):
 
     def test_the_setup_updates_this_install_silently(self):
         command = coop.setup_command(Path('C:/Temp/Setup.exe'), Path('C:/Games/Co-op'))
-        self.assertIn('/VERYSILENT', command)
         self.assertIn('/CLOSEAPPLICATIONS', command)
         self.assertIn(f'/DIR={Path("C:/Games/Co-op")}', command)
+
+    def test_the_update_keeps_a_window_on_screen(self):
+        # Kaniel 2026-10-20: with /VERYSILENT the launcher seemed gone; /SILENT shows the progress, and the
+        # update cannot be cancelled halfway
+        command = coop.setup_command(Path('C:/Temp/Setup.exe'), Path('C:/Games/Co-op'))
+        self.assertIn('/SILENT', command)
+        self.assertNotIn('/VERYSILENT', command)
+        self.assertIn('/NOCANCEL', command)
+        iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
+        self.assertRegex(iss, r"(?m)^UpdateNote=.*Don't close this window")
+        self.assertIn("CustomMessage('UpdateNote')", iss)
+        for language in ('russian', 'arabic', 'spanish', 'brazilianportuguese', 'french', 'german', 'italian',
+                         'polish', 'turkish', 'chinesesimplified', 'japanese', 'korean'):
+            self.assertRegex(iss, rf'(?m)^{language}\.UpdateNote=.+', language)
+
+    def test_the_setup_script_is_utf8_with_a_bom(self):
+        # ISCC reads a script without a BOM as ANSI: the translated update notes would be garbled
+        data = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_bytes()
+        self.assertTrue(data.startswith(b'\xef\xbb\xbf'))
+
+    def test_the_default_folder_is_games_on_d_or_c(self):
+        iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
+        self.assertRegex(iss, r'(?m)^DefaultDirName=\{code:DefaultInstallDir\}$')
+        self.assertNotIn('DefaultDirName={localappdata}', iss)
+        self.assertIn("'D:\\Games\\{#AppName}'", iss)
+        self.assertIn("ExpandConstant('{sd}') + '\\Games\\{#AppName}'", iss)
+        self.assertRegex(iss, r'(?m)^PrivilegesRequired=lowest$')  # no Program Files: updates run without admin
+
+    def test_an_update_leaves_the_desktop_shortcut_where_it_is(self):
+        # Kaniel 2026-10-20: a new shortcut on every install lost the spot the player dragged it to
+        iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
+        desktop = [line for line in iss.splitlines() if line.startswith('Name: "{autodesktop}')]
+        self.assertEqual(len(desktop), 1, desktop)
+        self.assertIn('Tasks: desktopicon', desktop[0])
+        self.assertIn('Check: NoDesktopShortcut', desktop[0])
+        self.assertIn('function NoDesktopShortcut: Boolean;', iss)
 
     def test_the_setup_starts_the_launcher_again_after_a_silent_update(self):
         iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8')

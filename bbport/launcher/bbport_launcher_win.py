@@ -5639,10 +5639,17 @@ class Launcher:
         self.play_button.configure(state='disabled')
         self.set_running(False, preparing=True)
         self.status.configure(text=_('Downloading v{}…', 'Загрузка v{}…').format(release['version']), fg=GOLD)
+        # The card says what is going on until the setup's own window takes over (Kaniel 2026-10-20: the
+        # launcher seemed gone during an update).
+        self.show_install_card(_('Updating to v{}', 'Обновление до v{}').format(release['version']),
+                               update_download_note())
 
         def progress(fraction):
-            self.ui_calls.put(lambda: self.status.configure(text=_('Downloading v{}… {}%', 'Загрузка v{}… {}%').format(
-                release['version'], int(fraction * 100))))
+            def show():
+                self.install_bar.set(fraction)
+                self.status.configure(text=_('Downloading v{}… {}%', 'Загрузка v{}… {}%').format(
+                    release['version'], int(fraction * 100)))
+            self.ui_calls.put(show)
 
         def work():
             try:
@@ -5658,6 +5665,7 @@ class Launcher:
     def coop_update_failed(self, error):
         self.updating = False
         self.set_running(False)
+        self.hide_install_card()
         self.update_button.configure(state='normal')
         self.play_button.configure(state='normal')
         self.status.configure(text=_('The update failed: {}', 'Обновление не удалось: {}').format(error), fg=BAD)
@@ -5671,7 +5679,10 @@ class Launcher:
             return
         self.status.configure(text=_('Installing the update; the launcher opens again when it is done…',
                                      'Установка обновления; лаунчер откроется снова, когда она закончится…'), fg=GOLD)
-        self.root.after(600, self.close)
+        self.install_bar.set(1.0)
+        self.install_detail.configure(text=update_install_note())
+        # the setup's window (bbport_coop.setup_command: /SILENT shows its progress) is up before this one goes
+        self.root.after(UPDATE_HANDOVER_MS, self.close)
 
     def check_update(self, manual=False, beta=None):
         """Helper thread: asks GitHub for the newest release (a pre-release only with the Beta versions
@@ -5860,6 +5871,26 @@ class Launcher:
             self.stop()
         self.motion.close()
         self.root.destroy()
+
+
+# What the update card says while the setup downloads, then while it installs: the launcher closes
+# for the setup (it replaces the launcher's files) and the setup's own window shows the rest.
+def update_download_note():
+    return _("Downloading the update. Don't close the launcher or start the game: the installer opens next, "
+             "then the launcher opens again by itself.",
+             'Загружается обновление. Не закрывайте лаунчер и не запускайте игру: дальше откроется установщик, '
+             'затем лаунчер откроется сам.')
+
+
+def update_install_note():
+    return _("The installer window shows the progress. Don't close it or start the game: the launcher "
+             "opens again when it is done.",
+             'Окно установщика показывает ход установки. Не закрывайте его и не запускайте игру: лаунчер '
+             'откроется снова, когда она закончится.')
+
+
+# How long the launcher stays after it starts the setup, so the setup's window is up before it goes.
+UPDATE_HANDOVER_MS = 2000
 
 
 # Lines of the game's output that say the window exists and the preparation (mods, patches,
