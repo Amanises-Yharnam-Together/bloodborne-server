@@ -345,6 +345,13 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     EXPECT_EQ(Bytes(0x018C6390, 8),
               (std::vector<u8>{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56}));
     EXPECT_EQ(Bytes(0x017BBCC4, 4), (std::vector<u8>{0x0F, 0x95, 0x40, 0x28}));
+    // Event command 2004:39 (the hits switch, see SetCharacterHitsOff): case 39 calls the entity
+    // hits switch, which for a character sets or clears bit 1 of [+0x58]+0x114
+    // (`mov rax, [rax + 0x58]; movzx ecx, word ptr [rax + 0x114]; mov edx, ecx; or edx, 2`).
+    EXPECT_EQ(CallTarget(0x017BC180), 0x013CABD0u);
+    EXPECT_EQ(Bytes(0x013CAD09, 16),
+              (std::vector<u8>{0x48, 0x8B, 0x40, 0x58, 0x0F, 0xB7, 0x88, 0x14, 0x01, 0x00, 0x00,
+                               0x89, 0xCA, 0x83, 0xCA, 0x02}));
     // The kill autoplay uses: the dead flag (`or byte ptr [r15 + 0x1E3], 1`) on its way out.
     EXPECT_EQ(Bytes(0x018BFAD3, 8),
               (std::vector<u8>{0x41, 0x80, 0x8F, 0xE3, 0x01, 0x00, 0x00, 0x01}));

@@ -86,6 +86,10 @@ struct CharacterShown {
     // Dead in the host's world (bit 3; IsDeadInItsWorld), killed now or dead in its save. Guests
     // whose worlds are apart take these as killed (DeadInTheHostsWorld).
     bool dead = false;
+    // Its hits switched off (bit 4; event command 2004:39). The Witch of Hemwick's Mad Ones wait
+    // with their hits off, and her summon turns them on only in the host's game (Kaniel
+    // 2026-10-20: only the host saw them). Guests follow it (HitsLikeTheHost).
+    bool hits_off = false;
     bool operator==(const CharacterShown&) const = default;
 };
 
@@ -114,7 +118,8 @@ enum class WorldLogKind : u8 {
     Unkill = 2,   // `subject` is no longer
     ShownMap = 3, // the host's shown characters are of `map` from now on (none known yet)
     Unshown = 4,  // `subject` is no longer in the host's world on `map`
-    // `subject` on `map` has `value` (ShownBits) in the host's world; on the link 0x10 | value.
+    // `subject` on `map` has `value` (ShownBits) in the host's world; on the link the kind byte
+    // is 0x10 | the low four bits, and the value has them all.
     Shown = 0x10,
     // Step 3 (the flag boards' job): a shared flag (FlagsToShare: a lamp lit, a boss fog entered)
     // turned on or off in a member's world, `subject` the flag; every member sets it. Events, not
@@ -153,8 +158,8 @@ struct WorldLogEntry {
     u32 value = 0; // Shown: the bits; HP entries: see WorldLogKind
     bool operator==(const WorldLogEntry&) const = default;
 };
-// A character's CharacterShown bits (hidden 1, disabled 2, distant 4, dead 8, as on the shown
-// board) and back.
+// A character's CharacterShown bits (hidden 1, disabled 2, distant 4, dead 8, hits off 16, as on
+// the shown board) and back.
 u8 ShownBits(const CharacterShown& character);
 CharacterShown ShownFromBits(u32 handle, u8 bits);
 // The host's shown characters: its map and each character's bits.

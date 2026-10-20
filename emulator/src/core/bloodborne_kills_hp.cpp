@@ -2543,6 +2543,27 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
                  "(off, +on):{}",
                  map, which);
     }
+    // Their hits too (see HitsLikeTheHost): the Witch of Hemwick's summons.
+    std::vector<CharacterHits> hits;
+    hits.reserve(pointers.size());
+    for (const u64 character : pointers) {
+        hits.push_back({ReadValue<u32>(character, 0x08), CharacterHitsOff(character)});
+    }
+    std::string hit_which;
+    for (const CharacterHits& change : HitsLikeTheHost(host, hits, kill_hidden)) {
+        const auto at = std::ranges::find(hits, change.handle, &CharacterHits::handle);
+        if (SetCharacterHitsOff(pointers[at - hits.begin()], change.off) &&
+            hit_which.size() < 200) {
+            hit_which += fmt::format(" {}{:#x}", change.off ? "" : "+", change.handle);
+        }
+    }
+    static u32 hits_logged = 0;
+    if (!hit_which.empty() && ++hits_logged <= 200) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: characters' hits like the host has them on map {:#x} "
+                 "(off, +on):{}",
+                 map, hit_which);
+    }
 }
 
 // See StoryRemovals: what this game's story removed on its last visit of the map is switched off
@@ -2679,7 +2700,8 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
         mine.push_back({ReadValue<u32>(character, 0x08), ReadValue<u8>(character, 0x28) != 0,
                         IsCharacterDisabled(character),
                         hosting && FarFromHost(host_at, CharacterPosition(character)),
-                        hosting && DeadInItsWorld(character) && !IsBossSized(character)});
+                        hosting && DeadInItsWorld(character) && !IsBossSized(character),
+                        CharacterHitsOff(character)});
     }
     if (hosting) {
         if (!PostsShownState(SteadyMilliseconds(), world_changed_ms.load())) {

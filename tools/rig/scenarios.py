@@ -3277,3 +3277,27 @@ SCENARIOS["mad-one-back"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 300,
 }
+
+
+# Kaniel's playtest 2026-10-20: only the host saw the Mad Ones the Witch of Hemwick summons. They
+# wait switched off with their hits off (2004:39); her summon (m22_00 12204839, waiting on her AI)
+# turns them on in the host's game only, and a guest's copy switched on like the host's kept its
+# hits off. The guest now copies the host's hits switch: once she summons, the guest turns a Mad
+# One's hits on (0x1000801c and 0x1000801d are the ones her summons bring, 0x1000801b the
+# opening event's).
+SCENARIOS["witch-summons"] = {
+    "about": "the Witch of Hemwick summons Mad Ones in the host's game; the guest's copies get "
+             "their hits turned on like the host's",
+    "roles": {
+        "host": [*HEMWICK_START, "wait-session 2 300", "sync summon-ready", "wait 90",
+                 "census 60", "sync summon-checked", "expect-session 2"],
+        "guest": [*HEMWICK_START, "wait-session 2 300", "sync summon-ready", "wait 90",
+                  "census 60", "sync summon-checked", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "witch-summons", "roles": ["host", "guest"]}
+              for name in ("summon-ready", "summon-checked")},
+    "expect": {"guest": [r"characters' hits like the host has them on map 0x16000000 "
+                         r"\(off, \+on\):.* \+0x1000801[cd]"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 420,
+}
