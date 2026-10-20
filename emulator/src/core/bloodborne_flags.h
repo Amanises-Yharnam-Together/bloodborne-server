@@ -241,6 +241,11 @@ inline constexpr std::array FirstRows{
           "a Dream headstone's \"a lamp of mine is lit\" (DreamHeadstones; the headstone talk "
           "reads it): from this player's own lamps, whatever the others send (theirs flipped it "
           "and the headstone said \"no place to awaken\", Kaniel 2026-10-20)"),
+    Range(12204000, 12204008, FlagOwner::Shared, FlagCarriesHome | FlagTakesHostMap,
+          "the Hemwick woods' mist ambush (m22_00 event 12204000, a slot per enemy "
+          "2200500-2200508): its slot's done flag; the host's copy rises when it turns on, so "
+          "an enemy a guest woke rises in the host's game too (rig mist-ambush-guest, "
+          "Kaniel 2026-10-20)"),
 };
 
 // Rows after the boss fogs': the general ranges the earlier rows cut into.
