@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Calcolo rapido degli shader",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Gli shader di pixel e di calcolo usano calcoli in virgola mobile più veloci e meno rigorosi: qualche FPS in più, l'immagine può differire leggermente. Si applica dopo il riavvio del gioco; gli shader vengono ricompilati una volta.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Limite fotogrammi, modello DLSS e calcolo degli shader (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Dopo un riavvio: calcoli in virgola mobile più veloci e meno rigorosi negli shader; l'immagine può differire leggermente",
  "Bloodstains on compass and map": "Macchie di sangue su bussola e mappa",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Dove restano i tuoi echi del sangue dopo una morte: sulla bussola su questa mappa, sulla mappa su tutte. Solo tu vedi la tua macchia di sangue.",
  "Map fog of war": "Nebbia della mappa",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Sì: HUD alla luminosità dell'interfaccia, fiamme aiutate dalla scena a 16 bit. No: tutto esteso",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 nessuno, 5 il bianco raggiunge il picco, 10 si schiarisce più immagine",
  "Frame rate": "Frequenza fotogrammi",
- "Frame rate limit and DLSS model (bbport)": "Limite fotogrammi e modello DLSS (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "RTX, solo DLSS: 0-1 predefinito, 2-3 K qualità migliore, 4-6 L, 7-8 M più veloce, 9-10 J come K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "La cooperativa gira ai 60 FPS fissi del gioco, uguali per ogni giocatore",
  "60 (co-op)": "60 (cooperativa)",

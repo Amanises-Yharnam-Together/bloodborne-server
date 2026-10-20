@@ -396,4 +396,28 @@ int main() {
         unlink(path);
     }
     std::puts("PASS: menu languages follow the game's");
+
+    // Kaniel 2026-10-21: shadPS4's fast_shader_math (#5455) as an option, off by default. The
+    // shader compiler reads the value the game started with: a change applies after a restart.
+    {
+        const BbSettings::Values fresh;
+        assert(!fresh.fast_shader_math && !fresh.startup_fast_shader_math);
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int file = mkstemp(path);
+        const char text[] = "fast_shader_math=1\n";
+        assert(write(file, text, sizeof(text) - 1) == ssize_t(sizeof(text) - 1));
+        close(file);
+        setenv("BB_CONFIG", path, 1);
+        BbSettings::Load();
+        assert(s.fast_shader_math && s.startup_fast_shader_math);
+        s.fast_shader_math = false;
+        BbSettings::Save();
+        assert(Read(path).find("fast_shader_math=0\n") != std::string::npos);
+        assert(s.startup_fast_shader_math && "the running game keeps its shaders");
+        BbSettings::Load();
+        assert(!s.fast_shader_math && !s.startup_fast_shader_math);
+        unlink(path);
+    }
+    std::puts("PASS: fast shader math setting");
 }

@@ -1542,6 +1542,7 @@ bool ControlsNeedRestart() {
 bool RestartNeeded() {
     auto& s = BbSettings::Get();
     bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
+                   s.fast_shader_math != s.startup_fast_shader_math ||
                    s.fov != s.startup_fov ||
                    s.live_resolution != s.startup_live_resolution ||
                    BbSettings::ResolutionNeedsRestart() || ControlsNeedRestart();
@@ -1663,6 +1664,13 @@ void DisplayTab() {
                    "widened by the same amount. Applies after restarting the game.",
                    "Вертикальное поле зрения в градусах; у камеры игры 43. Каждая камера "
                    "расширяется на ту же величину. Применяется после перезапуска игры."));
+    Toggle("fast_shader_math", T("Fast shader math", "Быстрая математика шейдеров"), s.fast_shader_math,
+           T("Pixel and compute shaders use faster, less strict float math: a little more FPS, the "
+             "picture can differ slightly. Applies after restarting the game; shaders are compiled "
+             "again once.",
+             "Пиксельные и вычислительные шейдеры считают быстрее и менее строго: чуть больше FPS, "
+             "картинка может немного отличаться. Применяется после перезапуска игры; шейдеры один раз "
+             "компилируются заново."));
     Toggle("mute_unfocused", T("Mute in the background", "Без звука в фоне"), s.mute_unfocused,
            T("The game is silent while its window is not the active one.",
              "Игра молчит, пока её окно не активно."));

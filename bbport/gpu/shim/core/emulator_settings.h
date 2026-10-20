@@ -61,6 +61,8 @@ public:
     bool IsFsrEnabled() { static const auto value = Flag("BB_FSR1", false); return value; }
     bool IsHdrAllowed() { static const auto value = Flag("BB_HDR", true); return value; }
     bool IsInlineFetchShader() { return false; }
+    /// The value the game started with: the pipeline cache's profile is made once.
+    bool IsFastShaderMath() { return BbSettings::Get().startup_fast_shader_math; }
     bool IsNullGPU() { static const auto value = Flag("BB_NULL_GPU", false); return value; }
     bool IsPatchShaders() { return false; }
     bool IsPipelineCacheArchived() { return false; }

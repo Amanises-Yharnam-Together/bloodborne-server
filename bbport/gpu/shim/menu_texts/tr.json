@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Hızlı gölgelendirici matematiği",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Piksel ve hesaplama gölgelendiricileri daha hızlı, daha az katı kayan nokta hesapları kullanır: biraz daha fazla FPS, görüntü hafifçe farklı olabilir. Oyun yeniden başlatıldıktan sonra geçerli olur; gölgelendiriciler bir kez yeniden derlenir.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Kare hızı sınırı, DLSS modeli ve gölgelendirici matematiği (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Yeniden başlatmadan sonra: gölgelendiricilerde daha hızlı, daha az katı kayan nokta hesapları; görüntü hafifçe farklı olabilir",
  "Bloodstains on compass and map": "Pusulada ve haritada kan lekeleri",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Ölümden sonra Kan Yankılarının kaldığı yer: pusulada bu haritada, haritada tüm haritalarda. Kan lekeni yalnızca sen görürsün.",
  "Map fog of war": "Harita sisi",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Açık: HUD arayüz parlaklığında, alevler 16 bit sahneyle güçlenir. Kapalı: her şey gerilir",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 yok, 5 beyaz tepeye ulaşır, 10 görüntünün daha fazlası aydınlanır",
  "Frame rate": "Kare hızı",
- "Frame rate limit and DLSS model (bbport)": "Kare hızı sınırı ve DLSS modeli (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "Yalnızca RTX, DLSS: 0-1 varsayılan, 2-3 K en iyi kalite, 4-6 L, 7-8 M daha hızlı, 9-10 J, K gibi",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "Co-op, oyunun sabit 60 FPS'inde oynanır, her oyuncu için aynı",
  "60 (co-op)": "60 (co-op)",

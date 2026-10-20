@@ -119,6 +119,10 @@ struct Values {
     /// Silence the game while its window does not have focus (bbport.ini mute_unfocused,
     /// bbgpu_audio_muted). From Supermedo's bbport (b75e811).
     std::atomic<bool> mute_unfocused{false};
+    /// shadPS4's fast_shader_math (#5455; bbport.ini fast_shader_math, off by default): pixel and
+    /// compute shaders may fuse float operations and drop the Inf/NaN/signed-zero rules. The
+    /// shaders are compiled with startup_fast_shader_math: a change applies after a restart.
+    std::atomic<bool> fast_shader_math{false};
     /// Vertical field of view in degrees, FovDefault the game's (bbport.ini fov; run.py makes
     /// the camera table with fov.py at start).
     std::atomic<int> fov{FovDefault};
@@ -212,6 +216,7 @@ struct Values {
     bool startup_object_motion = true;
     bool startup_effects[EffectCount]{};
     int startup_model_lod = 0;
+    bool startup_fast_shader_math = false;
     int startup_fov = FovDefault;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;

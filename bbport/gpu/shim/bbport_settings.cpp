@@ -100,6 +100,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.show_fps = i != 0;
     } else if (key == "mute_unfocused") {
         v.mute_unfocused = i != 0;
+    } else if (key == "fast_shader_math") {
+        v.fast_shader_math = i != 0;
     } else if (key == "fov") {
         v.fov = std::clamp(i, FovMin, FovMax);
     } else if (key == "compass") {
@@ -354,6 +356,7 @@ void Load() {
         v.startup_effects[e] = v.effects[e];
     }
     v.startup_model_lod = v.model_lod;
+    v.startup_fast_shader_math = v.fast_shader_math;
     v.startup_fov = v.fov;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
@@ -535,6 +538,7 @@ void Save() {
     put("debug_view", std::to_string(v.debug_view.load()));
     put("show_fps", flag(v.show_fps));
     put("mute_unfocused", flag(v.mute_unfocused));
+    put("fast_shader_math", flag(v.fast_shader_math));
     // Read by run.py at start (fov.py).
     put("fov", std::to_string(std::clamp(v.fov.load(), FovMin, FovMax)));
     put("compass", flag(v.compass));

@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Rask shaderberegning",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Piksel- og beregningsshadere bruker raskere, mindre strenge flyttallsberegninger: litt flere FPS, bildet kan avvike litt. Gjelder etter at spillet er startet på nytt; shaderne kompileres på nytt én gang.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Bildefrekvensgrense, DLSS-modell og shaderberegning (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Etter en omstart: raskere, mindre strenge flyttallsberegninger i shadere; bildet kan avvike litt",
  "Bloodstains on compass and map": "Blodflekker på kompass og kart",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Hvor blodekkoet ditt ligger etter en død: på kompasset på dette kartet, på kartet på alle kart. Bare du ser blodflekken din.",
  "Map fog of war": "Karttåke",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "På: HUD holdes på UI-lysstyrke, flammer forsterkes av 16-bits scenen. Av: alt strekkes",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 ingen, 5 hvitt når toppen, 10 mer av bildet lyses opp",
  "Frame rate": "Bildefrekvens",
- "Frame rate limit and DLSS model (bbport)": "Grense for bildefrekvens og DLSS-modell (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "Kun RTX, DLSS: 0-1 standard, 2-3 K best kvalitet, 4-6 L, 7-8 M raskere, 9-10 J som K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "Co-op spilles med spillets faste 60 FPS, likt for alle spillere",
  "60 (co-op)": "60 (co-op)",

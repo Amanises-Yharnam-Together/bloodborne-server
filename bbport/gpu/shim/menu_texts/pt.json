@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Cálculo rápido de shaders",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Os shaders de píxeis e de computação usam cálculos de vírgula flutuante mais rápidos e menos rigorosos: um pouco mais de FPS, a imagem pode diferir ligeiramente. Aplica-se após reiniciar o jogo; os shaders são compilados de novo uma vez.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Limite de fotogramas, modelo DLSS e cálculo de shaders (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Após reiniciar: cálculos de vírgula flutuante mais rápidos e menos rigorosos nos shaders; a imagem pode diferir ligeiramente",
  "Bloodstains on compass and map": "Manchas de sangue na bússola e no mapa",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Onde ficam os teus ecos de sangue após uma morte: na bússola neste mapa, no mapa em todos. Só tu vês a tua mancha de sangue.",
  "Map fog of war": "Nevoeiro do mapa",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Ativado: HUD no brilho da interface, chamas realçadas pela cena de 16 bits. Desativado: tudo esticado",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 nenhum, 5 o branco atinge o pico, 10 clareia mais a imagem",
  "Frame rate": "Taxa de fotogramas",
- "Frame rate limit and DLSS model (bbport)": "Limite de fotogramas e modelo DLSS (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "RTX, só DLSS: 0-1 original, 2-3 K melhor qualidade, 4-6 L, 7-8 M mais rápido, 9-10 J como K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "O cooperativo joga-se aos 60 FPS fixos do jogo, iguais para todos os jogadores",
  "60 (co-op)": "60 (cooperativo)",

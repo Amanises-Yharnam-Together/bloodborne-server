@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Szybka matematyka shaderów",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Shadery pikseli i obliczeniowe używają szybszych, mniej ścisłych obliczeń zmiennoprzecinkowych: trochę więcej FPS, obraz może się nieznacznie różnić. Działa po ponownym uruchomieniu gry; shadery zostaną raz skompilowane od nowa.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Limit klatek, model DLSS i matematyka shaderów (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Po ponownym uruchomieniu: szybsze, mniej ścisłe obliczenia zmiennoprzecinkowe w shaderach; obraz może się nieznacznie różnić",
  "Bloodstains on compass and map": "Plamy krwi na kompasie i mapie",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Gdzie po śmierci leżą twoje tętnienia krwi: na kompasie na tej mapie, na mapie na wszystkich. Tylko ty widzisz swoją plamę krwi.",
  "Map fog of war": "Mgła na mapie",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Wł.: HUD na jasności interfejsu, płomienie wzmocnione 16-bitową sceną. Wył.: wszystko rozciągnięte",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 brak, 5 biel sięga szczytu, 10 rozjaśnia się więcej obrazu",
  "Frame rate": "Liczba klatek",
- "Frame rate limit and DLSS model (bbport)": "Limit klatek i model DLSS (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "Tylko RTX, DLSS: 0-1 domyślny, 2-3 K najlepsza jakość, 4-6 L, 7-8 M szybszy, 9-10 J jak K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "Co-op działa przy stałych 60 FPS gry, tak samo dla każdego gracza",
  "60 (co-op)": "60 (co-op)",
