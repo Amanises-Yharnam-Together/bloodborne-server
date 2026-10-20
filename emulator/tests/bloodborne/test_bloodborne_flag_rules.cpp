@@ -16,6 +16,7 @@
 
 #include "core/bloodborne_flags.h"
 #include "core/bloodborne_party.h"
+#include "core/bloodborne_team.h"
 
 using namespace Core::Bloodborne;
 
@@ -366,6 +367,20 @@ TEST(BloodborneFlagRules, OnlyTheTalkersGameSetsTheAltarWarp) {
     for (const s32 flag : {72100419, 72100430, 72100299, 72100310, 70000230, 6708}) {
         EXPECT_FALSE(SkipsOthersAltarWarp(flag, true)) << flag;
     }
+}
+
+// A ritual altar's warp request is each game's own: as the host's world, a guest's copy took the
+// host's and every teammate in the Dream warped with it, into the void (rig chalice-team3,
+// 2026-10-20).
+TEST(BloodborneFlagRules, AnAltarsWarpRequestStaysInItsGame) {
+    for (const s32 flag : {72100300, 72100305, 72100309, 72100420, 72100421, 72100429}) {
+        EXPECT_FALSE(IsWorldFlag(flag)) << flag;
+        EXPECT_FALSE(CarriesToGuestWorld(flag)) << flag;
+        EXPECT_FALSE(SharedWithParty(flag)) << flag;
+        EXPECT_FALSE(KeepsLocalFlag(true, flag)) << flag << ": the warp event clears it";
+    }
+    EXPECT_TRUE(IsWorldFlag(72100299));
+    EXPECT_TRUE(IsWorldFlag(72100430));
 }
 
 TEST(BloodborneFlagRules, ListsComeFromTheTable) {

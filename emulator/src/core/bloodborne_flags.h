@@ -238,6 +238,13 @@ inline constexpr std::array LastRows{
     Range(52900000, 52999999, FlagOwner::Host, FlagCarriesHome,
           "chalice dungeon item flags: left out of the pickups, kept like any other change"),
     Range(53000000, 53999999, FlagOwner::Host, FlagMapPickup, "map item pickups"),
+    Range(72100300, 72100309, FlagOwner::Session, 0,
+          "a ritual altar's layer pick (72100300 + layer, for the Dream's warp event "
+          "12107100): a request, not progress; as the host's, a guest's game took it and "
+          "every teammate in the Dream warped into the void (rig chalice-team3, 2026-10-20)"),
+    Range(72100420, 72100429, FlagOwner::Session, 0,
+          "a ritual altar's \"warp to the layer\" (72100420 + altar, event 12107100): a "
+          "request, not progress; not PerPlayer, the warp event's own clear must land (#283)"),
     Range(72101000, 72101099, FlagOwner::PerPlayer, FlagCarriesHome,
           "the pick in the Dream messengers' talk: each player's own"),
     Range(72102000, 72103999, FlagOwner::Session, FlagHeadstoneTrip,

@@ -19,7 +19,8 @@ event 12401803: its cutscene and the night) ended for a client the same way, so 
 the cutscene and the night fell only in its world. The Dream's ritual altars warp into the
 chalice dungeon picked at them (m21_00 event 12107100, a slot per altar) only for a non-client,
 so a party guest who joined a teammate's dungeon could not enter it; it runs in the guest's own
-game only (2000:2 0, below).
+game only (2000:2 0, below), as does the layer's warp after it (12107200: kept in step, the host's
+warp took every teammate in the Dream along).
 A chalice dungeon's multiplayer fog walls (m29 event 12907600, the common wall event 7600 again,
 started per block) never show: their multiplayer checks never match (Kaniel 2026-10-19).
 Its boss doors open for guests too: the SpEffect they ask for (9920, event 0) is no longer skipped
@@ -363,11 +364,13 @@ def let_guests_pick_up_items(emevd: bytes, wanted: dict[int, tuple[int, int]],
 
 # Events that get 2000:2 0 (no network sync) as their first instruction, per file.
 # m21_00 12107100 (a slot per ritual altar) warps into the chalice dungeon picked at that altar.
+# m21_00 12107200 (a slot per layer) then warps to the layer's respawn point: kept in step, the
+# host's warp ran in every teammate's game and took each one in the Dream along (2026-10-20).
 # m21_00 12101000 (slots 0-9) unlocks the messengers' shop lines from the player's own items
 # (12101004: the Hunter Chief Emblem); kept in step, a guest's Dream waited on the host's.
 LOCAL_EVENTS = {
     'm21_00_00_00.emevd.dcx': {12101000, 12101020, 12101021, 12101022, 12101024, 12101026,
-                               12101028, 12107100},
+                               12101028, 12107100, 12107200},
 }
 for _name, _events in ACTION_PICKUP_EVENTS.items():
     LOCAL_EVENTS[_name] = LOCAL_EVENTS.get(_name, set()) | set(_events)

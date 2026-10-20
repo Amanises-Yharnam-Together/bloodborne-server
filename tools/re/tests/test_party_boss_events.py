@@ -269,6 +269,20 @@ class GuestsEnterChaliceDungeons(unittest.TestCase):
         self.assertEqual(read_events(patched)[12107100][0], (2000, 2, bytes(4)))
         self.assertEqual(count, 1)
 
+    # Rig chalice-team3 (2026-10-20): the layer's warp (12107200, a slot per layer: 72100300 +
+    # layer on, cleared, then 2003:49 to the dungeon's respawn point) was kept in step, so the
+    # host's warp ran in every teammate's game and took each one in the Dream along.
+    LAYER_WARP = [(3, 0, struct.pack('<BBxxi', 0, 1, 0)),
+                  (2003, 2, struct.pack('<iBxxx', 0, 0)),
+                  (2003, 49, struct.pack('<i', 0)),
+                  (2003, 2, struct.pack('<iBxxx', 0, 1))]
+
+    def test_the_layer_warp_is_each_players_own(self):
+        patched, count = tool.make_events_local(build_emevd({12107200: self.LAYER_WARP}),
+                                                tool.LOCAL_EVENTS[self.DREAM])
+        self.assertEqual(read_events(patched)[12107200][0], (2000, 2, bytes(4)))
+        self.assertEqual(count, 1)
+
 
 class NoFogWallsInChaliceDungeons(unittest.TestCase):
     """Kaniel 2026-10-19: a fog wall stood at the start of a chalice dungeon in a party. The chalice

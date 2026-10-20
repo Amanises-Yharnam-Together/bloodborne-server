@@ -46,6 +46,7 @@ LONG = {
     "chalice-altar-team": "a ritual and two dungeon loads, measured 315 s",
     "chalice-altar-no-chalice": "a ritual and two dungeon loads, measured 353 s",
     "chalice-root-team": "a root ritual and two dungeon loads, waits for the ritual",
+    "chalice-team3": "a ritual, three dungeon loads and three trips back, one at a time",
     "guest-drops": "a 70 s wait for the drops (Kaniel's playtest 2026-10-16)",
     "boss-guest-runs": "50 s and 90 s waits by the boss (Kaniel's playtest 2026-10-16)",
     "boss-whole-fight": "a lamp trip, then 70 s of fixed waits in the fight (#292)",

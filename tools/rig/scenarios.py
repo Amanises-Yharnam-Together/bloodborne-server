@@ -2979,6 +2979,89 @@ SCENARIOS["chalice-root-team"] = {
     "timeout": 1200,
 }
 
+# Kaniel 2026-10-20: a team of three at the Dream's altar. The host conducts the ritual while both
+# guests stand by and watch (neither is taken along); then one by one, host, guest, guest2, each
+# enters the dungeon from its own altar (the guests hold no chalice: the team's record gives
+# them one). In the dungeon the host (the map's owner) kills the nearest enemy (the game's own
+# kill: the rig's attacks never landed on the first room's enemy); then they go back to the
+# Dream in another order: guest2, the host, the guest. The shots are for the website (a visible
+# run with BB_SHOT_TRIGGER; skipped headless). The Dream's layer warp (12107200) was
+# kept in step: the host's entry took both watching guests along (party_boss_events.py).
+WATCH_SPOTS = {"guest": BESIDE_ALTAR_SPOT, "guest2": "-15.27 -5.23 -16.88 1.571"}
+CHALICE3_SYNCS = ("c3-dream", "c3-ritual", "c3-host-in", "c3-guest-in", "c3-all-in",
+                  "c3-killed", "c3-guest2-out", "c3-host-out", "c3-guest-out")
+
+
+def CHALICE3_LAYER_ONE(role: str) -> list[str]:
+    """The altar's Layer One, from the altar's spot, and the dungeon."""
+    return [f"teleport {ALTAR_SPOT}", "wait 3", f"shot {role}-altar-layers",
+            *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
+            f"wait-map {CHALICE_DUNGEON} 180", "wait 15", "snapshot",
+            f"log {role} in the dungeon", f"shot {role}-dungeon-arrived"]
+
+
+def CHALICE3_BACK(role: str) -> list[str]:
+    return [f"travel {HUNTERS_DREAM}", "wait 15", f"expect-map {HUNTERS_DREAM_MAP}",
+            f"log {role} back in the Dream", f"shot {role}-back-in-dream"]
+
+
+SCENARIOS["chalice-team3"] = {
+    "about": "a team of three: the host's ritual with both guests watching (not taken along), "
+             "each enters the dungeon in turn from its own altar, the host kills an enemy "
+             "there, then they go back to the Dream in another order",
+    "roles": {
+        "host": ["team-create", "team-invite rig_guest", "team-invite rig_guest2", "team-wait 3",
+                 "team-start", START, "godmode", "wait-session 3 480", "wait 10",
+                 f"trade-stock {PTHUMERU_CHALICE} 1", f"trade-stock {RITUAL_BLOOD_1} 10",
+                 "trade-stock echoes 20000", f"travel {HUNTERS_DREAM}", "wait 15",
+                 "sync c3-dream", f"teleport {ALTAR_SPOT}", "wait 4", "shot host-altar",
+                 "press cross 200", "wait 7", "shot host-altar-menu",
+                 *[step for i in range(4) for step in ("press cross 200", "wait 7",
+                                                         f"shot host-ritual-{i}")],
+                 "press left 200", "wait 1", "shot host-ritual-yes", "press cross 200",
+                 "wait 20", "log host ritual done", "shot host-ritual-done", "sync c3-ritual",
+                 *CHALICE3_LAYER_ONE("host")[1:], "sync c3-host-in", "sync c3-guest-in",
+                 "sync c3-all-in", "wait-members 3 400", "wait 10", "expect-session 3",
+                 "shot host-dungeon-team", "kill nearest", "wait 5", "census 40",
+                 "log host killed one", "shot host-after-kill", "sync c3-killed",
+                 "sync c3-guest2-out", *CHALICE3_BACK("host"), "sync c3-host-out",
+                 "sync c3-guest-out", "wait-members 3 300", "wait 10", "expect-session 3",
+                 "shot host-all-back"],
+        "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480",
+                  f"travel {HUNTERS_DREAM}", "wait 15", f"teleport {WATCH_SPOTS['guest']}",
+                  "wait 3", "sync c3-dream", "wait 25", "shot guest-watching", "sync c3-ritual",
+                  "sync c3-host-in", f"expect-map {HUNTERS_DREAM_MAP}",
+                  "log guest still in the Dream", *CHALICE3_LAYER_ONE("guest"),
+                  "sync c3-guest-in", "sync c3-all-in", "wait-members 3 400", "wait 10",
+                  "expect-session 3", "shot guest-dungeon-team", "sync c3-killed", "wait 5",
+                  "census 40", "shot guest-after-kill",
+                  "sync c3-guest2-out", "sync c3-host-out", *CHALICE3_BACK("guest"),
+                  "sync c3-guest-out", "wait-members 3 300", "wait 10", "expect-session 3",
+                  "shot guest-all-back"],
+        "guest2": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480",
+                   f"travel {HUNTERS_DREAM}", "wait 15", f"teleport {WATCH_SPOTS['guest2']}",
+                   "wait 3", "sync c3-dream", "wait 30", "shot guest2-watching",
+                   "sync c3-ritual", "sync c3-host-in", "sync c3-guest-in",
+                   f"expect-map {HUNTERS_DREAM_MAP}", "log guest2 still in the Dream",
+                   *CHALICE3_LAYER_ONE("guest2"), "sync c3-all-in", "wait-members 3 400",
+                   "wait 10", "expect-session 3", "shot guest2-dungeon-team", "sync c3-killed",
+                   "wait 5", "shot guest2-after-kill", *CHALICE3_BACK("guest2"),
+                   "sync c3-guest2-out", "sync c3-host-out", "sync c3-guest-out",
+                   "wait-members 3 300", "wait 10", "expect-session 3", "shot guest2-all-back"],
+    },
+    "syncs": {name: {"chapter": "chalice-team3", "roles": ["host", "guest", "guest2"]}
+              for name in CHALICE3_SYNCS},
+    "expect": {"host": [r"host ritual done", r"host in the dungeon",
+                        r"autoplay: kill 0x\w+ hp \d+ -> 0", r"host back in the Dream"],
+               "guest": [r"guest still in the Dream", r"given its chalice",
+                         r"guest in the dungeon", r"guest back in the Dream"],
+               "guest2": [r"guest2 still in the Dream", r"given its chalice",
+                          r"guest2 in the dungeon", r"guest2 back in the Dream"]},
+    "forbid": {role: SESSION_HOLDS for role in ("host", "guest", "guest2")},
+    "allow": CRASH_CLEANUP,
+    "timeout": 2400,
+}
+
 # The 2026-10-19 playtest's cases (Kaniel 2026-10-19: a short scenario for each case that failed).
 SAW_HUNTER_BADGE = "goods:4103"  # krolebord's badge (#267)
 SCENARIOS["key-items-kept"] = {

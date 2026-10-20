@@ -44,6 +44,7 @@ and the item flags) as the host's world reports reach it, between loads (`TeamSt
 | 12000000-13999999 (the rest) | Host | carried home, host's map value | the maps' flags: switches, bosses, enemies |
 | 50000000-52899999, 53000000-53999999 | Host | the guest's own pickup list | map item pickups (kept in their own file, not carried with the rest; never in a team's world: each character keeps its own, as it keeps the items) |
 | 52900000-52999999 | Host | carried home | chalice dungeon item flags: not pickups |
+| 72100300-72100309, 72100420-72100429 | Session | | a ritual altar's layer pick and "warp to the layer" (event 12107100): a request, not progress; as the host's, every teammate in the Dream warped with the host into the void (2026-10-20) |
 | 72101000-72101099 | Per player | carried home | the pick in the Dream messengers' talk |
 | 72102000-72103999 | Session | headstone trip | a Dream headstone's "travel to <lamp>": a request, not progress |
 | 7MMM01LL, map codes 211-399 | Session | lamp trip | a lamp's "travel to the Hunter's Dream": a request, not progress |
