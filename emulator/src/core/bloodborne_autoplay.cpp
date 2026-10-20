@@ -1474,6 +1474,89 @@ bool AutoplayExpectCompass(const AutoplayStep& step) {
     return false;
 }
 
+// expect-stains <own|members> <compass> <map> [<seconds>] (Kaniel 2026-10-20, bloodstains on the
+// compass and map): within `seconds` (10) this player's own bloodstain (own) or the members'
+// (members) number `compass` on the compass and `map` on the map screen's party data. Logs what
+// both show.
+bool AutoplayExpectStains(const AutoplayStep& step) {
+    const bool own = step.Arg(0) == "own";
+    CompassView view;
+    ReadCompass(view);
+    PartyPanel panel;
+    ReadPartyPanel(panel);
+    size_t on_compass = 0, on_map = 0;
+    std::string seen;
+    for (size_t i = 0; i < view.stains.size(); ++i) {
+        const CompassStain& stain = view.stains[i];
+        on_compass += (stain.owner < 0) == own ? 1 : 0;
+        seen += fmt::format(" [compass {} at {:.1f} deg, {:.1f} m]",
+                            stain.owner < 0 ? "own" : view.stain_names[i],
+                            stain.bearing * 180.0f / std::numbers::pi_v<float>, stain.distance);
+    }
+    const auto on_the_map = [&](const Bloodstain& stain, std::string_view whose, bool mine) {
+        if (stain.map != 0) {
+            on_map += mine == own ? 1 : 0;
+            seen += fmt::format(" [map {} on {:#x} at ({:.1f}, {:.1f}, {:.1f}), {} echoes]", whose,
+                                stain.map, stain.at[0], stain.at[1], stain.at[2], stain.echoes);
+        }
+    };
+    on_the_map(panel.own_stain, "own", true);
+    for (const PanelMember& member : panel.members) {
+        on_the_map(member.stain, member.shown, false);
+    }
+    const std::string text = seen.empty() ? " none" : seen;
+    if (on_compass == static_cast<size_t>(step.Number(1, 0)) &&
+        on_map == static_cast<size_t>(step.Number(2, 0))) {
+        LOG_INFO(Debug, "Bloodborne autoplay stains ({}):{}", step.Arg(0), text);
+        return true;
+    }
+    if (step.elapsed > step.Number(3, 10.0)) {
+        step.failure = fmt::format("{} on the compass, {} on the map:{}", on_compass, on_map, text);
+    }
+    return false;
+}
+
+// pickup-stain [<timeout>]: this player glides through its own bloodstain at walking pace (from
+// 2.5 m short of it, on the way from where it stands, to 1.5 m past), pressing X now and then,
+// until the game's record of it clears. A teleport onto the stain never touches it (rig
+// 2026-10-20).
+bool AutoplayPickupStain(const AutoplayStep& step) {
+    static LampPosition from{}, way{};
+    const auto stain = Coop::ReadOwnBloodstain();
+    if (!step.begun) {
+        const auto at = LocalPlayerPosition();
+        if (!stain || !at) {
+            step.failure = stain ? "no player" : "no bloodstain of this player";
+            return false;
+        }
+        float dx = stain->at[0] - (*at)[0], dz = stain->at[2] - (*at)[2];
+        const float length = std::sqrt(dx * dx + dz * dz);
+        way = length < 0.1f ? LampPosition{0.0f, 0.0f, 1.0f}
+                            : LampPosition{dx / length, 0.0f, dz / length};
+        from = {stain->at[0] - way[0] * 2.5f, stain->at[1] + 0.3f, stain->at[2] - way[2] * 2.5f};
+        LOG_INFO(Debug,
+                 "Bloodborne autoplay: through the bloodstain ({} echoes) at ({:.1f}, {:.1f}, "
+                 "{:.1f})",
+                 stain->echoes, stain->at[0], stain->at[1], stain->at[2]);
+    }
+    if (!stain) {
+        autoplay_buttons.store(0);
+        LOG_INFO(Debug, "Bloodborne autoplay: bloodstain picked up after {:.1f} s", step.elapsed);
+        return true;
+    }
+    const float along = std::min(static_cast<float>(step.elapsed) * 1.5f, 4.0f);
+    // A heading h faces (-sin h, cos h).
+    TeleportLocalPlayer({from[0] + way[0] * along, from[1], from[2] + way[2] * along},
+                        std::atan2(-way[0], way[2]));
+    autoplay_buttons.store(
+        step.elapsed > 1.0 && std::fmod(step.elapsed, 1.5) < 0.3 ? AutoplayButton("cross") : 0);
+    if (step.elapsed > step.Number(0, 15)) {
+        autoplay_buttons.store(0);
+        step.failure = fmt::format("the bloodstain ({} echoes) still there", stain->echoes);
+    }
+    return false;
+}
+
 // expect-others-shown <n>: exactly n other players show in this world (not hidden: Kaniel
 // 2026-10-15, members gone to another map still stood here).
 bool AutoplayExpectOthersShown(const AutoplayStep& step) {
@@ -1786,6 +1869,8 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-others-near", AutoplayExpectOthersNear},
     {"expect-others-shown", AutoplayExpectOthersShown},
     {"expect-compass", AutoplayExpectCompass},
+    {"expect-stains", AutoplayExpectStains},
+    {"pickup-stain", AutoplayPickupStain},
     {"expect-map", AutoplayExpectMap},
     {"chapter", AutoplayChapter},
     {"keep-going", AutoplayKeepGoing},

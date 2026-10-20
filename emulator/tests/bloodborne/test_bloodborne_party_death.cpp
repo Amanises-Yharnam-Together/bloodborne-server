@@ -1224,6 +1224,19 @@ TEST(BloodbornePartyDeath, AHoldFromBeforeTheDownDoesNotGiveUp) {
     EXPECT_TRUE(fresh.Tick(true, GiveUpHoldMs + 100));
 }
 
+// Kaniel 2026-10-20 (bloodstains on the compass and map): this player's bloodstain from the game's
+// record (GameDataMan +0x28 its mark, the record's block, position and echoes). The mark stays up
+// on an empty record (block -1, echoes -1, rig logs), and a stain with no echoes holds nothing.
+TEST(BloodbornePartyDeath, OwnBloodstainFromTheGamesRecord) {
+    const LampPosition at{-209.04f, -54.5f, 169.14f};
+    EXPECT_EQ(BloodstainOf(true, CentralYharnam, at, 4694),
+              (Bloodstain{.map = CentralYharnam, .at = at, .echoes = 4694}));
+    EXPECT_FALSE(BloodstainOf(false, CentralYharnam, at, 4694)) << "picked up";
+    EXPECT_FALSE(BloodstainOf(true, 0xFFFFFFFF, {}, -1)) << "an empty record";
+    EXPECT_FALSE(BloodstainOf(true, CentralYharnam, at, 0));
+    EXPECT_FALSE(BloodstainOf(true, 0, at, 10)) << "no map";
+}
+
 // The port's party panel lists the other members playing party death in the board's order, by
 // their online ids, and points at the downed one an attack would revive now.
 TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
@@ -1264,6 +1277,12 @@ TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
     const PartyPanel stocked = BuildPartyPanel(supplied, Kaniel, CentralYharnam, LampPosition{});
     EXPECT_EQ(stocked.members[0].vials, 11u);
     EXPECT_EQ(stocked.members[0].bullets, 4u);
+    // Kaniel 2026-10-20: each member's bloodstain, on whatever map it lies (the map screen shows
+    // the others' too).
+    supplied[2].stain = Bloodstain{.map = CentralYharnam, .at = {3.0f, 1.0f, 2.0f}, .echoes = 900};
+    const PartyPanel stained = BuildPartyPanel(supplied, Kaniel, CentralYharnam, LampPosition{});
+    EXPECT_EQ(stained.members[1].stain, supplied[2].stain) << "third is in the Dream";
+    EXPECT_EQ(stained.members[0].stain, Bloodstain{});
 
     EXPECT_EQ(BuildPartyPanel(board, Kaniel, CentralYharnam, LampPosition{9.0f, 0.0f, 0.0f})
                   .revive_target,

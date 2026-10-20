@@ -317,6 +317,9 @@ std::optional<s32> CurrentRitualAltar();
 // Ritual altar `altar` (0-6) loads its dungeon again from its flags.
 void ReloadRitualAltar(s32 altar);
 void LogBloodstainStateChanges();
+// Kaniel 2026-10-20 (bloodstains on the compass and map): this player's bloodstain as the game
+// keeps it (BloodstainOf), nothing in a load.
+std::optional<Bloodstain> ReadOwnBloodstain();
 bool InPartySession();
 // The members of this game's session, itself counted (SprjSessionManager +0xF8..+0x100); 1
 // out of one (phase 7).

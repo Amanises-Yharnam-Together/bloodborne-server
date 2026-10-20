@@ -2634,6 +2634,9 @@ TEST(BloodborneDirectBoards, DirectVitalsGoOverTheBoardsCopy) {
     board.members[0].bullets = 7;
     EXPECT_EQ(MergeDirectVitals(board, direct).members[0].vials, 12u);
     EXPECT_EQ(MergeDirectVitals(board, direct).members[0].bullets, 7u);
+    // Kaniel 2026-10-20: and its bloodstain (the compass and the map show it).
+    board.members[0].stain = Bloodstain{.map = 0x18010000, .at = {1.0f, 2.0f, 3.0f}, .echoes = 50};
+    EXPECT_EQ(MergeDirectVitals(board, direct).members[0].stain, board.members[0].stain);
 }
 
 // A member's standing kills go to the peers whole (at once on a change, again every half

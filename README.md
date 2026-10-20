@@ -58,7 +58,7 @@ expect rough edges and keep backups of your saves. New builds come out as GitHub
 - **The party list.** Every hunter's portrait, name, HP, blood vials and quicksilver bullets, in
   the game's own HUD style, wherever they are.
 - **Compass and map.** A compass shows where your team is, and the map shows them on every area
-  and takes you to a lamp.
+  and takes you to a lamp. Both show your bloodstain and your teammates'.
 - **Going down** (from Elden Ring Nightreign, always on): a killing blow puts you down instead of
   killing you while a partner is near. They revive you by striking you; when the whole party is
   down, it wipes and wakes at the host's lamp, and the area resets.

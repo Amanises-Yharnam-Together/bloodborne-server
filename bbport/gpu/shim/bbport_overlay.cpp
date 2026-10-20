@@ -1682,6 +1682,12 @@ void DisplayTab() {
              "Сверху или снизу экрана: полоса. Вокруг центра: метки на кольце вокруг середины "
              "экрана, впереди сверху."),
            s.compass, [&](int i) { Store(s.compass_position, i, true); });
+    // Kaniel 2026-10-20 ("bloodstains of ours will be displayed on compass and map").
+    Toggle("bloodstains", T("Bloodstains on compass and map", "Пятна крови на компасе и карте"), s.bloodstains,
+           T("Where your echoes and your party's lie after a death: on the compass on this map, on "
+             "the map on every map.",
+             "Где лежат ваши отголоски и отголоски вашей группы после смерти: на компасе на этой "
+             "карте, на карте на всех картах."));
     // Kaniel 2026-10-19 ("make it opt in", "an opt in option to view rendered in real time"):
     // the map's 3D view.
     const char* map_3d_names[] = {T("Off", "Выкл."), T("Prerendered", "Заранее нарисованная"),
@@ -4273,6 +4279,10 @@ BbPartyLayout::Rect game{};
 
 bool Read() {
     shown = BbSettings::Get().compass && bbcoop_compass_view(&view) != 0;
+    if (!BbSettings::Get().bloodstains) {
+        view.stain_count = 0; // Kaniel 2026-10-20: the Insert menu turned the bloodstains off
+    }
+    shown = shown && (view.count > 0 || view.stain_count > 0);
     return shown;
 }
 
@@ -4413,6 +4423,36 @@ void Marker(ImDrawList* draw, ImVec2 at, int place, const bbcoop_compass_marker&
                 down ? Faded(1.0f, 0.52f, 0.46f, 1.0f) : Gray(dead ? 0.6f : 0.95f), line, 0.5f);
 }
 
+/// Kaniel 2026-10-20: a bloodstain as a drop of blood, in the compass's gray on a soft shadow (the
+/// game has no icon of its own for one): its point up, round below, centred on `at`, `r` high.
+void Drop(ImDrawList* draw, ImVec2 at, float r, ImU32 color, ImU32 shadow) {
+    const ImVec2 belly(at.x, at.y + r * 0.28f);
+    const float round = r * 0.62f;
+    draw->AddCircleFilled(ImVec2(at.x + Ui::S(1.0f), at.y + Ui::S(1.5f)), r + Ui::S(2.0f), shadow, 24);
+    draw->AddCircleFilled(belly, round, color, 24);
+    draw->AddTriangleFilled(ImVec2(at.x, at.y - r), ImVec2(at.x + round * 0.93f, belly.y - round * 0.37f),
+                            ImVec2(at.x - round * 0.93f, belly.y - round * 0.37f), color);
+}
+
+/// A bloodstain on the compass: the drop, its distance under it and, for a teammate's, its
+/// character's name; `arrow` as a member marker's.
+void StainMarker(ImDrawList* draw, ImVec2 at, const bbcoop_compass_stain& stain, int arrow) {
+    using Ui::S;
+    const float r = S(11.0f);
+    Drop(draw, at, r, Gray(0.95f), Faded(0, 0, 0, 0.45f));
+    if (arrow != 0) {
+        const float x = at.x + arrow * (r + S(4.0f)), h = S(5.0f);
+        draw->AddTriangleFilled(ImVec2(x, at.y - h), ImVec2(x + arrow * h, at.y), ImVec2(x, at.y + h), Gray(0.9f));
+    }
+    char line[48];
+    std::snprintf(line, sizeof(line), stain.distance < 10.0f ? "%.1f m" : "%.0f m", stain.distance);
+    Party::Text(draw, sans_font, S(12.0f), ImVec2(at.x, at.y + r + S(3.0f)), Gray(0.85f), line, 0.5f);
+    if (!stain.own) {
+        const char* name = stain.name[0] != '\0' ? stain.name : Ui::T("Hunter", "Охотник");
+        Party::Text(draw, sans_font, S(11.0f), ImVec2(at.x, at.y + r + S(17.0f)), Gray(0.7f), name, 0.5f);
+    }
+}
+
 void Strip(ImDrawList* draw, float y) {
     using Ui::S;
     constexpr float Pi = 3.14159265f;
@@ -4448,6 +4488,11 @@ void Strip(ImDrawList* draw, float y) {
     // Straight ahead: a small notch above the line.
     draw->AddTriangleFilled(ImVec2(mid - S(5.0f), y - S(14.0f)), ImVec2(mid + S(5.0f), y - S(14.0f)),
                             ImVec2(mid, y - S(7.0f)), Gray(0.9f));
+    // The bloodstains first: the members' markers go over them.
+    for (int i = 0; i < view.stain_count; ++i) {
+        const bbcoop_compass_stain& stain = view.stains[i];
+        StainMarker(draw, ImVec2(mid + half * stain.x, y), stain, stain.pinned ? (stain.x < 0.0f ? -1 : 1) : 0);
+    }
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const int arrow = marker.pinned ? (marker.x < 0.0f ? -1 : 1) : 0;
@@ -4460,6 +4505,10 @@ void Ring(ImDrawList* draw) {
     const ImVec2 mid(game.x + game.w * 0.5f, game.y + game.h * 0.5f);
     const float r = S(150.0f);
     draw->AddCircle(mid, r, Gray(0.18f), 96, S(1.0f));
+    for (int i = 0; i < view.stain_count; ++i) {
+        const bbcoop_compass_stain& stain = view.stains[i];
+        StainMarker(draw, ImVec2(mid.x + r * std::sin(stain.bearing), mid.y - r * std::cos(stain.bearing)), stain, 0);
+    }
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const ImVec2 at(mid.x + r * std::sin(marker.bearing), mid.y - r * std::cos(marker.bearing));
@@ -5077,6 +5126,20 @@ void MemberMark(ImDrawList* draw, ImVec2 at, int index, bool label = true) {
     }
 }
 
+/// Kaniel 2026-10-20: a bloodstain: the compass's drop, its echoes under it and, for a teammate's,
+/// its character's name over it.
+void StainMark(ImDrawList* draw, const bbcoop_map_stain& stain, ImVec2 at) {
+    const float r = S(12.0f);
+    Compass::Drop(draw, at, r, Gray(0.95f), Party::Rgba(0, 0, 0, 0.55f));
+    char echoes[16];
+    std::snprintf(echoes, sizeof(echoes), "%d", int(stain.echoes));
+    Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y + r + S(3.0f)), Gray(0.9f), echoes, 0.5f);
+    if (!stain.own) {
+        const char* name = stain.name[0] != '\0' ? stain.name : Ui::T("Hunter", "Охотник");
+        Party::Text(draw, sans_font, S(13.0f), ImVec2(at.x, at.y - r - S(19.0f)), Gray(0.85f), name, 0.5f);
+    }
+}
+
 /// The picture with its marks, inside the game's card art.
 void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const bbcoop_map_lamp*>& lamps,
                  float pulse) {
@@ -5184,6 +5247,13 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
         }
         for (size_t i = 0; i < lamps.size(); ++i) {
             LampMark(draw, frame.At(lamps[i]->map, lamps[i]->x, lamps[i]->z, lamps[i]->y), int(i) == state.focus, pulse);
+        }
+        // Kaniel 2026-10-20: the party's bloodstains on their maps, under the members.
+        for (int i = 0; BbSettings::Get().bloodstains && i < view.stain_count; ++i) {
+            if (charts.contains(view.stains[i].map)) {
+                StainMark(draw, view.stains[i], frame.At(view.stains[i].map, view.stains[i].x, view.stains[i].z,
+                                                         view.stains[i].y));
+            }
         }
         for (int i = 0; i < view.member_count; ++i) {
             const bbcoop_map_member& m = view.members[i];

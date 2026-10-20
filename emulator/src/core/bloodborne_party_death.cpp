@@ -145,6 +145,18 @@ void LogBloodstainStateChanges() {
     }
 }
 
+std::optional<Bloodstain> ReadOwnBloodstain() {
+    const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
+    const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
+    if (record < 0x10000 || !HasMemoryAccess(record, 0x40, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    return BloodstainOf(ReadValue<u8>(data, 0x28) != 0, ReadValue<u32>(record, 0x3C),
+                        {ReadValue<float>(record, 0x18), ReadValue<float>(record, 0x1C),
+                         ReadValue<float>(record, 0x20)},
+                        ReadValue<s32>(record, 0x38));
+}
+
 } // namespace Coop
 
 namespace {
@@ -1194,7 +1206,8 @@ void PostVitalsWithoutPartyDeath() {
                                 .vital = in_session ? Vital::Up : Vital::Off,
                                 .hp = ReadValue<s32>(data, 0xF8),
                                 .max = ReadValue<s32>(data, 0xFC),
-                                .at = LocalPlayerPosition().value_or(LampPosition{})},
+                                .at = LocalPlayerPosition().value_or(LampPosition{}),
+                                .stain = Coop::ReadOwnBloodstain().value_or(Bloodstain{})},
                    {});
     }
 }
@@ -1361,6 +1374,7 @@ void ForgetTargetsOnDowned(PartyDeathRun& run, const DeathTick& tick) {
 // This member's vitals to the board and the party panel.
 void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
     const auto at = LocalPlayerPosition();
+    const auto own_stain = Coop::ReadOwnBloodstain();
     PostVitals(
         MemberVitals{
             .map = tick.in_session ? tick.map : 0,
@@ -1371,6 +1385,7 @@ void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
             .landed = run.downed.DamageLanded(),
             .needed = run.downed.DamageNeeded(),
             .at = at.value_or(LampPosition{}),
+            .stain = own_stain.value_or(Bloodstain{}),
         },
         run.revive_hits.Totals(tick.board, tick.view.Fresh()));
 
@@ -1386,6 +1401,9 @@ void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
     panel.landed = run.downed.DamageLanded();
     panel.needed = run.downed.DamageNeeded();
     panel.give_up = vital == Vital::Down ? run.give_up.Progress(tick.now) : 0.0f;
+    // Kaniel 2026-10-20: this player's own bloodstain (the map shows it out of a party too).
+    panel.own_stain = own_stain.value_or(Bloodstain{});
+    panel.map = tick.map;
     // Kaniel 2026-10-17, the compass: the members here where their characters stand now (the
     // board's positions are a moment old), from this player's spot and the camera's heading.
     if (tick.in_session && at) {
@@ -2097,10 +2115,23 @@ bool ReadCompass(CompassView& view) {
         view.vitals.push_back(static_cast<int>(member.vital));
         view.revives.push_back(ReviveShare(member.landed, member.needed));
     }
-    if (view.markers.empty()) {
+    // Kaniel 2026-10-20: the party's bloodstains on this map.
+    const auto here = [&](const Bloodstain& stain) {
+        return panel.map != 0 && stain.map == panel.map ? std::optional{stain.at} : std::nullopt;
+    };
+    std::vector<std::optional<LampPosition>> stains;
+    for (const PanelMember& member : panel.members) {
+        stains.push_back(here(member.stain));
+    }
+    view.stains = CompassStains(here(panel.own_stain), stains, *panel.me, view.heading);
+    for (const CompassStain& stain : view.stains) {
+        view.stain_names.push_back(stain.owner < 0 ? std::string{}
+                                                   : panel.members[stain.owner].shown);
+    }
+    if (view.markers.empty() && view.stains.empty()) {
         view.why = "nobody else on this map";
     }
-    return !view.markers.empty();
+    return !view.markers.empty() || !view.stains.empty();
 }
 
 bool ReadPartyPanel(PartyPanel& panel) {

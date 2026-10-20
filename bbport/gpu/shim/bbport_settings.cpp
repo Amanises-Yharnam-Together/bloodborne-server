@@ -104,6 +104,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fov = std::clamp(i, FovMin, FovMax);
     } else if (key == "compass") {
         v.compass = i != 0;
+    } else if (key == "bloodstains") {
+        v.bloodstains = i != 0;
     } else if (key == "map_3d") {
         v.map_3d = std::clamp(i, 0, Map3dCount - 1);
     } else if (key == "map_fog") {
@@ -536,6 +538,7 @@ void Save() {
     // Read by run.py at start (fov.py).
     put("fov", std::to_string(std::clamp(v.fov.load(), FovMin, FovMax)));
     put("compass", flag(v.compass));
+    put("bloodstains", flag(v.bloodstains));
     put("compass_position",
         CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);
     put("map_3d", std::to_string(std::clamp(v.map_3d.load(), 0, Map3dCount - 1)));

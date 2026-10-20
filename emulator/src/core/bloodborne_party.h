@@ -3173,6 +3173,18 @@ constexpr s64 GiveUpHoldMs = 3'000;
 // and its revive damage on others as "<target>:<down>:<damage>" totals. The answer has the same
 // line per member with the party's revive damage on that member's down added at the end, then a
 // "wipe <id> <map> <member>..." line for each wipe shadNet declared lately.
+// Kaniel 2026-10-20 (bloodstains on the compass and map): a player's bloodstain, the echoes it
+// dropped where it died. The game keeps one, the latest; map 0: none.
+struct Bloodstain {
+    u32 map = 0;
+    LampPosition at{};
+    s32 echoes = 0;
+    bool operator==(const Bloodstain&) const = default;
+};
+// This player's bloodstain from the game's record (GameDataMan +0x28 its mark; the record at
+// [GameDataMan +0x30]: +0x3C its map, +0x18 its position, +0x38 its echoes). The mark stays up
+// on an empty record (map -1, echoes -1), and a stain without echoes holds nothing: none then.
+std::optional<Bloodstain> BloodstainOf(bool has_mark, u32 map, const LampPosition& at, s32 echoes);
 struct MemberVitals {
     std::string member;
     u32 map = 0;
@@ -3188,6 +3200,8 @@ struct MemberVitals {
     // Kaniel 2026-10-18: its Blood Vials and Quicksilver Bullets (the server only, as cutscene).
     u32 vials = 0;
     u32 bullets = 0;
+    // Kaniel 2026-10-20: its bloodstain (the server only, as cutscene).
+    Bloodstain stain;
     bool operator==(const MemberVitals&) const = default;
 };
 // Where the team's host stands (up or down, on a map) on the vitals board, as a resume point.
@@ -3601,6 +3615,8 @@ struct PanelMember {
     // Kaniel 2026-10-18: its vials and bullets, shown beside its name.
     u32 vials = 0;
     u32 bullets = 0;
+    // Kaniel 2026-10-20: its bloodstain, on whatever map it lies (map 0: none).
+    Bloodstain stain;
     bool operator==(const PanelMember&) const = default;
 };
 struct PartyPanel {
@@ -3614,6 +3630,9 @@ struct PartyPanel {
     // (CameraHeading), as of the same tick.
     std::optional<LampPosition> me;
     std::optional<float> camera_heading;
+    // Kaniel 2026-10-20: the local player's own bloodstain (map 0: none) and its map (0 loading).
+    Bloodstain own_stain;
+    u32 map = 0;
 };
 // The panel's members from the board; `me` is where the local player stands while it can revive
 // someone (nothing while it is down or dead). The local player's own fields are left to fill.
