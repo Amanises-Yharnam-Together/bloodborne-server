@@ -973,6 +973,7 @@ void TickPartyController() {
         LogEnemyTargets();
         LogJoinTasksOnChange();
         ReconcileMemberPresence();
+        LogUnsharedNearbyCharacters();
     }
     LogOtherPlayersChanges();
     ObserveLocalAliveState();

@@ -916,6 +916,82 @@ std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost() {
 
 namespace Coop {
 
+// Characters near the local player that fight on while the party is told nothing of them
+// (Kaniel's chalice playtest 2026-10-19: after a wipe the host fought red skeletons whose slots it
+// posted as switched off). Every character set WorldChrMan lists (+0x278 count, +0x280 entries
+// of 0x18 bytes: the set, its index), each set +0x00 count / +0x08 entries of 0x38 bytes: the
+// living ones within 20 m that are switched off, hidden or outside the maps' sets (the players'
+// and the second set, see 0x01914A40), logged when the list changes.
+void LogUnsharedNearbyCharacters() {
+    static s64 checked_ms = 0;
+    if (const s64 now_ms = SteadyMilliseconds(); now_ms - checked_ms < 1000) {
+        return;
+    } else {
+        checked_ms = now_ms;
+    }
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    const auto me = LocalPlayerPosition();
+    if (world < 0x10000 || !me) {
+        return;
+    }
+    std::unordered_set<u64> players{GetLocalPlayer()};
+    for (const OtherPlayer& other : OtherPlayers()) {
+        players.insert(other.character);
+    }
+    const s32 map_sets = ReadValue<s32>(world, 0x20);
+    const s32 sets = std::min(ReadValue<s32>(world, 0x278), 64);
+    std::string now;
+    for (s32 index = 0; index < sets; ++index) {
+        const u64 entry = world + 0x280 + static_cast<u64>(index) * 0x18;
+        const u64 set = ReadValue<u64>(entry, 0);
+        const s32 set_index = ReadValue<s32>(entry, 8);
+        if (set < 0x10000 || !HasMemoryAccess(set, 0x10, MemoryProt::CpuRead)) {
+            continue;
+        }
+        const s32 count = std::min(ReadValue<s32>(set, 0), 1024);
+        const u64 characters = ReadValue<u64>(set, 8);
+        for (s32 slot = 0; characters >= 0x10000 && slot < count; ++slot) {
+            const u64 character = ReadValue<u64>(characters + static_cast<u64>(slot) * 0x38, 0);
+            if (character < 0x10000 || players.contains(character) ||
+                !HasMemoryAccess(character, 0x3B8, MemoryProt::CpuRead)) {
+                continue;
+            }
+            const auto at = CharacterPosition(character);
+            const s32 hp = CharacterHp(character);
+            if (!at || hp <= 0) {
+                continue;
+            }
+            const float dx = (*at)[0] - (*me)[0], dy = (*at)[1] - (*me)[1],
+                        dz = (*at)[2] - (*me)[2];
+            if (dx * dx + dy * dy + dz * dz > 20.0f * 20.0f) {
+                continue;
+            }
+            const bool off = IsCharacterDisabled(character);
+            const u8 hidden = ReadValue<u8>(character, 0x28);
+            const bool map_set = set_index < map_sets;
+            if (!off && hidden == 0 && map_set) {
+                continue; // an ordinary enemy, posted as it is
+            }
+            now += fmt::format(" [{:#x} set {} type {} hp {}{}{} flags {:#x}]",
+                               ReadValue<u32>(character, 0x08), set_index,
+                               ReadValue<s32>(character, 0x78), hp, off ? " off" : "",
+                               hidden != 0 ? " hidden" : "", ReadValue<u32>(character, 0x1E0));
+        }
+    }
+    static std::string last;
+    static u32 logged = 0;
+    if (now != last && ++logged <= 300) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: living characters near the player the party may not "
+                 "see:{}",
+                 now.empty() ? " none" : now);
+        std::string traced = now.empty() ? std::string{"none"} : now;
+        std::ranges::replace(traced, ' ', '_');
+        Trace("unshared", {{"near", std::move(traced)}});
+    }
+    last = std::move(now);
+}
+
 // See SummonJoinWatch: the guest's state when a summon has not become a join.
 void WatchSummonJoin() {
     static SummonJoinWatch watch;
