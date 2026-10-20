@@ -863,6 +863,9 @@ def release_notes(releases):
                 section = known if 'known' in title else None if 'getting started' in title else notes
             elif line.startswith('- ') and section is not None and plain(line[2:]):
                 section.append(plain(line[2:])[:400])
+            elif re.match(r'\s+- ', line) and section and plain(line.strip()[2:]):
+                # a sub point goes on its point's line ("Party death is always on: a killing blow ...")
+                section[-1] = f'{section[-1]} {plain(line.strip()[2:])}'[:600]
             elif line.startswith('Known:') and plain(line[6:]):
                 text = plain(line[6:])
                 known.append((text[0].upper() + text[1:])[:400])

@@ -350,6 +350,7 @@ class CoopSettingsTests(unittest.TestCase):
             self.settle()
         self.assertTrue(self.app.update_button.canvas.winfo_manager())
         self.assertFalse(self.app.check_button.canvas.winfo_manager())
+        self.assertEqual(self.app.status.cget('text'), 'Version 1.0.1 is available.', 'not left on Checking…')
 
     def test_the_launcher_has_the_new_name(self):
         self.assertEqual(self.root.title(), 'Yharnam Together: Bloodborne Seamless Co-op')

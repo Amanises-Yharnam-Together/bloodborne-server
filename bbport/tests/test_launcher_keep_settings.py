@@ -131,14 +131,19 @@ class SetupKeepsSettingsTests(unittest.TestCase):
     def test_the_setup_never_installs_the_players_files(self):
         """The setup (a fresh install and the launcher's silent update) copies the release folder over the
         install: even a release that carried a bbport.ini by mistake leaves the player's in place."""
-        source = (REPO / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8')
+        source = (REPO / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
         files = [line for line in source.splitlines() if line.startswith('Source: "{#SourceDir}')]
         self.assertEqual(len(files), 1, files)
         excludes = re.search(r'Excludes:\s*"([^"]*)"', files[0])
         self.assertIsNotNone(excludes, files[0])
         names = {name.strip().lower() for name in excludes.group(1).split(',')}
         self.assertTrue({'bbport.ini', 'mods.json', 'patches.json'} <= names, names)
-        self.assertNotIn('[InstallDelete]', source)  # nothing of an older install is deleted first
+        # nothing of an older install is deleted first: [InstallDelete] holds only the Start menu links of the
+        # old name (Kaniel 2026-10-20: Yharnam Together)
+        deleted = [line for line in source.splitlines() if line.startswith('Type:')]
+        for line in deleted:
+            self.assertRegex(line, r'^Type: files; Name: "\{autoprograms\}\\[^"\\*?]+\.lnk"$', line)
+        self.assertNotIn('{app}', ''.join(deleted))
 
     def test_the_release_check_refuses_a_bbport_ini(self):
         sys.path.insert(0, str(REPO / 'tools' / 'release'))

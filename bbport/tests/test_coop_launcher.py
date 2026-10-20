@@ -401,8 +401,8 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(got[0]['date'], '20 Oct 2026')
         self.assertEqual(got[1]['notes'], ['Map screen: your position.', 'R3 switches floors.'],
                          'markdown marks are gone, and the install steps are not notes')
-        self.assertEqual(got[2]['notes'], ['Portraits show. Replace v0.1.0.', 'Party death:'],
-                         'the getting started and known gaps lists are not news; sub points stay out')
+        self.assertEqual(got[2]['notes'], ['Portraits show. Replace v0.1.0.', 'Party death: a sub point'],
+                         'the getting started and known gaps lists are not news; a sub point joins its point')
         self.assertEqual(got[2]['known'], ['Joining stalls.'])
         self.assertEqual(coop.release_notes({'message': 'rate limited'}), [])
 

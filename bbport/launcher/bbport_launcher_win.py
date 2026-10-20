@@ -5693,6 +5693,8 @@ class Launcher:
                 self.update_button.pack(side='right', padx=(0, self.px(12)), after=self.play_button.canvas)
             self.update_line.configure(text=_('Version {} is available.', 'Доступна версия {}.').format(
                 release['version']), fg=GOLD)
+            if manual:
+                self.status.configure(text=self.update_line.cget('text'), fg=GOLD)
             if auto and self.var('auto_update', 'app').get() and not self.process:
                 self.coop_install_update()
         self.ui_calls.put(show)
