@@ -492,6 +492,26 @@ class FetchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.fetch('<html>rate limited</html>', beta=False)
 
+@unittest.skipUnless(sys.platform == 'win32', 'the Windows launcher')
+class PatchNotesTests(unittest.TestCase):
+    """Kaniel 2026-10-20: Home lists every release's patch notes; the cache read back is checked."""
+
+    def test_a_cached_list_keeps_only_what_is_a_release(self):
+        cached = [{'version': '1.0.0', 'date': '20 Oct 2026', 'notes': ['A', 3, ''], 'known': 'x'},
+                  {'version': 7}, 'junk', None, {'version': '0.3.18-local', 'notes': ['B']}]
+        self.assertEqual(launcher.valid_patch_notes(cached),
+                         [{'version': '1.0.0', 'date': '20 Oct 2026', 'notes': ['A'], 'known': []},
+                          {'version': '0.3.18-local', 'date': '', 'notes': ['B'], 'known': []}])
+        self.assertEqual(launcher.valid_patch_notes({'version': '1.0.0'}), [])
+        self.assertEqual(launcher.valid_patch_notes(None), [])
+
+    def test_no_notes_when_github_cannot_be_read(self):
+        with mock.patch.object(launcher.bbport_coop, 'fetch_releases', side_effect=OSError('offline')):
+            self.assertIsNone(launcher.fetch_patch_notes())
+        with mock.patch.object(launcher.bbport_coop, 'fetch_releases', return_value={'message': 'rate limited'}):
+            self.assertIsNone(launcher.fetch_patch_notes())
+
+
 
 if __name__ == '__main__':
     unittest.main()

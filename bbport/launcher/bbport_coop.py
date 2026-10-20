@@ -259,8 +259,9 @@ def search_game(install, drives=None, homes=None, depth=5, budget_s=20.0, near=N
     # Beside the install, unless that is a folder of many programs: installed per user, the parents
     # are %LOCALAPPDATA%\Programs and %LOCALAPPDATA% (thousands of folders, walked with no time
     # limit while the launcher waited).
+    # A drive's root is left to the timed search below (the setup's default is D:\Games\Yharnam Together).
     for folder in (install.parent, install.parent.parent):
-        if folder.name.lower() not in CROWDED:
+        if folder.name.lower() not in CROWDED and folder.parent != folder:
             first.append(folder)
     for folder in first:
         found = find_game_folder(folder, 2) if folder and Path(folder).is_dir() else None
@@ -777,7 +778,7 @@ def allow_through_firewall(install, host):
 # .sha256; the update downloads both, checks the file against the sum, and runs the setup silently
 # into this install (it keeps user\), which starts the launcher again when it is done.
 # By repository id, not owner/name: the id survives a rename of the owner.
-RELEASES_API = 'https://api.github.com/repositories/1405692683/releases?per_page=30'
+RELEASES_API = 'https://api.github.com/repositories/1405692683/releases?per_page=100'  # every one: Home's notes
 SETUP_SUFFIX = '-setup.exe'
 
 
@@ -816,12 +817,66 @@ def newest_release(releases):
     return best
 
 
-def fetch_newest_release(timeout=15):
-    """newest_release() of what GitHub lists now (raises OSError or ValueError when it cannot be read)."""
+def fetch_releases(timeout=15):
+    """GitHub's /releases list as it is now (raises OSError or ValueError when it cannot be read)."""
     request = urllib.request.Request(RELEASES_API, headers={'Accept': 'application/vnd.github+json',
                                                             'User-Agent': 'bloodborne-coop-launcher'})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return newest_release(json.loads(response.read().decode('utf-8')))
+        return json.loads(response.read().decode('utf-8'))
+
+
+def fetch_newest_release(timeout=15):
+    """newest_release() of what GitHub lists now (raises OSError or ValueError when it cannot be read)."""
+    return newest_release(fetch_releases(timeout))
+
+
+# Home's patch notes (Kaniel 2026-10-20: every release's, from the latest back to the first) are the
+# releases' own: the top-level points of a body, without its install steps ("Getting started") and with
+# its known problems ("Known gaps", "Known: ...") apart.
+MONTHS = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
+
+
+def plain(text):
+    """A line of a release body without its markdown marks (bold, code)."""
+    return re.sub(r'\s+', ' ', text.replace('**', '').replace('`', '')).strip()
+
+
+def release_notes(releases):
+    """[{'version', 'date', 'notes', 'known'}] of every published release in GitHub's /releases list, newest
+    first; a release without any point is left out."""
+    if not isinstance(releases, list):
+        return []
+    found = []
+    for release in releases:
+        if not isinstance(release, dict) or release.get('draft') or not isinstance(release.get('tag_name'), str):
+            continue
+        version = release['tag_name'].lstrip('v')
+        if not version_key(version)[0]:
+            continue
+        notes, known = [], []
+        section = notes
+        for line in (release.get('body') or '').replace('\r', '').split('\n') if isinstance(release.get('body'), str) else []:
+            heading = line.startswith('#') or (line.startswith('**') and line.rstrip().endswith('**') and
+                                               line.count('**') == 2)
+            if heading:
+                title = line.lower()
+                section = known if 'known' in title else None if 'getting started' in title else notes
+            elif line.startswith('- ') and section is not None and plain(line[2:]):
+                section.append(plain(line[2:])[:400])
+            elif re.match(r'\s+- ', line) and section and plain(line.strip()[2:]):
+                # a sub point goes on its point's line ("Party death is always on: a killing blow ...")
+                section[-1] = f'{section[-1]} {plain(line.strip()[2:])}'[:600]
+            elif line.startswith('Known:') and plain(line[6:]):
+                text = plain(line[6:])
+                known.append((text[0].upper() + text[1:])[:400])
+        if not notes and not known:
+            continue
+        match = re.match(r'(\d{4})-(\d\d)-(\d\d)', release.get('published_at') or '')
+        date = f'{int(match.group(3))} {MONTHS[int(match.group(2)) - 1]} {match.group(1)}' if match and \
+            1 <= int(match.group(2)) <= 12 else ''
+        found.append({'version': version, 'date': date, 'notes': notes[:40], 'known': known[:10]})
+    found.sort(key=lambda r: version_key(r['version']), reverse=True)
+    return found
 
 
 def update_offer(current, release):
@@ -868,6 +923,8 @@ def download_update(release, folder, progress=None, timeout=30):
 
 
 def setup_command(setup, install):
-    """The setup run that updates this install in place, without a window, and starts the launcher again."""
-    return [str(setup), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS',
+    """The setup run that updates this install in place and starts the launcher again: no questions, but
+    its progress window stays on screen with a note not to close anything (/SILENT, and /NOCANCEL takes
+    its Cancel button away), so the update does not look like the launcher vanished (Kaniel 2026-10-20)."""
+    return [str(setup), '/SILENT', '/NOCANCEL', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS',
             f'/DIR={Path(install)}']

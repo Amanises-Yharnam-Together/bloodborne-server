@@ -56,6 +56,7 @@ class LookTests(unittest.TestCase):
                       mock.patch.object(launcher, 'COOP_INSTALL', False),
                       mock.patch.object(bbport_coop, 'search_game', return_value=None),
                       mock.patch.object(launcher, 'fetch_news', return_value=None),
+                      mock.patch.object(launcher, 'fetch_patch_notes', return_value=None),
                       mock.patch.object(Image, 'open', side_effect=recording_open)):
             patch.start()
             self.addCleanup(patch.stop)
@@ -144,8 +145,15 @@ class LookTests(unittest.TestCase):
         self.assertIsNone(launcher.parse_news([1, 2]))
         self.assertIsNone(launcher.parse_news({'title': 'x', 'link': {'url': 'http://plain'}})['link'],
                           'only https links')
+        self.app.patch_notes = []
         self.app.render_news(news)
         self.settle()
+        texts = self.home_texts()
+        for expected in ('Patch 9', 'Hello', 'One', 'Two'):
+            self.assertIn(expected, texts)
+        self.assertNotIn('Text', texts, 'Kaniel 2026-10-20: no info cards under the banner')
+
+    def home_texts(self):
         texts = []
 
         def walk(widget):
@@ -159,8 +167,31 @@ class LookTests(unittest.TestCase):
                                  if child.type(item) == 'text')
                 walk(child)
         walk(self.app.news_holder)
-        for expected in ('Patch 9', 'Hello', 'One', 'Two', 'Text'):
-            self.assertIn(expected, texts)
+        return texts
+
+    def test_home_lists_every_releases_patch_notes(self):
+        # Kaniel 2026-10-20: the latest release's notes in the banner, then every earlier one in a row
+        news = launcher.parse_news({'title': 'Old patch', 'version': '0.3.4', 'intro': 'Old intro', 'notes': ['Old']})
+        self.app.patch_notes = [
+            {'version': '1.0.0', 'date': '20 Oct 2026', 'notes': ['Chalices together'], 'known': ['Root chalices']},
+            {'version': '0.3.18-local', 'date': '19 Oct 2026', 'notes': ['Crash reports'], 'known': []},
+            {'version': '0.1.0', 'date': '13 Oct 2026', 'notes': ['First co-op'], 'known': []}]
+        self.app.render_news(news)
+        self.settle()
+        texts = self.home_texts()
+        joined = '\n'.join(t for t in texts if isinstance(t, str))
+        for expected in ("What's new in v1.0.0", 'Chalices together', 'Known issue: Root chalices', 'Crash reports',
+                         'First co-op'):
+            self.assertIn(expected, joined)
+        for stale in ('Old patch', 'Old intro', 'Old'):
+            self.assertNotIn(stale, texts, 'the website text is about another release')
+        self.assertLess(joined.index('Crash reports'), joined.index('First co-op'), 'newest first')
+        news = launcher.parse_news({'title': 'Together 1.0', 'version': '1.0.0', 'intro': 'Intro 1.0'})
+        self.app.render_news(news)
+        self.settle()
+        texts = self.home_texts()
+        self.assertIn('Together 1.0', texts)
+        self.assertIn('Intro 1.0', texts)
 
     def test_the_website_news_file_is_one_the_launcher_reads(self):
         site = Path(__file__).resolve().parents[2] / 'website' / 'public' / 'launcher' / 'news.json'
@@ -235,6 +266,7 @@ class CoopSettingsTests(unittest.TestCase):
                       mock.patch.object(launcher, 'LANG', 'en'),
                       mock.patch.object(launcher, 'COOP_INSTALL', True),
                       mock.patch.object(launcher, 'fetch_news', return_value=None),
+                      mock.patch.object(launcher, 'fetch_patch_notes', return_value=None),
                       mock.patch.object(bbport_coop, 'load_settings', return_value=settings),
                       mock.patch.object(bbport_coop, 'save_settings',
                                         side_effect=lambda _i, s: self.saved.append(dict(s))),
@@ -298,6 +330,31 @@ class CoopSettingsTests(unittest.TestCase):
         sub = self.app.side.canvas.itemcget(self.app.side.sub, 'text')
         self.assertNotIn(launcher.VERSION, sub)
         self.assertIn('development build', sub, 'a source tree has no release version')
+
+    def test_check_for_updates_sits_in_the_bottom_bar_until_an_update_is_out(self):
+        """Kaniel 2026-10-20: a Check for updates button; it says what it found, and the Update button takes
+        its place once a newer release is out."""
+        self.assertTrue(self.app.check_button.canvas.winfo_manager())
+        with mock.patch.object(launcher, 'coop_release_version', return_value='1.0.0'), \
+                mock.patch.object(bbport_coop, 'fetch_newest_release', return_value=None):
+            self.app.coop_check_now()
+            deadline = time.monotonic() + 5
+            while self.app.check_button.state != 'normal' and time.monotonic() < deadline:
+                self.settle()
+        self.assertEqual(self.app.status.cget('text'), 'You have the latest version.')
+        release = {'version': '1.0.1', 'setup': 'https://example.test/s.exe', 'sha256': 'https://example.test/s.sha256',
+                   'page': '', 'notes': '', 'name': 's.exe'}
+        with mock.patch.object(launcher, 'coop_release_version', return_value='1.0.0'), \
+                mock.patch.object(bbport_coop, 'fetch_newest_release', return_value=release):
+            self.app.coop_check_update(manual=True)
+            self.settle()
+        self.assertTrue(self.app.update_button.canvas.winfo_manager())
+        self.assertFalse(self.app.check_button.canvas.winfo_manager())
+        self.assertEqual(self.app.status.cget('text'), 'Version 1.0.1 is available.', 'not left on Checking…')
+
+    def test_the_launcher_has_the_new_name(self):
+        self.assertEqual(self.root.title(), 'Yharnam Together: Bloodborne Seamless Co-op')
+        self.assertIn('Yharnam Together', self.app.side.canvas.itemcget(self.app.side.sub, 'text'))
 
     def test_a_newer_release_shows_the_update_button_and_installs_with_the_switch(self):
         """Kaniel 2026-10-16: an Update button when a newer release is out; with the automatic update

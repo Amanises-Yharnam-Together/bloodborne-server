@@ -1,17 +1,16 @@
 {
   "kicker": "Patch notes",
-  "version": "0.3.4",
-  "date": "16 Oct 2026",
-  "title": "Team worlds, cleaner saves, trading by name",
-  "intro": "A round of fixes from a three-player playtest. Teams keep each world they played, and every save starts the story where it left off.",
+  "version": "1.0.0",
+  "date": "20 Oct 2026",
+  "title": "Yharnam Together 1.0: chalice dungeons as a team",
+  "intro": "The first full release. Each of you enters a chalice dungeon from your own altar, bosses keep one runner for the whole fight, and what a teammate opens is open for everyone.",
   "notes": [
-    "Teams keep their worlds apart: the leader picks which one to play on the team screen, or starts a new one.",
-    "Iosefka's door and the dog are no longer briefly undone when you load a different save.",
-    "Every guest gets their own player number, so levers and doors answer the right hunter.",
-    "A wipe while you are alone keeps the kills you made with the team.",
-    "Busy connections send far fewer repeat packets.",
-    "No damage number floats over a downed hunter's body.",
-    "Trading lists a \"Give to\" row for each partner by name."
+    "Chalice dungeons: the host stepping into a dungeon no longer takes teammates standing in the Hunter's Dream along (they fell into the void). Each of you enters from your own altar, in any order.",
+    "Chalice dungeons: no multiplayer fog walls, guests open the boss door, bosses are handed out again and big enemies no longer lag.",
+    "Bosses keep one runner for the whole fight, and only the game's real bosses are handed out.",
+    "Doors, gates and levers a teammate opens are open for the whole party; guests open the Research Hall's door and device and pick up the workshop's glowing items.",
+    "Guests away from the host follow the host's story steps live; a map everyone died on starts over while others stand elsewhere; kills reach players who arrive later; summoned enemies that come back are shown to everyone again.",
+    "Fewer crashes after a host rejoins."
   ],
   "link": {
     "text": "All releases",
