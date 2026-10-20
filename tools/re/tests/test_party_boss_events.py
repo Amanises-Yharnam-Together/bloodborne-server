@@ -341,6 +341,41 @@ class GuestsOpenChaliceBossDoors(unittest.TestCase):
         self.assertEqual(tool.patch_host_door_effect(original), (original, 0))
 
 
+class GuestsTakeTheChaliceBossReward(unittest.TestCase):
+    """Kaniel 2026-10-20: a Pthumeru Root dungeon's last boss dropped nothing extra. Its reward
+    event (m29 12901693, started by the layer's own event file with the lots as parameters) skips
+    to its gem for a client (1003:105 to label 0, state 1) before the host's extra lot, a gem or
+    the next Root Chalice (2003:4, which gives a client nothing anyway). The skip never matches and
+    the award reaches a client too (2003:36), so every party member rolls its own extra lot."""
+
+    REWARD = [(2000, 2, struct.pack('<i', 0)),
+              (1003, 105, struct.pack('<BBxx', 0, 1)),
+              flag_condition(1, 92905385),
+              (1000, 1, struct.pack('<BBbx', 2, 0, 1)),
+              (2003, 4, struct.pack('<i', 0)),
+              (1000, 103, struct.pack('<i', 1)),
+              (1014, 0, b''),
+              (1003, 105, struct.pack('<BBxx', 4, 1)),
+              (2003, 36, struct.pack('<i', 0)),
+              (1014, 1, b'')]
+
+    def test_a_guest_rolls_the_host_reward(self):
+        edits = []
+        patched, count = tool.patch_chalice_rewards(build_emevd({12901693: self.REWARD}), edits)
+        events = read_events(patched)[12901693]
+        self.assertEqual(events[1][2][:2], bytes([0, tool.NEVER]))
+        self.assertEqual(events[7][2][:2], bytes([4, tool.NEVER]))
+        self.assertEqual(events[4][:2], (2003, tool.AWARD_ITEM_LOT_INCLUDING_CLIENTS))
+        self.assertEqual(events[8], self.REWARD[8], 'the gem for everyone stays')
+        self.assertEqual(count, 3)
+        self.assertEqual([(edit['instruction'], edit['bank'], edit['id']) for edit in edits],
+                         [(1, 1003, 105), (4, 2003, 36), (7, 1003, 105)])
+
+    def test_other_events_keep_their_checks(self):
+        original = build_emevd({12901694: self.REWARD})
+        self.assertEqual(tool.patch_chalice_rewards(original), (original, 0))
+
+
 class GuestsOpenTheResearchHallDoor(unittest.TestCase):
     """Kaniel 2026-10-19: every door and gate should open for anyone in the party. The Research
     Hall's door and device (ObjActParam 3500020, 3500110) are the only ones outside the chalice
