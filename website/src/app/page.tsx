@@ -127,6 +127,16 @@ const features: {
     alt: "The Hunt Begins: Player 1 and Player 2 Ready at 100 percent, Player 3 Joining the hunt.",
   },
   {
+    title: "Chalice dungeons together",
+    icon: "skull",
+    text: "One hunter performs the ritual while the team looks on. Each of you then enters from your own altar, in any order, and you meet in the same dungeon.",
+    href: "/docs/play#chalice-team",
+    src: "/docs/chalice3-team.webp",
+    width: 1440,
+    height: 810,
+    alt: "Player 1, Player 2 and Player 3 side by side in the torchlit hall of a Pthumerian Labyrinth.",
+  },
+  {
     title: "Find each other",
     icon: "lantern",
     text: "The map marks every teammate and the area they are in, and travels to any lit lamp. A compass on screen points the way and the distance.",

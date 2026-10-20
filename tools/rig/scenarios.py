@@ -2981,8 +2981,9 @@ SCENARIOS["chalice-root-team"] = {
 
 # Kaniel 2026-10-20: a team of three at the Dream's altar. The host conducts the ritual while both
 # guests stand by and watch (neither is taken along); then one by one, host, guest, guest2, each
-# enters the dungeon from its own altar (the guests hold no chalice: the team's record gives
-# them one). In the dungeon the host (the map's owner) kills the nearest enemy (the game's own
+# enters the dungeon from its own altar (the guests hold a chalice: one given at the altar shows
+# a pickup box that takes the altar's first press in a visible game; chalice-altar-no-chalice
+# covers that). In the dungeon the host (the map's owner) kills the nearest enemy (the game's own
 # kill: the rig's attacks never landed on the first room's enemy); then they go back to the
 # Dream in another order: guest2, the host, the guest. The shots are for the website (a visible
 # run with BB_SHOT_TRIGGER; skipped headless). The Dream's layer warp (12107200) was
@@ -3028,7 +3029,8 @@ SCENARIOS["chalice-team3"] = {
                  "sync c3-guest-out", "wait-members 3 300", "wait 10", "expect-session 3",
                  "shot host-all-back"],
         "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480",
-                  f"travel {HUNTERS_DREAM}", "wait 15", f"teleport {WATCH_SPOTS['guest']}",
+                  f"trade-stock {PTHUMERU_CHALICE} 1", f"travel {HUNTERS_DREAM}", "wait 15",
+                  f"teleport {WATCH_SPOTS['guest']}",
                   "wait 3", "sync c3-dream", "wait 25", "shot guest-watching", "sync c3-ritual",
                   "sync c3-host-in", f"expect-map {HUNTERS_DREAM_MAP}",
                   "log guest still in the Dream", *CHALICE3_LAYER_ONE("guest"),
@@ -3039,7 +3041,8 @@ SCENARIOS["chalice-team3"] = {
                   "sync c3-guest-out", "wait-members 3 300", "wait 10", "expect-session 3",
                   "shot guest-all-back"],
         "guest2": ["team-accept", "team-ready", START, "godmode", "wait-session 3 480",
-                   f"travel {HUNTERS_DREAM}", "wait 15", f"teleport {WATCH_SPOTS['guest2']}",
+                   f"trade-stock {PTHUMERU_CHALICE} 1", f"travel {HUNTERS_DREAM}", "wait 15",
+                   f"teleport {WATCH_SPOTS['guest2']}",
                    "wait 3", "sync c3-dream", "wait 30", "shot guest2-watching",
                    "sync c3-ritual", "sync c3-host-in", "sync c3-guest-in",
                    f"expect-map {HUNTERS_DREAM_MAP}", "log guest2 still in the Dream",
@@ -3053,10 +3056,10 @@ SCENARIOS["chalice-team3"] = {
               for name in CHALICE3_SYNCS},
     "expect": {"host": [r"host ritual done", r"host in the dungeon",
                         r"autoplay: kill 0x\w+ hp \d+ -> 0", r"host back in the Dream"],
-               "guest": [r"guest still in the Dream", r"given its chalice",
-                         r"guest in the dungeon", r"guest back in the Dream"],
-               "guest2": [r"guest2 still in the Dream", r"given its chalice",
-                          r"guest2 in the dungeon", r"guest2 back in the Dream"]},
+               "guest": [r"guest still in the Dream", r"guest in the dungeon",
+                         r"guest back in the Dream"],
+               "guest2": [r"guest2 still in the Dream", r"guest2 in the dungeon",
+                          r"guest2 back in the Dream"]},
     "forbid": {role: SESSION_HOLDS for role in ("host", "guest", "guest2")},
     "allow": CRASH_CLEANUP,
     "timeout": 2400,
