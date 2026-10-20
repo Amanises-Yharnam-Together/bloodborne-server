@@ -35,7 +35,8 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
-OutputBaseFilename=BloodborneSeamlessCoop-v{#AppVersion}-setup
+; The file is named after Yharnam Together too (make-release.ps1 $setupName is the same).
+OutputBaseFilename=YharnamTogether-v{#AppVersion}-setup
 SetupIconFile={#IconFile}
 UninstallDisplayIcon={app}\BLauncher.exe
 UninstallDisplayName={#AppName}
