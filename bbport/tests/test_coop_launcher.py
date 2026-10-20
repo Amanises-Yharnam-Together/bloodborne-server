@@ -471,6 +471,15 @@ class UpdateTests(unittest.TestCase):
         self.assertIn('Check: NoDesktopShortcut', desktop[0])
         self.assertIn('function NoDesktopShortcut: Boolean;', iss)
 
+    def test_the_setup_file_has_the_new_name(self):
+        # Kaniel 2026-10-20; older launchers find any '-setup.exe' of a release, so they still update
+        root = Path(__file__).resolve().parents[2] / 'tools'
+        iss = (root / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
+        release = (root / 'make-release.ps1').read_text(encoding='utf-8-sig')
+        self.assertRegex(iss, r'(?m)^OutputBaseFilename=YharnamTogether-v\{#AppVersion\}-setup$')
+        self.assertIn('$setupName = "YharnamTogether-$tag-setup.exe"', release)
+        self.assertTrue(coop.SETUP_SUFFIX == '-setup.exe')
+
     def test_the_setup_has_the_new_name(self):
         # Kaniel 2026-10-20: Yharnam Together in the launcher and the setup; the old Start menu entries go
         iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')

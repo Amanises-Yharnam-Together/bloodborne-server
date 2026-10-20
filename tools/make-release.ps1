@@ -53,7 +53,7 @@ $bbport = Join-Path $root "bbport"
 if (-not $Out) { $Out = Join-Path $env:BB_ROOT "release" }
 $name = "BloodborneSeamlessCoop"
 $tag = "v$Version"
-$setupName = "$name-$tag-setup.exe"
+$setupName = "YharnamTogether-$tag-setup.exe"  # setup.iss OutputBaseFilename
 function Step([string]$Text) { Write-Host ""; Write-Host "== $Text" -ForegroundColor Cyan }
 function Write-Utf8([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding $false)) }
 

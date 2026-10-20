@@ -774,7 +774,7 @@ def allow_through_firewall(install, host):
 
 # --- updates (Kaniel 2026-10-16) ---------------------------------------------------------------
 # The launcher looks for a newer release of this repository: every release counts, pre-releases too
-# (everyone runs one build). A release carries BloodborneSeamlessCoop-v<version>-setup.exe and its
+# (everyone runs one build). A release carries YharnamTogether-v<version>-setup.exe (any -setup.exe counts) and its
 # .sha256; the update downloads both, checks the file against the sum, and runs the setup silently
 # into this install (it keeps user\), which starts the launcher again when it is done.
 # By repository id, not owner/name: the id survives a rename of the owner.
