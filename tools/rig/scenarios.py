@@ -1511,6 +1511,30 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
+    # Kaniel 2026-10-20 ("bloodstains of ours will be displayed on compass and map"): the guest
+    # (given echoes) dies by the lamp and wakes there; its own stain is on its compass and map, the
+    # host's show it too (through the server); the guest stands on it, and it goes from both.
+    "bloodstain": {
+        "about": "the party's bloodstains: a member's stain on its own and the others' compass "
+                 "and map, gone from both once picked up",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital dead 180",
+                     "expect-stains members 1 1 60", "shot host-stain-compass",
+                     "expect-stains members 0 0 120", "wait 5"],
+            "guest": [START, "wait-session 2 300", "trade-give echoes 500", "wait 15", *GIVE_UP,
+                      "wait-vital up 60", "wait 5", "expect-stains own 1 1 30",
+                      "shot guest-stain-compass", "pickup-stain 15", "wait 3",
+                      "expect-stains own 0 0 30", "wait 30"],
+        },
+        "expect": {
+            "host": [r"autoplay stains \(members\): \[compass", r"autoplay stains \(members\): none"],
+            "guest": [r"autoplay stains \(own\): \[compass own", r"bloodstain picked up",
+                      r"autoplay stains \(own\): none"],
+        },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     "team-load-art": {
         "about": "the team loading screen's art (Kaniel 2026-10-17: the co-op art's night city, cards, "
                  "medallions and sigils): each game shoots its loading screen as it comes up",
@@ -2683,10 +2707,11 @@ SCENARIOS = {
                      "keys r1 r1 r1 down", "wait 2", "shot menu-effect-row",
                      "keys right", "wait 2", "shot menu-effect-changed",
                      "keys left", "wait 2",
-                     # The Display page's language row: seven down from its first (past the
-                     # compass rows, the greyed ones skipped). Auto (the game's language), English, Russian, ...: two
-                     # right is Russian.
-                     "keys l1 l1 down down down down down down down", "wait 2", "keys right right", "wait 2",
+                     # The Display page's language row: twelve down from its first (past the
+                     # compass, bloodstain and map rows, the greyed FPS limit skipped). Auto (the
+                     # game's language), English, Russian, ...: two right is Russian.
+                     "keys l1 l1 down down down down down down down down down down down down",
+                     "wait 2", "keys right right", "wait 2",
                      "shot menu-russian", "keys left left", "wait 2",
                      # Up from a page's first row is Quit (nothing waits for a restart): its box
                      # opens on Cancel, which Cross takes.
@@ -2705,11 +2730,12 @@ SCENARIOS = {
                  "Japanese, German, Korean, Traditional Chinese, then back to the game's",
         "settings": {"BB_LANGUAGE": "11"},
         "roles": {
-            # The Display page's language row is seven down from its first: Auto, English,
+            # The Display page's language row is twelve down from its first: Auto, English,
             # Russian, Japanese (3), French, Spanish, Spanish (Latin America), German (7),
             # Italian, Dutch, Portuguese, Korean (11), Traditional Chinese (12), ...
             "host": [START, "wait 5", "keys toggle", "wait 3", "shot menu-zh-cn",
-                     "keys down down down down down down down", "wait 2",
+                     "keys down down down down down down down down down down down down",
+                     "wait 2",
                      "keys right right right", "wait 3", "shot menu-ja",
                      "keys right right right right", "wait 3", "shot menu-de",
                      "keys right right right right", "wait 3", "shot menu-ko",

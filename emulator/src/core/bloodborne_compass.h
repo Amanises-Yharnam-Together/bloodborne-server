@@ -67,6 +67,19 @@ std::vector<CompassMarker> CompassMarkers(std::span<const std::optional<CompassP
                                           const CompassPoint& me, float camera_heading,
                                           const std::vector<bool>& down = {});
 
+// Kaniel 2026-10-20: the party's bloodstains on the compass. `owner` -1 is this player's own, else
+// the member's index; positions on this map only (the caller leaves the others out).
+struct CompassStain {
+    s32 owner = -1;
+    float bearing = 0.0f;
+    float distance = 0.0f;
+    CompassPlace place;
+    bool operator==(const CompassStain&) const = default;
+};
+std::vector<CompassStain> CompassStains(const std::optional<CompassPoint>& own,
+                                        std::span<const std::optional<CompassPoint>> members,
+                                        const CompassPoint& me, float camera_heading);
+
 // What the compass shows now (ReadCompass): the camera's heading and the markers, with each
 // marker's name (the party panel's), or why it shows nothing.
 struct CompassView {
@@ -78,6 +91,9 @@ struct CompassView {
     std::vector<std::string> members;
     std::vector<int> vitals;
     std::vector<float> revives;
+    // Kaniel 2026-10-20: the bloodstains here, with their owners' names ("" for this player's).
+    std::vector<CompassStain> stains;
+    std::vector<std::string> stain_names;
     std::string why;
 };
 

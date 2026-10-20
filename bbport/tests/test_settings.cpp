@@ -116,21 +116,26 @@ int main() {
     {
         const BbSettings::Values fresh;
         assert(fresh.compass && fresh.compass_position == BbSettings::CompassTop);
+        // Kaniel 2026-10-20: the party's bloodstains on the compass and the map, on by default.
+        assert(fresh.bloodstains);
         char path[512];
         std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
         const int file = mkstemp(path);
-        const char text[] = "compass=0\ncompass_position=reticle\n";
+        const char text[] = "compass=0\ncompass_position=reticle\nbloodstains=0\n";
         assert(write(file, text, sizeof(text) - 1) == ssize_t(sizeof(text) - 1));
         close(file);
         setenv("BB_CONFIG", path, 1);
         BbSettings::Load();
         assert(!s.compass && s.compass_position == BbSettings::CompassReticle);
+        assert(!s.bloodstains);
         s.compass = true;
         s.compass_position = BbSettings::CompassBottom;
+        s.bloodstains = true;
         BbSettings::Save();
         const std::string saved_compass = Read(path);
         assert(saved_compass.find("compass=1\n") != std::string::npos);
         assert(saved_compass.find("compass_position=bottom\n") != std::string::npos);
+        assert(saved_compass.find("bloodstains=1\n") != std::string::npos);
         unlink(path);
     }
     std::puts("PASS: compass settings");

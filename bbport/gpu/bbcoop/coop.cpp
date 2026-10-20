@@ -217,7 +217,17 @@ extern "C" int bbcoop_compass_view(bbcoop_compass* compass) {
         out.vital = view.vitals[i];
         out.revive = view.revives[i];
     }
-    return compass->count > 0 ? 1 : 0;
+    for (size_t i = 0; i < view.stains.size() && i < BBCOOP_COMPASS_STAINS; ++i) {
+        const auto& stain = view.stains[i];
+        auto& out = compass->stains[compass->stain_count++];
+        std::snprintf(out.name, sizeof(out.name), "%s", view.stain_names[i].c_str());
+        out.own = stain.owner < 0 ? 1 : 0;
+        out.bearing = stain.bearing;
+        out.distance = stain.distance;
+        out.x = stain.place.x;
+        out.pinned = stain.place.pinned ? 1 : 0;
+    }
+    return compass->count > 0 || compass->stain_count > 0 ? 1 : 0;
 }
 
 extern "C" int bbcoop_map_view(bbcoop_map* map, int open) {
@@ -263,6 +273,24 @@ extern "C" int bbcoop_map_view(bbcoop_map* map, int open) {
             out.y = (*member.at)[1];
             out.z = (*member.at)[2];
         }
+    }
+    // Kaniel 2026-10-20: the party's bloodstains, each on its own map.
+    const auto add_stain = [&](const Bloodstain& stain, const std::string& name, bool own) {
+        if (stain.map == 0 || map->stain_count >= BBCOOP_MAP_STAINS) {
+            return;
+        }
+        bbcoop_map_stain& out = map->stains[map->stain_count++];
+        std::snprintf(out.name, sizeof(out.name), "%s", name.c_str());
+        out.own = own ? 1 : 0;
+        out.map = stain.map;
+        out.x = stain.at[0];
+        out.y = stain.at[1];
+        out.z = stain.at[2];
+        out.echoes = stain.echoes;
+    };
+    add_stain(panel.own_stain, {}, true);
+    for (const PanelMember& member : panel.members) {
+        add_stain(member.stain, member.shown, false);
     }
     for (const u32 area : view.cleared) {
         if (map->cleared_count < 24) {

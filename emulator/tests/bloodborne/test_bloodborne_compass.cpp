@@ -144,4 +144,23 @@ TEST(BloodborneCompass, MarkersForTheMembersStandingHere) {
     EXPECT_NEAR(markers[1].distance, 10.0f, 1e-4f);
 }
 
+// Kaniel 2026-10-20: the party's bloodstains on the compass: this player's own (owner -1) and each
+// member's (its panel index) at their bearings; the caller passes only the ones on this map.
+TEST(BloodborneCompass, StainsOfThisPlayerAndTheMembersHere) {
+    const CompassPoint me{-215.0f, -54.5f, 178.0f};
+    const std::optional<CompassPoint> own = CompassPoint{-215.0f, -54.5f, 198.0f};
+    const std::vector<std::optional<CompassPoint>> members{std::nullopt,
+                                                           CompassPoint{-205.0f, -54.5f, 178.0f}};
+    const auto stains = CompassStains(own, members, me, 0.0f);
+    ASSERT_EQ(stains.size(), 2u);
+    EXPECT_EQ(stains[0].owner, -1);
+    EXPECT_NEAR(stains[0].bearing, 0.0f, 1e-5f);
+    EXPECT_NEAR(stains[0].distance, 20.0f, 1e-4f);
+    EXPECT_EQ(stains[1].owner, 1);
+    EXPECT_NEAR(stains[1].bearing, 90 * Degree, 1e-5f);
+    EXPECT_NEAR(stains[1].distance, 10.0f, 1e-4f);
+    EXPECT_NEAR(stains[1].place.x, 1.0f, 1e-5f);
+    EXPECT_TRUE(CompassStains(std::nullopt, {}, me, 0.0f).empty());
+}
+
 } // namespace

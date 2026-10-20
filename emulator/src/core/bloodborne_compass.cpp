@@ -73,6 +73,22 @@ std::vector<CompassMarker> CompassMarkers(std::span<const std::optional<CompassP
     return markers;
 }
 
+std::vector<CompassStain> CompassStains(const std::optional<CompassPoint>& own,
+                                        std::span<const std::optional<CompassPoint>> members,
+                                        const CompassPoint& me, float camera_heading) {
+    std::vector<CompassStain> stains;
+    const auto add = [&](s32 owner, const std::optional<CompassPoint>& at) {
+        if (const auto seen = at ? BearingOf(me, camera_heading, *at) : std::nullopt) {
+            stains.push_back({owner, seen->bearing, seen->distance, PlaceOnStrip(seen->bearing)});
+        }
+    };
+    add(-1, own);
+    for (size_t index = 0; index < members.size(); ++index) {
+        add(static_cast<s32>(index), members[index]);
+    }
+    return stains;
+}
+
 std::vector<std::optional<CompassPoint>> LivePositions(
     std::span<const std::optional<CompassPoint>> members,
     std::span<const std::optional<CompassPoint>> characters, float reach) {

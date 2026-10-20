@@ -125,6 +125,9 @@ struct Values {
     /// The teammate compass (bbport.ini compass, on by default) and where it is (CompassPosition).
     std::atomic<bool> compass{true};
     std::atomic<int> compass_position{CompassTop};
+    /// Kaniel 2026-10-20: the party's bloodstains on the compass and the map (bbport.ini
+    /// bloodstains, on by default).
+    std::atomic<bool> bloodstains{true};
     /// Kaniel 2026-10-19 ("make it opt in, so low vram cards will not prerender it", "an opt in
     /// option to view rendered in real time 3d map"): the map screen's 3D view (bbport.ini map_3d,
     /// Map3d*, off by default): prerendered pictures, or the models drawn live on the GPU.
