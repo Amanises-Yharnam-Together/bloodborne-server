@@ -33,6 +33,7 @@ VERBS = {
     "expect-stains", "pickup-stain",  # Kaniel 2026-10-20: bloodstains on the compass and map
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
     "shot", "expect-hidden", "expect-disabled", "set-disabled", "census", "peek", "poke", "dump", "raise-stat",
+    "add-effect",  # #300: Insight for Hemwick's mist ambush
     "sync", "chapter", "keep-going", "glide",  # the suites' (suites.py)
     "return-point",
     "team-create", "team-invite", "team-accept", "team-wait", "team-leave",  # the lobby's

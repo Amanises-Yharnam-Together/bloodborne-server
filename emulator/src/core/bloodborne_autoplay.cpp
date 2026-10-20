@@ -1201,6 +1201,21 @@ bool AutoplayRaiseStat(const AutoplayStep& step) {
     return true;
 }
 
+// add-effect <SpEffect>: the effect put on the player through its own add-effect virtual, as the
+// game's events do (4680: a point of Insight, common event 9350's; the rig's characters have few).
+bool AutoplayAddEffect(const AutoplayStep& step) {
+    const u64 player = GetLocalPlayer();
+    if (!HasVirtual(player, CharacterAddSpEffectSlot, AddSpEffectOffset, "autoplay AddSpEffect")) {
+        step.failure = "no player";
+        return false;
+    }
+    const s32 effect = static_cast<s32>(step.Number(0, 0));
+    reinterpret_cast<AddSpEffectFn>(image_base + AddSpEffectOffset)(
+        player, effect, player, 0, 1, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+    LOG_INFO(Debug, "Bloodborne autoplay add-effect: {}", effect);
+    return true;
+}
+
 // peek <target> <offset>, poke <target> <offset> <value> [1] (hex): a character's u32 (or byte)
 // at an offset, logged or written (reverse engineering on the rig: a field's meaning tried in
 // play).
@@ -1847,6 +1862,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-hp", AutoplayExpectHp},
     {"dump", AutoplayDump},
     {"raise-stat", AutoplayRaiseStat},
+    {"add-effect", AutoplayAddEffect},
     {"peek", AutoplayPeekOrPoke},
     {"poke", AutoplayPeekOrPoke},
     {"expect-hidden", AutoplayExpectHidden},
