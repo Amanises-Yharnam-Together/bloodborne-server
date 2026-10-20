@@ -285,9 +285,9 @@ int bbcoop_cutscene_skip(void);
 int bbcoop_cutscene_vote_pad(int options);
 /* The vote as the overlay shows it: 1 while some of those watching want to skip. */
 int bbcoop_cutscene_vote(int *want, int *watching);
-/* Its buttons: this character ready, not ready, the leader's start (a member's: ready), alone. */
-enum { BBCOOP_TEAM_GO_READY = 0, BBCOOP_TEAM_GO_UNREADY = 1, BBCOOP_TEAM_GO_START = 2,
-       BBCOOP_TEAM_GO_ALONE = 3 };
+/* Its buttons: the leader's start (a member is ready by itself, Kaniel 2026-10-20), or, in no
+ * team, this save plays alone. */
+enum { BBCOOP_TEAM_GO_START = 1, BBCOOP_TEAM_GO_ALONE = 2 };
 void bbcoop_team_choose(int what);
 
 /* Trading between party members (the co-op code's bloodborne_trade.h, with

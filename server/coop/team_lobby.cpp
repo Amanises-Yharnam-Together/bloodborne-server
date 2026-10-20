@@ -486,17 +486,10 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
         if (!MemberIn(*mine, member)->ready()) {
             return refuse("choose your character first");
         }
-        // Kaniel 2026-10-14: the hunt begins only once every member is ready (a started team's
-        // leader back from a crash goes in at once).
-        if (!mine->started()) {
-            for (const bbcoop::TeamMember& m : mine->members()) {
-                if (!m.ready() || !players.contains(m.member())) {
-                    return refuse("not every hunter is ready");
-                }
-            }
-            if (!mine->world().empty() && PlayedBy(mine->world(), mine)) {
-                return refuse("another team plays that world now");
-            }
+        // Kaniel 2026-10-20: the leader begins as soon as the members are in (each member's game
+        // says ready by itself); one not ready yet goes in once it is (a started team takes it).
+        if (!mine->started() && !mine->world().empty() && PlayedBy(mine->world(), mine)) {
+            return refuse("another team plays that world now");
         }
         Outcome outcome{.changed = true};
         if (!mine->started()) {

@@ -23,9 +23,12 @@
 
 namespace Core::Bloodborne {
 
-// Kaniel 2026-10-14: whether the team's leader (`me`) may begin the hunt: every other member online
-// and ready, or the team started already.
+// Whether every other member of the team of `me` is online and ready, or the team started already
+// (the rig's leader begins then; Kaniel 2026-10-20, the lobby itself starts without one not ready
+// yet, which goes in once its screen says ready).
 bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me);
+// Whether `me` is in a team and ready in it (its team screen says so by itself).
+bool TeamMemberReady(const bbcoop::LobbyState& lobby, const std::string& me);
 
 // Kaniel 2026-10-15: the player slot a guest joins the host's session with (GameMan +0x16F4), its
 // own in the team: 7 for the first guest (the summon sign's), 6 for the second, 5 for the third.
@@ -46,12 +49,16 @@ std::vector<std::pair<std::string, std::string>> TeamLoadMembers(const bbcoop::L
 class TeamGate {
 public:
     enum class Step { Load, Hold };
-    // The team screen's buttons (bbport_overlay.cpp): this character ready or not, the leader's
-    // Start (a member's is its Ready), or this save plays alone.
-    enum class Choice { Ready, Unready, Start, Alone };
+    // The team screen's buttons (bbport_overlay.cpp): the leader's Start (a member's is its
+    // Ready), or, in no team, this save plays alone. Ready is the screen's own (Kaniel
+    // 2026-10-20: no Ready to press): Decision::ready.
+    enum class Choice { Ready, Start, Alone };
+    // A member's Ready not answered by the lobby is said again after this long.
+    static constexpr s64 ReadyAgainMs = 3000;
     struct Decision {
         Step step = Step::Load;
         std::optional<bbcoop::TeamStart> start; // with Load: the team the save plays in
+        bool ready = false; // send this save's Ready now (Choose(Choice::Ready))
     };
 
     void TakeLobby(const bbcoop::LobbyState& state) {
@@ -87,6 +94,7 @@ private:
     std::optional<bbcoop::LobbyState> lobby;
     std::optional<bbcoop::TeamStart> started;
     std::optional<s64> holding_since;
+    std::optional<s64> ready_said; // when this load's Ready went
     u32 slot = 0;
     bool alone = false;
 };

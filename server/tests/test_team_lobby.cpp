@@ -107,16 +107,15 @@ int ReadyAndStart() {
   CHECK(!lobby.Request("a", Request(Action::START)).notice.empty());
   lobby.Request("a", Request(Action::READY, {}, {}, 2));
   lobby.Request("b", Request(Action::READY, {}, {}, 0));
-  // Kaniel 2026-10-14: the hunt begins only once every member is ready (c is
-  // not yet).
-  const TeamLobby::Outcome early = lobby.Request("a", Request(Action::START));
-  CHECK(!early.notice.empty() && early.starts.empty());
-  CHECK(!lobby.TeamOf("a")->started());
-  lobby.Request("c", Request(Action::READY, {}, {}, 1));
+  // Kaniel 2026-10-20: the leader begins as soon as the members are in (their
+  // games say ready by themselves); one not ready yet (c) goes once it is.
   const TeamLobby::Outcome start = lobby.Request("a", Request(Action::START));
   CHECK(start.notice.empty() && start.changed);
-  CHECK(start.starts.size() == 3);
+  CHECK(start.starts.size() == 2);
   CHECK(lobby.TeamOf("a")->started());
+  const TeamLobby::Outcome joins =
+      lobby.Request("c", Request(Action::READY, {}, {}, 1));
+  CHECK(joins.starts.size() == 1 && joins.starts[0] == "c");
   const bbcoop::TeamStart go = lobby.StartFor("a");
   CHECK(go.party() == TeamLobby::PartyOf(go.world()) && go.host() == "a" &&
         go.slot() == 2);

@@ -83,8 +83,36 @@ TEST(TeamGate, TheLeadersStartIsItsReadyAndTheTeamsStart) {
     member.TakeLobby(InTeam("leader"));
     member.Tick("me", 0, 1000);
     EXPECT_EQ(member.Choose(TeamGate::Choice::Start, "me").size(), 1u);
-    EXPECT_EQ(member.Choose(TeamGate::Choice::Unready, "me")[0].action(),
-              bbcoop::TeamRequest::UNREADY);
+}
+
+// Kaniel 2026-10-20: no Ready to press. A member's screen says its character is ready by itself
+// (and again for another save, or when the word did not arrive); never out of a team.
+TEST(TeamGate, AMembersScreenIsReadyByItself) {
+    TeamGate gate;
+    bbcoop::LobbyState lobby = InTeam("leader");
+    lobby.mutable_team()->add_members()->set_member("leader");
+    bbcoop::TeamMember& me = *lobby.mutable_team()->add_members();
+    me.set_member("me");
+    gate.TakeLobby(lobby);
+    EXPECT_TRUE(gate.Tick("me", 2, 1000).ready);
+    EXPECT_FALSE(gate.Tick("me", 2, 1100).ready); // asked: the lobby's word comes
+    EXPECT_TRUE(gate.Tick("me", 2, 1000 + TeamGate::ReadyAgainMs).ready);
+    me.set_ready(true);
+    me.set_slot(2);
+    gate.TakeLobby(lobby);
+    EXPECT_FALSE(gate.Tick("me", 2, 60'000).ready);
+    EXPECT_EQ(gate.Tick("me", 2, 60'000).step, TeamGate::Step::Hold); // the leader begins
+    // The same member on another save: that character is the one ready.
+    TeamGate other;
+    other.TakeLobby(lobby);
+    EXPECT_TRUE(other.Tick("me", 1, 1000).ready);
+    // Not in a team, or not in this one (yet): nothing to say.
+    TeamGate alone;
+    alone.TakeLobby({});
+    EXPECT_FALSE(alone.Tick("me", 0, 1000).ready);
+    TeamGate outside;
+    outside.TakeLobby(InTeam("leader"));
+    EXPECT_FALSE(outside.Tick("me", 0, 1000).ready);
 }
 
 TEST(TeamGate, AnEarlierLoadsChoicesDoNotCount) {
@@ -714,8 +742,8 @@ TEST(TeamLoad, SaysItsOwnProgressWhenItChanges) {
     EXPECT_GE(joining->percent(), TeamLoad::LoadedPercent);
 }
 
-// Kaniel 2026-10-14: the hunt begins only once every member is ready (online and Ready); a started
-// team's leader back from a crash goes in at once.
+// The rig's leader begins once every member is ready (online and Ready); a started team's leader
+// back from a crash goes in at once.
 TEST(TeamGate, TheHuntBeginsOnlyWhenEveryoneIsReady) {
     bbcoop::LobbyState lobby = InTeam("a");
     const auto add = [&](const std::string& member, bool ready, bbcoop::LobbyPlayer::State state) {
@@ -728,6 +756,10 @@ TEST(TeamGate, TheHuntBeginsOnlyWhenEveryoneIsReady) {
     add("b", true, bbcoop::LobbyPlayer::TITLE);
     add("c", false, bbcoop::LobbyPlayer::TITLE);
     EXPECT_FALSE(TeamCanBegin(lobby, "a")) << "c is not ready";
+    EXPECT_TRUE(TeamMemberReady(lobby, "b"));
+    EXPECT_FALSE(TeamMemberReady(lobby, "c"));
+    EXPECT_FALSE(TeamMemberReady(lobby, "nobody"));
+    EXPECT_FALSE(TeamMemberReady(bbcoop::LobbyState{}, "b"));
     lobby.mutable_team()->mutable_members(2)->set_ready(true);
     EXPECT_TRUE(TeamCanBegin(lobby, "a")) << "the leader's own Ready comes with its Begin";
     lobby.mutable_team()->mutable_members(2)->set_state(bbcoop::LobbyPlayer::OFFLINE);
