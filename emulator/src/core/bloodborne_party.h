@@ -1572,6 +1572,7 @@ struct CharacterSwitch {
     u32 handle = 0;
     bool disabled = false;
     bool dead = false; // in this member's world (IsDeadInItsWorld): never switched on
+    bool boss = false; // a boss (HandsOutBoss): its fight's own events switch it in every game
     bool operator==(const CharacterSwitch&) const = default;
 };
 // The host's story removes some characters (2004:29 sets the +0x28 byte) before their model loads;
@@ -1580,7 +1581,9 @@ struct CharacterSwitch {
 // it off near it; on where the host has it on near it and alive (its story switched it on: the
 // red mist's enemy in the Forbidden Woods), unless it is dead here; back on far from the host
 // only if this member turned it off (`switched_off`); never one the kill board hid
-// (`kill_hidden`).
+// (`kill_hidden`). A boss is left to this member's own fight (the Witch of Hemwick's vanish
+// switches her in every game: Kaniel's playtest 2026-10-20, she flickered for a guest), apart from
+// switching back on one this member turned off.
 std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown> host,
                                                  std::span<const CharacterSwitch> mine,
                                                  const std::unordered_set<u32>& switched_off,

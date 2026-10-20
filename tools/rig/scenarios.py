@@ -3378,3 +3378,30 @@ SCENARIOS["mist-ambush-guest"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 300,
 }
+
+
+# Kaniel's playtest 2026-10-20: the Witch of Hemwick flickered for krolebord (a guest). Her vanish
+# (m22_00 event 12204812, waiting on her own AI) switches her off and back on in every game, and
+# the guest switched its copies along with the host's board too, out of step with its own fight.
+# The host starts her fight (its area 2202805 is away from the lamp: 12204800 sets 12201802) and
+# keeps hitting her; the guest's own fight alone switches her and her clone.
+HEMWICK_WITCH = "0x10008024"  # entity 2200800
+HEMWICK_WITCH_CLONE = "0x10008025"  # entity 2200801
+SCENARIOS["witch-flicker"] = {
+    "about": "the host fights the Witch of Hemwick; a guest's copies of her and her clone are "
+             "left to its own fight, never switched along with the host's board",
+    "roles": {
+        "host": [*HEMWICK_START, "wait-session 2 300", "sync flicker-ready", "set-flag 12204800 1",
+                 "wait 5", *[step for _ in range(6) for step in (f"hit {HEMWICK_WITCH} 15",
+                                                                 "wait 5")],
+                 "census 60", "sync flicker-checked", "expect-session 2"],
+        "guest": [*HEMWICK_START, "wait-session 2 300", "sync flicker-ready", "wait 30", "wait 30",
+                  "census 60", "sync flicker-checked", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "witch-flicker", "roles": ["host", "guest"]}
+              for name in ("flicker-ready", "flicker-checked")},
+    "forbid": {"host": SESSION_HOLDS,
+               "guest": [*SESSION_HOLDS, r"characters switched like the host has them on map "
+                                         r"0x16000000 \(off, \+on\):[^\n]* \+?0x1000802[45]\b"]},
+    "timeout": 300,
+}
