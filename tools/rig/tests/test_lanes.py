@@ -54,6 +54,46 @@ class LaneClaimTest(unittest.TestCase):
             self.running.discard(200)  # a dead run's lane counts no more
             self.assertTrue(lanes.claim(self.rig, 0, "chstory", 100, self.alive))
 
+    def test_a_run_past_the_cap_waits_its_turn(self):
+        # The mist thread, 2026-10-20: a third run was refused as "blocked by games that would
+        # not stop"; it waits for a lane to come free and says why.
+        lanes.claim(self.rig, 1, "headstones", 100, self.alive)
+        lanes.claim(self.rig, 2, "witch", 200, self.alive)
+        said, naps = [], []
+
+        def nap(seconds):
+            naps.append(seconds)
+            if len(naps) == 2:
+                lanes.release(self.rig, 1, 100)
+
+        with unittest.mock.patch.dict(os.environ, {"BB_RIG_MAX_LANES": ""}):
+            self.assertTrue(lanes.claim_when_free(self.rig, 3, "mist", 300, self.alive,
+                                                  sleep=nap, say=said.append))
+        self.assertEqual(len(naps), 2)
+        self.assertEqual(len(said), 1, "said once")
+        self.assertIn("2 lanes play already (at most 2): lane 1 headstones, lane 2 witch",
+                      said[0])
+        self.assertEqual(lanes.read_claim(self.rig, 3)["owner"], "mist")
+
+    def test_a_held_lane_is_refused_not_waited_for(self):
+        lanes.claim(self.rig, 1, "headstones", 100, self.alive)
+        self.assertFalse(lanes.claim_when_free(self.rig, 1, "mist", 300, self.alive,
+                                               sleep=self.fail, say=lambda text: None))
+
+    def test_several_lanes_wait_for_the_first_free_one(self):
+        lanes.claim(self.rig, 1, "headstones", 100, self.alive)
+        lanes.claim(self.rig, 2, "witch", 200, self.alive)
+        naps = []
+
+        def nap(seconds):
+            naps.append(seconds)
+            lanes.release(self.rig, 2, 200)
+
+        with unittest.mock.patch.dict(os.environ, {"BB_RIG_MAX_LANES": ""}):
+            self.assertEqual(lanes.claim_free_waiting(self.rig, 2, "mist", 300, self.alive,
+                                                      sleep=nap, say=lambda text: None), [0])
+        self.assertEqual(len(naps), 1)
+
     def test_one_lane_one_owner(self):
         self.assertTrue(lanes.claim(self.rig, 1, "phase7", 100, self.alive))
         self.assertFalse(lanes.claim(self.rig, 1, "phase8", 200, self.alive))

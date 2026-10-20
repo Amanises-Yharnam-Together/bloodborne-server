@@ -142,6 +142,55 @@ def claim(rig: pathlib.Path, lane: int, owner: str, pid: int | None = None,
     return False
 
 
+WAIT_SECONDS = 15
+
+
+def cap_reached(rig: pathlib.Path, lane: int, pid: int, alive=pid_alive) -> bool:
+    return held_elsewhere(rig, lane, pid, alive) >= max_lanes()
+
+
+def playing(rig: pathlib.Path, alive=pid_alive) -> str:
+    """"lane 1 headstones, lane 2 witch": the lanes live runs hold."""
+    held = [(lane, read_claim(rig, lane)) for lane in available(rig)]
+    return ", ".join(f"lane {lane} {claim_['owner']}" for lane, claim_ in held
+                     if claim_ is not None and alive(claim_["pid"]))
+
+
+def claim_when_free(rig: pathlib.Path, lane: int, owner: str, pid: int | None = None,
+                    alive=pid_alive, sleep=time.sleep, say=print) -> bool:
+    """Takes the lane, waiting while the most lanes that may play at once are held (a queue,
+    not a refusal); False when the lane itself is held or blocked."""
+    pid = os.getpid() if pid is None else pid
+    said = False
+    while not claim(rig, lane, owner, pid, alive):
+        if not cap_reached(rig, lane, pid, alive):
+            return False  # held by another run, or blocked by its games
+        if not said:
+            say(f"{held_elsewhere(rig, lane, pid, alive)} lanes play already (at most "
+                f"{max_lanes()}): {playing(rig, alive)}. Waiting for one to end...")
+            said = True
+        sleep(WAIT_SECONDS)
+    return True
+
+
+def claim_free_waiting(rig: pathlib.Path, count: int, owner: str, pid: int | None = None,
+                       alive=pid_alive, sleep=time.sleep, say=print) -> list[int]:
+    """claim_free, waiting while the cap leaves no lane to take."""
+    pid = os.getpid() if pid is None else pid
+    said = False
+    while not (taken := claim_free(rig, count, owner, pid, alive)):
+        free = [lane for lane in available(rig) if read_claim(rig, lane) is None or
+                not alive(read_claim(rig, lane)["pid"])]
+        if not free or not cap_reached(rig, free[0], pid, alive):
+            return []  # every lane held or blocked
+        if not said:
+            say(f"{max_lanes()} lanes play already (the most at once): {playing(rig, alive)}. "
+                "Waiting for one to end...")
+            said = True
+        sleep(WAIT_SECONDS)
+    return taken
+
+
 def release(rig: pathlib.Path, lane: int, pid: int | None = None):
     """Frees the lane if this process (`pid`) holds it."""
     pid = os.getpid() if pid is None else pid

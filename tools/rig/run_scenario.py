@@ -1084,7 +1084,7 @@ def boot_check(role: str, seconds: int, cache_twice: str | None = None,
     if player_blocks() if IN_LANES else games_running():
         print("A game is running; not starting another.")
         return 2
-    if IN_LANES and not lanes.claim(RIG, LANE, owner or lanes.default_owner()):
+    if IN_LANES and not lanes.claim_when_free(RIG, LANE, owner or lanes.default_owner()):
         print(f"Lane {LANE} is held or blocked (--lanes-status): not starting the game.")
         return 2
     try:
@@ -1906,7 +1906,7 @@ def act(args: argparse.Namespace) -> int:
         chosen[args.scenarios[0]] = compile_suite(suite, only=args.chapter)
     owner = args.owner or lanes.default_owner()
     if args.lanes:
-        taken = lanes.claim_free(RIG, args.lanes, owner)
+        taken = lanes.claim_free_waiting(RIG, args.lanes, owner)
         if not taken:
             print("Every lane is held or blocked (--lanes-status): not starting the rig.")
             return 2
@@ -1923,7 +1923,7 @@ def act(args: argparse.Namespace) -> int:
         return 0 if all(results.values()) else 1
     # One lane: taken here unless the --lanes run that started this one holds it.
     claimed_by_parent = os.environ.get(LANE_HELD) == str(LANE)
-    if not claimed_by_parent and not lanes.claim(RIG, LANE, owner):
+    if not claimed_by_parent and not lanes.claim_when_free(RIG, LANE, owner):
         held = lanes.read_claim(RIG, LANE)
         print(f"Lane {LANE} is " + (f"held by {held['owner']} since {held['since']}"
                                     if held else "blocked by games that would not stop") +
