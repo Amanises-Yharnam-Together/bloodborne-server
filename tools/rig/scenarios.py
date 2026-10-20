@@ -3326,3 +3326,24 @@ SCENARIOS["dream-headstones-lit"] = {
     "forbid": {role: SESSION_HOLDS + [HEADSTONE_FLIPS] for role in ("host", "guest")},
     "timeout": 300,
 }
+
+
+# Rig 2026-10-21 (mist-ambush-guest's first version): a guest's lamp trip that began as their
+# session formed: the join lands about 16.0 s after both games are in the world, and only one
+# landing between the warp and the old world's teardown (a second or so) broke it; the mist runs'
+# trip 15.8 s in hit it every time. The join landed during its load,
+# and its world teardown, seeing no party trip, ended the session ("left the session outside a
+# trip"). Joining must hold whenever it lands (Kaniel).
+SCENARIOS["join-during-trip"] = {
+    "about": "a guest's lamp trip is under way when the session forms: it arrives in the session",
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "sync trip-arrived", "wait 10",
+                 "expect-session 2"],
+        "guest": [START, "godmode", "wait 15.7", f"travel {WITCH_ABODE_LAMP}",
+                  f"expect-map {HEMWICK}", "wait-session 2 300", "sync trip-arrived", "wait 10",
+                  "expect-session 2"],
+    },
+    "syncs": {"trip-arrived": {"chapter": "join-during-trip", "roles": ["host", "guest"]}},
+    "forbid": {"host": SESSION_HOLDS, "guest": [*SESSION_HOLDS, *CRASH_CLEANUP]},
+    "timeout": 300,
+}
