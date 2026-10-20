@@ -86,6 +86,13 @@ SHOTS = [
     ("chalice-layers", "game-chalice-4-teammate-layers.png", GAME, 1440),
     ("chalice-dungeon", "game-chalice-6-dungeon-both.png", GAME, 1440),
     ("chalice-arrival", "game-chalice-7-dungeon-arrival.png", GAME, 1440),
+    # a team of three in a chalice dungeon (rig chalice-team3; the PNGs are kept out of the repository)
+    ("chalice3-watch", "game-guest2-guest2-watching.png", GAME, 1440),
+    ("chalice3-ritual-done", "game-host-host-ritual-done.png", GAME, 1440),
+    ("chalice3-own-altar", "game-guest-guest-altar-layers.png", GAME, 1440),
+    ("chalice3-first-in", "game-host-host-dungeon-arrived.png", GAME, 1440),
+    ("chalice3-team", "game-guest2-guest2-dungeon-team.png", GAME, 1440),
+    ("chalice3-back", "game-host-host-all-back.png", GAME, 1440),
     # the Insert menu's tabs
     # visible games: the HUD
     ("party-alive", "hud-party-alive.png", GAME, 1440),

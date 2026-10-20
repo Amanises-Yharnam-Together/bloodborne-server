@@ -966,6 +966,79 @@ const play: DocPage = {
       ],
     },
     {
+      id: "chalice-team",
+      title: "A chalice dungeon with the whole team",
+      icon: "skull",
+      blocks: [
+        {
+          type: "p",
+          text: "The whole team can gather at the altar while one hunter performs the ritual. Nobody is taken along: when that hunter picks a layer, they alone step into the labyrinth, and the rest stay in the Hunter's Dream until they are ready.",
+        },
+        {
+          type: "ol",
+          items: [
+            "One hunter performs the **Chalice Ritual**; the others can watch.",
+            "Each hunter picks the layer at their own **Ritual Altar**, one after another, in any order.",
+            "Everyone arrives at the dungeon's entrance and plays it as a team: enemies, kills and downs are shared as in Yharnam.",
+            "Each of you goes back to the **Hunter's Dream** whenever you like; the others play on.",
+          ],
+        },
+        {
+          type: "gallery",
+          items: [
+            {
+              label: "Watching",
+              src: S("chalice3-watch"),
+              width: 1440,
+              height: 810,
+              alt: "In the Hunter's Dream, Player 3 and Player 2 stand by while Player 1 stands at the First Ritual Altar.",
+              caption: "The team looks on while the host performs the ritual.",
+            },
+            {
+              label: "Ritual done",
+              src: S("chalice3-ritual-done"),
+              width: 1440,
+              height: 810,
+              alt: "The message: The ritual is finished, and a chalice rests upon the altar. You may now explore the dungeon. Two teammates stand at either side.",
+              caption: "The chalice rests on every teammate's altar.",
+            },
+            {
+              label: "First in",
+              src: S("chalice3-first-in"),
+              width: 1440,
+              height: 810,
+              alt: "The host alone at the entrance of the Pthumerian Labyrinth, with Player 2 and Player 3 still listed on the left.",
+              caption: "The host goes in first; nobody else is pulled along.",
+            },
+            {
+              label: "Own altar",
+              src: S("chalice3-own-altar"),
+              width: 1440,
+              height: 810,
+              alt: "Player 2 walks up to the First Ritual Altar in the Dream while Player 3 waits beside it.",
+              caption: "The others follow from their own altar when they are ready.",
+            },
+            {
+              label: "Together",
+              src: S("chalice3-team"),
+              width: 1440,
+              height: 810,
+              alt: "Player 1, Player 2 and Player 3 side by side in the torchlit hall of a Pthumerian Labyrinth.",
+              caption: "Three hunters in the same labyrinth.",
+            },
+            {
+              label: "Back",
+              src: S("chalice3-back"),
+              width: 1440,
+              height: 810,
+              alt: "Back in the Hunter's Dream, the three hunters stand on the path below the Doll.",
+              caption: "Back in the Dream, one by one, in any order.",
+            },
+          ],
+        },
+      ],
+    },
+    {
       id: "map",
       title: "Map and compass",
       blocks: [
