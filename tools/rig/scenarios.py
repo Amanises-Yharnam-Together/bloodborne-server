@@ -975,8 +975,9 @@ SCENARIOS = {
     },
     "boss-guest-runs": {
         "about": "Kaniel 2026-10-16: a guest alone at a boss-sized enemy (max HP 1500 or more; "
-                 "the big one by the first lamp) while the host stays back: the guest's game runs "
-                 "it (no copy following the host's positions), in both games' eyes",
+                 "the big one by the first lamp) while the host stays back: it never jumps in the "
+                 "guest's eyes. Since Kaniel's playtest 2026-10-19 (#285) only the game's bosses "
+                 "(npcType 1) are handed out, so this giant stays with the map's own runner",
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait 90", "snapshot",
                      "expect-session 2"],
@@ -984,9 +985,9 @@ SCENARIOS = {
                       f"approach {BIG_BY_THE_LAMP} 4 0", "wait 10", f"hurt {BIG_BY_THE_LAMP} 300",
                       "wait 50", "snapshot", "expect-session 2"],
         },
-        "expect": {"guest": [r"boss 0x10014001 is run by 7269675f6775657374"]},
-        "forbid": {"host": SESSION_HOLDS,
-                   "guest": SESSION_HOLDS + [r"enemy 10014001 jumped"]},
+        "forbid": {"host": SESSION_HOLDS + [r"boss 0x10014001 is run by 7269675f"],
+                   "guest": SESSION_HOLDS + [r"enemy 10014001 jumped",
+                                             r"boss 0x10014001 is run by 7269675f"]},
         "timeout": 600,
     },
     "save-backups": {
@@ -2943,4 +2944,159 @@ SCENARIOS["chalice-root-team"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "allow": CRASH_CLEANUP,
     "timeout": 1200,
+}
+
+# The 2026-10-19 playtest's cases (Kaniel 2026-10-19: a short scenario for each case that failed).
+SAW_HUNTER_BADGE = "goods:4103"  # krolebord's badge (#267)
+SCENARIOS["key-items-kept"] = {
+    "about": "#267: a guest's own key item (a hunter badge) stays in its inventory after the "
+             "join, while it is the host's phantom, and after a lamp trip and back",
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "wait 90", "expect-session 2"],
+        "guest": [START, "godmode", f"trade-stock {SAW_HUNTER_BADGE} 1",
+                  f"expect-held {SAW_HUNTER_BADGE} 1", "wait-session 2 300", "wait 15",
+                  f"expect-held {SAW_HUNTER_BADGE} 1 20", f"travel {HUNTERS_DREAM}", "wait 15",
+                  f"expect-held {SAW_HUNTER_BADGE} 1 20", f"travel {CENTRAL_YHARNAM_LAMP}",
+                  "wait 15", f"expect-held {SAW_HUNTER_BADGE} 1 20", "expect-session 2"],
+    },
+    "forbid": {"host": SESSION_HOLDS,
+               "guest": SESSION_HOLDS + [r"held-item flag \d+ cleared: this player has no "
+                                         r"goods 4103"]},
+    "timeout": 600,
+}
+
+# A world flag in Cathedral Ward's block (not the block of the map anyone stands on): the team's
+# progress there (krolebord's Ward gate, #266) and NPC steps (#269) live in blocks like it.
+WARD_BLOCK_FLAG = 12400999
+SCENARIOS["team-world-other-block"] = {
+    "about": "#266: the team's world reaches a joining guest in every block, not only the map it "
+             "joins on: a Cathedral Ward flag the host's team world has is on in the guest's game "
+             "after its join's reload, in the next session",
+    "roles": {
+        "host": [
+            ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+             "wait-session 2 300", f"set-flag {WARD_BLOCK_FLAG} 1",
+             f"expect-flag {WARD_BLOCK_FLAG} 1", "wait 15", "done"],
+            ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+             "wait-session 2 300", f"expect-flag {WARD_BLOCK_FLAG} 1", "wait 60", "done"],
+        ],
+        "guest": [
+            ["team-accept", "team-ready", START, "wait-session 2 300", "wait 45", "done"],
+            ["team-accept", "team-ready", START, "wait-session 2 300", "wait 10",
+             f"expect-flag {WARD_BLOCK_FLAG} 1", "wait 20", f"expect-flag {WARD_BLOCK_FLAG} 1",
+             "done"],
+        ],
+    },
+    "allow": ["left the session outside a trip"],
+    "timeout": 900,
+}
+
+SCENARIOS["npc-progress-after-trip"] = {
+    "about": "#269: the team's progress the host made while the guest was in the Dream reaches "
+             "the guest when it comes back, in every block (a Cathedral Ward flag, the guest back "
+             "at Central Yharnam's lamp)",
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "sync npt-away",
+                 f"set-flag {WARD_BLOCK_FLAG} 1", f"expect-flag {WARD_BLOCK_FLAG} 1", "wait 5",
+                 "sync npt-set", "sync npt-back", "wait 10", "expect-session 2"],
+        "guest": [START, "godmode", "wait-session 2 300", "wait 5", f"travel {HUNTERS_DREAM}",
+                  "wait 10", "sync npt-away", "sync npt-set", f"expect-flag {WARD_BLOCK_FLAG} 0",
+                  f"travel {CENTRAL_YHARNAM_LAMP}", "wait 20",
+                  f"expect-flag {WARD_BLOCK_FLAG} 1", "sync npt-back", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "npc-progress-after-trip", "roles": ["host", "guest"]}
+              for name in ("npt-away", "npt-set", "npt-back")},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 480,
+}
+
+SCENARIOS["wipe-one-map"] = {
+    "about": "#270: host and guest die on Central Yharnam while guest2 stands in the Dream: that "
+             "map starts over for both (the hurt enemy whole again), the session holds",
+    "settings": PARTY_DEATH,
+    "roles": {
+        "host": [START, "godmode", "wait-session 3 480", "sync wom-away", f"hit {ENEMY} 30",
+                 "wait 3", "census 40", "sync wom-hurt", "sync wom-guest-down", "godmode off",
+                 f"teleport {WIPE3_SPOT['host']}", "wait 2", *LETHAL_FALL, "wait-vital dead 30",
+                 "wait-vital up 150", "wait 20", "census 60", f"expect-hp {ENEMY} == 484",
+                 "sync wom-checked", "expect-session 3"],
+        "guest": [START, "godmode", "wait-session 3 480", "sync wom-away", "sync wom-hurt",
+                  "wait 3", "census 40", "godmode off", f"teleport {WIPE3_SPOT['guest']}",
+                  "wait 2", *LETHAL_FALL, "wait-vital down 30", "sync wom-guest-down",
+                  "wait-vital dead 90", "wait-vital up 150", "wait 20", "census 60",
+                  f"expect-hp {ENEMY} == 484", "sync wom-checked", "expect-session 3"],
+        "guest2": [START, "godmode", "wait-session 3 480", f"travel {HUNTERS_DREAM}", "wait 10",
+                   "sync wom-away", "sync wom-hurt", "sync wom-guest-down", "sync wom-checked",
+                   "expect-session 3"],
+    },
+    "syncs": {name: {"chapter": "wipe-one-map", "roles": ["host", "guest", "guest2"]}
+              for name in ("wom-away", "wom-hurt", "wom-guest-down", "wom-checked")},
+    "forbid": {role: SESSION_HOLDS for role in ("host", "guest", "guest2")},
+    "timeout": 900,
+}
+
+SCENARIOS["boss-hp-after-wipe"] = {
+    "about": "#272: the host hurts the boss-sized enemy by the first lamp, then the party wipes: "
+             "it is back at full HP in both games",
+    "settings": PARTY_DEATH,
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", f"approach {BIG_BY_THE_LAMP} 4 0",
+                 "wait 3", f"hurt {BIG_BY_THE_LAMP} 900", "wait 5", "census 40", "sync bw-hurt",
+                 "sync bw-guest-down", "godmode off", f"teleport {WIPE3_SPOT['host']}", "wait 2",
+                 *LETHAL_FALL, "wait-vital dead 30", "wait-vital up 150", "wait-members 2 300",
+                 "wait 20", "census 80", f"expect-hp {BIG_BY_THE_LAMP} == 1917",
+                 "sync bw-checked", "expect-session 2"],
+        "guest": [START, "godmode", "wait-session 2 300", "sync bw-hurt", "wait 3", "census 60",
+                  "godmode off", f"teleport {WIPE3_SPOT['guest']}", "wait 2", *LETHAL_FALL,
+                  "wait-vital down 30", "sync bw-guest-down", "wait-vital dead 90",
+                  "wait-vital up 150", "wait-members 2 300", "wait 20", "census 80",
+                  f"expect-hp {BIG_BY_THE_LAMP} == 1917", "sync bw-checked", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "boss-hp-after-wipe", "roles": ["host", "guest"]}
+              for name in ("bw-hurt", "bw-guest-down", "bw-checked")},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 900,
+}
+
+SCENARIOS["kill-reaches-arrival"] = {
+    "about": "#278: the guest lands the killing hit on an enemy the host's game runs; guest2, in "
+             "the Dream then, comes to Central Yharnam later and has it dead too",
+    "roles": {
+        "host": [START, "godmode", "wait-session 3 480", "sync kra-away", "sync kra-killed",
+                 "wait 60", "expect-session 3"],
+        "guest": [START, "godmode", "wait-session 3 480", "sync kra-away", *attack(ENEMY),
+                  "wait 5", "census 40", "sync kra-killed", "wait 55", "expect-session 3"],
+        "guest2": [START, "godmode", "wait-session 3 480", f"travel {HUNTERS_DREAM}", "wait 10",
+                   "sync kra-away", "sync kra-killed", "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}",
+                   "wait 25", "census 60", "expect-session 3"],
+    },
+    "syncs": {name: {"chapter": "kill-reaches-arrival", "roles": ["host", "guest", "guest2"]}
+              for name in ("kra-away", "kra-killed")},
+    "expect": {"guest2": [r"hid \d+ enemies a member killed on map 0x18010000"]},
+    "forbid": {role: SESSION_HOLDS for role in ("host", "guest", "guest2")},
+    "timeout": 600,
+}
+
+# #286 (Kaniel 2026-10-20: NPCs showed up for guests on maps without the host): a story step (a
+# quest flag outside the maps' and the items' ranges, no row of its own) the host sets reaches a
+# team guest standing on a map the host never visits, while it plays there.
+STORY_FLAG = 1399
+SCENARIOS["story-hostless"] = {
+    "about": "#286: the host sets a story step while the team's guest stands in Cathedral Ward, "
+             "a map the host never visits: the guest's game follows it there, without a load",
+    "roles": {
+        "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                 "godmode", "wait-session 2 300", "sync sh-away", f"set-flag {STORY_FLAG} 1",
+                 f"expect-flag {STORY_FLAG} 1", "sync sh-set", "sync sh-seen",
+                 "expect-session 2"],
+        "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300", "wait 5",
+                  f"travel {CATHEDRAL_WARD_LAMP}", "wait 10", f"expect-flag {STORY_FLAG} 0",
+                  "sync sh-away", "sync sh-set", f"wait-flag {STORY_FLAG} 1 60", "sync sh-seen",
+                  f"expect-map {CATHEDRAL_WARD}", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "story-hostless", "roles": ["host", "guest"]}
+              for name in ("sh-away", "sh-set", "sh-seen")},
+    "expect": {"guest": [r"the host's story steps followed here"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 600,
 }

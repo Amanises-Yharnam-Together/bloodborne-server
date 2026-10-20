@@ -550,7 +550,8 @@ SUITES = {
                     {"host": ["sync badge-kept"],
                      "guest": [f"travel {HUNTERS_DREAM}", f"wait-map {DREAM} 90", "wait 10",
                                f"expect-held {SWORD_BADGE} 1", "sync badge-kept"]},
-                    expect={"guest": [r"gave back 1 x goods 4114: gained as a phantom"]},
+                    # Since #267 a phantom's list holds the guest's own key items, so the badge
+                    # stays without the give-back (rig 2026-10-20: held, no "gave back" line).
                     forbid=holds(PARTY2)),
         ],
     },
@@ -1077,19 +1078,21 @@ SUITES = {
                     expect={"guest": [r"load view is gone"]},
                     forbid={"guest": [LOAD_VIEW_STAYS]},
                     allow=CRASH_CLEANUP),
+            # Since #225/#228 a guest's team load goes beside the host (Kaniel 2026-10-20:
+            # change the tests to that).
             chapter("crash-apart", "the guest's game dies while it is apart (in the Ward); the "
-                                   "host stays in its world, the guest comes back in the Ward and "
-                                   "they join again",
+                                   "host stays in its world, the guest comes back beside the host "
+                                   "and they join again",
                     {"guest": [f"travel {CATHEDRAL_WARD_LAMP}", "wait 12", RESTART, "godmode",
-                               f"wait-map {CATHEDRAL_WARD} 180", "wait-session 2 420", "wait 5",
-                               "expect-session 2", f"expect-map {CATHEDRAL_WARD}",
+                               f"wait-map {CENTRAL_YHARNAM} 180", "wait-session 2 420", "wait 5",
+                               "expect-session 2", f"expect-map {CENTRAL_YHARNAM}",
                                "sync apart-back"],
                      "host": ["wait-solo 180", "wait 5", f"expect-map {CENTRAL_YHARNAM}",
                               "sync apart-back", "expect-session 2"]},
                     allow=CRASH_CLEANUP),
-            chapter("kill-apart-pays", "back in the session but apart (in the Ward), the guest's "
-                                       "kill there pays the host",
-                    {"guest": [*attack(WARD_ENEMY), "wait 15", "sync kap-done"],
+            chapter("kill-apart-pays", "back in the session, the guest goes apart (to the Ward): "
+                                       "its kill there pays the host",
+                    {"guest": [f"travel {CATHEDRAL_WARD_LAMP}", "wait 12", *attack(WARD_ENEMY), "wait 15", "sync kap-done"],
                      "host": ["sync kap-done", "wait 5"]},
                     expect={"guest": [rf"(?:kill board gets 1 kills|{WARD_ENEMY} died in "
                                       r"attack cycle)"],
@@ -1196,7 +1199,7 @@ SUITES = {
                     # 2026-10-13): the session is the check.
                     allow=CRASH_CLEANUP),
             chapter("join-apart", "joining across maps: the host in the Ward, the guest in "
-                                  "Central Yharnam; the guest joins where it is (no kick)",
+                                  "Central Yharnam; the guest's join takes it beside the host",
                     {"host": ["sync ja-restarted", "sync ja-joined", "wait 20",
                               "expect-session 2", f"expect-map {CATHEDRAL_WARD}"],
                      # Phase 7: a restarted guest comes back where it last stood in the team's
@@ -1204,7 +1207,7 @@ SUITES = {
                      "guest": [f"travel {CENTRAL_YHARNAM_LAMP}", "wait 12", RESTART, START,
                                "godmode", "sync ja-restarted",
                                "wait-session 2 420", "sync ja-joined", "wait 20",
-                               "expect-session 2", f"expect-map {CENTRAL_YHARNAM}"]},
+                               "expect-session 2", f"expect-map {CATHEDRAL_WARD}"]},
                     allow=CRASH_CLEANUP),
             chapter("restart-keeps", "the guest's game starts again in the session: it is the "
                                      "same character, so its kept pickups stay and nothing is "

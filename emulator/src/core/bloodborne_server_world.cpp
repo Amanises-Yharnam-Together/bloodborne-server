@@ -1926,6 +1926,14 @@ void ApplyTeamWorldOnLoad(bool trip) {
             LOG_INFO(Debug, "Co-op team world: the team has no world yet: {}",
                      team_host ? "this save's makes it" : "the host's save makes it");
         }
+        // The host whose save makes it has the team's world already: its later loads never take
+        // the server's copy back over it, a report up to 10 s old (rig 2026-10-20, boss-refight:
+        // the host's next load put back Father Gascoigne's kill it had cleared after its report).
+        if (team_host) {
+            for (const FlagBlockBits& block : store->blocks) {
+                team_world_blocks.insert(block.id);
+            }
+        }
         team_world_taken = true;
         return;
     }

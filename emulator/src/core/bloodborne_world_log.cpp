@@ -516,6 +516,13 @@ std::unordered_set<u32> RunServerWorld(const WorldLogKills& mine, s64 now_ms) {
     for (const WorldLogEntry& entry : world.applied) {
         if (entry.kind == WorldLogKind::Reset && entry.map != 0) {
             log_map_resets.push_back(entry.map);
+            // A map that starts over while others stand elsewhere (ResetMap): a member dead on
+            // it, its own wipe still to run, holds that map's HP from before it as at a party
+            // wipe (rig 2026-10-20, wipe-one-map: the host's game sent the hurt enemy's 482 HP
+            // into the fresh log, and every game took it back after the reload).
+            if (PlayingMap() == entry.map) {
+                wipe_hold.HostWiped(now_ms);
+            }
         }
     }
     ApplyFlagEntries(world.applied, now_ms);

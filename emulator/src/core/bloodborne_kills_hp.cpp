@@ -995,7 +995,9 @@ void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) 
     }
     static u32 last = 0;
     static u32 logged = 0;
-    if (kept != last && logged < 60) {
+    // 400: it changes often, and 60 ran out before a long suite did
+    // (rig 2026-10-20, together's apart-fight found no line).
+    if (kept != last && logged < 400) {
         last = kept;
         ++logged;
         LOG_INFO(Debug, "Bloodborne enemy owner: runs {} awake enemies the game let go (t={:.1f})",

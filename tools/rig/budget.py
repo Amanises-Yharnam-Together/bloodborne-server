@@ -33,6 +33,13 @@ SUITE_BOOT_S = 150
 # runs measured near or over 300 s), each kept for the long tier until it becomes a suite
 # chapter. Most are older versions of a suite chapter (named after the arrow).
 LONG = {
+    "story-hostless": "the 10-20 case #286: a team join and a trip",
+    "key-items-kept": "the 10-19 playtest case #267: a join, two trips",
+    "team-world-other-block": "the 10-19 playtest case #266: two team sessions",
+    "npc-progress-after-trip": "the 10-19 playtest case #269: a join, two trips",
+    "wipe-one-map": "the 10-19 playtest case #270: three games, a death and a wake",
+    "boss-hp-after-wipe": "the 10-19 playtest case #272: a wipe and a wake",
+    "kill-reaches-arrival": "the 10-19 playtest case #278: three games, two trips",
     "soak": "a long session by design",
     "chalice-team": "two rituals and two dungeon loads, measured 313 s",
     "chalice-altar-host": "a ritual and two dungeon loads, measured 315 s",
