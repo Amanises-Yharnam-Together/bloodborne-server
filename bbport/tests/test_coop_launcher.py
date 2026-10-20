@@ -128,6 +128,23 @@ class FindGameTests(unittest.TestCase):
             self.assertEqual(found, game)
             self.assertIsNone(coop.search_game(install, drives=[root / 'empty'], homes=[]))
 
+    def test_an_install_in_games_finds_the_game_beside_it_but_never_walks_the_drive(self):
+        # the setup's default folder is D:\\Games\\Yharnam Together (Kaniel 2026-10-20): its folder's games
+        # are looked at first, the drive root is left to the timed search
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            install = root / 'Games' / 'Yharnam Together'
+            install.mkdir(parents=True)
+            game = make_game(root / 'Games' / 'CUSA03173')
+            self.assertEqual(coop.search_game(install, drives=[], homes=[]), game)
+        from unittest import mock
+        walked = []
+        with mock.patch.object(coop, 'find_game_folder', lambda f, depth=5: walked.append(Path(f))), \
+                mock.patch.object(Path, 'is_dir', lambda self: True):
+            coop.search_game(Path('/Games/Yharnam Together'), drives=[], homes=[], budget_s=0)
+        self.assertIn(Path('/Games'), walked)
+        self.assertNotIn(Path('/'), walked)
+
     def test_another_game_is_not_taken_for_bloodborne(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -358,6 +375,54 @@ class UpdateTests(unittest.TestCase):
                     coop.download_update(release, tmp)
             self.assertFalse((Path(tmp) / release['name']).exists(), 'a file that does not match is gone')
 
+    def test_patch_notes_are_every_release_newest_first(self):
+        # Kaniel 2026-10-20: Home lists every release's notes from the latest one back to the first
+        def notes(tag, body, draft=False, published='2026-10-20T14:06:33Z'):
+            return {'tag_name': tag, 'name': f'Co-op {tag}', 'draft': draft, 'published_at': published,
+                    'body': body}
+        listed = [
+            notes('v0.3.9-local', 'Intro.\n\n**No game files are included.**\n\n1. Download `x-setup.exe`.\n'
+                  '**What\'s new since v0.3.8-local**\n- Map screen: **your** position.\n- `R3` switches floors.\n\n'
+                  'Everyone in a team must use this same release.', published='2026-10-18T11:25:01Z'),
+            notes('v1.0.0', "**What's new since v0.3.18-local**\r\n- Chalice dungeons together.\r\n- Fewer crashes.\r\n\r\n"
+                  'Known: a Root chalice needs a teammate in the Dream.\r\n\r\nBuilt from deaad75.'),
+            notes('v0.1.1', '### Getting started\n- run SETUP\n### Fixed in v0.1.1\n- **Portraits show.** Replace v0.1.0.\n'
+                  '### What\'s in this release\n- **Party death**:\n  - a sub point\n### Known gaps\n- Joining stalls.',
+                  published='2026-10-13T20:11:47Z'),
+            notes('v0.1.2', '\n\nEveryone in a party must use this same release.\n', published='2026-10-13T21:32:57Z'),
+            notes('v2.0.0', '- not out yet', draft=True),
+            None, 'junk', {'tag_name': 'nightly'},
+        ]
+        got = coop.release_notes(listed)
+        self.assertEqual([r['version'] for r in got], ['1.0.0', '0.3.9-local', '0.1.1'],
+                         'newest first; drafts, junk and releases without notes left out')
+        self.assertEqual(got[0]['notes'], ['Chalice dungeons together.', 'Fewer crashes.'])
+        self.assertEqual(got[0]['known'], ['A Root chalice needs a teammate in the Dream.'])
+        self.assertEqual(got[0]['date'], '20 Oct 2026')
+        self.assertEqual(got[1]['notes'], ['Map screen: your position.', 'R3 switches floors.'],
+                         'markdown marks are gone, and the install steps are not notes')
+        self.assertEqual(got[2]['notes'], ['Portraits show. Replace v0.1.0.', 'Party death:'],
+                         'the getting started and known gaps lists are not news; sub points stay out')
+        self.assertEqual(got[2]['known'], ['Joining stalls.'])
+        self.assertEqual(coop.release_notes({'message': 'rate limited'}), [])
+
+    def test_every_release_is_listed_for_the_notes(self):
+        self.assertIn('per_page=100', coop.RELEASES_API)
+
+    def test_the_update_and_patch_notes_texts_are_translated_everywhere(self):
+        import bbport_lang
+        texts = ['Updating to v{}', 'Patch notes', "What's new in v{}", 'Known issue: {}', 'Earlier releases',
+                 'Checking for updates…', 'You have the latest version.',
+                 "Downloading the update. Don't close the launcher or start the game: the installer opens next, "
+                 "then the launcher opens again by itself.",
+                 "The installer window shows the progress. Don't close it or start the game: the launcher "
+                 "opens again when it is done."]
+        for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
+            table = bbport_lang.table(language)
+            for text in texts:
+                self.assertTrue(table.get(text), f'{language}: {text}')
+                self.assertEqual(table[text].count('{}'), text.count('{}'), f'{language}: {text}')
+
     def test_the_setup_updates_this_install_silently(self):
         command = coop.setup_command(Path('C:/Temp/Setup.exe'), Path('C:/Games/Co-op'))
         self.assertIn('/CLOSEAPPLICATIONS', command)
@@ -370,6 +435,12 @@ class UpdateTests(unittest.TestCase):
         self.assertIn('/SILENT', command)
         self.assertNotIn('/VERYSILENT', command)
         self.assertIn('/NOCANCEL', command)
+        # LauncherBar dresses the uninstall's window too, where WizardSilent may not be called (the
+        # uninstaller would not start): only InitializeWizard reads it
+        code = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
+        bar = code[code.index('procedure LauncherBar'):code.index('procedure StopBar')]
+        self.assertNotIn('WizardSilent', bar)
+        self.assertIn('NoClose := WizardSilent;', code[code.index('procedure InitializeWizard;'):])
         iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
         self.assertRegex(iss, r"(?m)^UpdateNote=.*Don't close this window")
         self.assertIn("CustomMessage('UpdateNote')", iss)
@@ -386,8 +457,9 @@ class UpdateTests(unittest.TestCase):
         iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
         self.assertRegex(iss, r'(?m)^DefaultDirName=\{code:DefaultInstallDir\}$')
         self.assertNotIn('DefaultDirName={localappdata}', iss)
-        self.assertIn("'D:\\Games\\{#AppName}'", iss)
-        self.assertIn("ExpandConstant('{sd}') + '\\Games\\{#AppName}'", iss)
+        self.assertIn("'D:\\Games\\{#ShortName}'", iss)
+        self.assertIn("ExpandConstant('{sd}') + '\\Games\\{#ShortName}'", iss)
+        self.assertIn('#define ShortName "Yharnam Together"', iss)
         self.assertRegex(iss, r'(?m)^PrivilegesRequired=lowest$')  # no Program Files: updates run without admin
 
     def test_an_update_leaves_the_desktop_shortcut_where_it_is(self):
@@ -398,6 +470,13 @@ class UpdateTests(unittest.TestCase):
         self.assertIn('Tasks: desktopicon', desktop[0])
         self.assertIn('Check: NoDesktopShortcut', desktop[0])
         self.assertIn('function NoDesktopShortcut: Boolean;', iss)
+
+    def test_the_setup_has_the_new_name(self):
+        # Kaniel 2026-10-20: Yharnam Together in the launcher and the setup; the old Start menu entries go
+        iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8-sig')
+        self.assertIn('#define AppName "Yharnam Together: Bloodborne Seamless Co-op"', iss)
+        self.assertIn('Type: files; Name: "{autoprograms}\\Bloodborne Seamless Co-op.lnk"', iss)
+        self.assertNotRegex(iss, r'\{(autoprograms|autodesktop)\}\\\{#AppName\}', 'no colon in a shortcut name')
 
     def test_the_setup_starts_the_launcher_again_after_a_silent_update(self):
         iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8')

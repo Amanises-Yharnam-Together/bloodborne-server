@@ -226,7 +226,7 @@ if (Test-Path (Join-Path $gameEvents "common.emevd.dcx")) {
 
 $built = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'")
 Write-Utf8 (Join-Path $release "VERSION.txt") (@(
-    "Bloodborne Seamless Co-op $tag (Windows, Bloodborne PC native port)",
+    "Yharnam Together: Bloodborne Seamless Co-op $tag (Windows, Bloodborne PC native port)",
     "Commit: $commit$(if ($dirty) { ' + uncommitted changes (test build)' })",
     "Built: $built",
     "Game: Bloodborne 1.09 (tested with CUSA03173)",
@@ -294,7 +294,7 @@ Seamless co-op for Bloodborne on Bloodborne PC (the native Windows port).
 **No game files are included.** You need your own Bloodborne 1.09 (a dumped game folder with the 1.09 update, or the PS4 .pkg files, which the included launcher installs).
 
 1. Download ``$setupName`` and run it (it installs for your Windows user; keep "Create a desktop shortcut" ticked).
-2. Open **Bloodborne Seamless Co-op**. It finds your game; fill in the Co-op card: host (runs the co-op server) or player, the host's IP, an account.
+2. Open **Yharnam Together**. It finds your game; fill in the Co-op card: host (runs the co-op server) or player, the host's IP, an account.
 3. Press **PLAY**. The host's co-op server starts by itself; Windows asks once to let co-op through its firewall. Everyone must reach the host's UDP port 31314 (and TCP 31313, 31315, 20443).
 4. Continue, Load Game or New Game opens the team screen: make a team of up to four, Ready, and the leader begins the hunt.
 
@@ -305,7 +305,7 @@ Built from $commit. SHA-256 of the setup: ``$sha``
 if (Get-Command gh -ErrorAction SilentlyContinue) {
     $notesFile = Join-Path $Out "notes.md"
     Write-Utf8 $notesFile $notes
-    $flags = @("--draft", "--target", $commit, "--title", "Bloodborne Seamless Co-op $tag", "--notes-file", $notesFile)
+    $flags = @("--draft", "--target", $commit, "--title", "Yharnam Together: Bloodborne Seamless Co-op $tag", "--notes-file", $notesFile)
     if ($Prerelease) { $flags += "--prerelease" }
     gh release create $tag $setup "$setup.sha256" --repo $Repo @flags
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
@@ -317,7 +317,7 @@ if (Get-Command gh -ErrorAction SilentlyContinue) {
     }
     if (-not $token) { throw "No gh, GITHUB_TOKEN or git credential for github.com: cannot publish" }
     $headers = @{ Authorization = "Bearer $token"; Accept = "application/vnd.github+json"; "User-Agent" = "make-release" }
-    $body = @{ tag_name = $tag; target_commitish = $commit; name = "Bloodborne Seamless Co-op $tag"; body = $notes
+    $body = @{ tag_name = $tag; target_commitish = $commit; name = "Yharnam Together: Bloodborne Seamless Co-op $tag"; body = $notes
                draft = $true; prerelease = [bool]$Prerelease } | ConvertTo-Json
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $created = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Repo/releases" -Headers $headers -Body $body -ContentType "application/json"

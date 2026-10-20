@@ -13,7 +13,9 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
-#define AppName "Bloodborne Seamless Co-op"
+; The name (Kaniel 2026-10-20), and its short form for the folder and the shortcuts (no colon in a path).
+#define AppName "Yharnam Together: Bloodborne Seamless Co-op"
+#define ShortName "Yharnam Together"
 
 [Setup]
 AppId={{6E0B4C2A-3F7D-4B8E-9A51-2C8D7E4F1B63}
@@ -23,11 +25,11 @@ AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppName}
 AppPublisherURL=https://github.com/lKaniel/bloodborne-server
 AppSupportURL=https://github.com/lKaniel/bloodborne-server/issues
-; D:\Games\<name>, or C:\Games\<name> without a fixed D: drive (Kaniel 2026-10-20). Not Program Files:
+; D:\Games\Yharnam Together, or C:\Games\Yharnam Together without a fixed D: drive (Kaniel 2026-10-20). Not Program Files:
 ; writing there needs an administrator, and the launcher's own update runs the setup without one. An
 ; install that exists keeps its folder (UsePreviousAppDir), however old.
 DefaultDirName={code:DefaultInstallDir}
-DefaultGroupName={#AppName}
+DefaultGroupName={#ShortName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -150,12 +152,17 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; an update leaves the settings, key and pad remaps (bbport.ini), mods and patch choices as they are.
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "bbport.ini,mods.json,patches.json"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; The Start menu entries of the old name (before Yharnam Together); a desktop shortcut stays where it is.
+Type: files; Name: "{autoprograms}\Bloodborne Seamless Co-op.lnk"
+Type: files; Name: "{autoprograms}\Bloodborne Seamless Co-op - read me.lnk"
+
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\BLauncher.exe"; WorkingDir: "{app}"
-Name: "{autoprograms}\{#AppName} - read me"; Filename: "{app}\READ ME FIRST.txt"
+Name: "{autoprograms}\{#ShortName}"; Filename: "{app}\BLauncher.exe"; WorkingDir: "{app}"
+Name: "{autoprograms}\{#ShortName} - read me"; Filename: "{app}\READ ME FIRST.txt"
 ; The desktop shortcut only when none leads to this install: a new one would land at the end of the
 ; desktop and lose the spot the player dragged it to (Kaniel 2026-10-20), and a renamed one counts too.
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\BLauncher.exe"; WorkingDir: "{app}"; Tasks: desktopicon; Check: NoDesktopShortcut
+Name: "{autodesktop}\{#ShortName}"; Filename: "{app}\BLauncher.exe"; WorkingDir: "{app}"; Tasks: desktopicon; Check: NoDesktopShortcut
 
 [Run]
 Filename: "{app}\BLauncher.exe"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
@@ -168,19 +175,19 @@ Filename: "{app}\BLauncher.exe"; Parameters: "--coop-uninstall"; WorkingDir: "{a
 [CustomMessages]
 ; The note under the progress bar of the launcher's update (a silent setup shows that page alone):
 ; the launcher closed for it and opens again afterwards. In the launcher's languages; English for the rest.
-UpdateNote=Updating {#AppName}. Don't close this window or start the game: the launcher opens again when it is done.
-russian.UpdateNote=Обновление {#AppName}. Не закрывайте это окно и не запускайте игру: лаунчер откроется снова, когда оно закончится.
-arabic.UpdateNote=جارٍ تحديث {#AppName}. لا تغلق هذه النافذة ولا تبدأ اللعبة: سيفتح المشغّل من جديد عند الانتهاء.
-spanish.UpdateNote=Actualizando {#AppName}. No cierres esta ventana ni inicies el juego: el lanzador se abre de nuevo al terminar.
-brazilianportuguese.UpdateNote=Atualizando o {#AppName}. Não feche esta janela nem inicie o jogo: o launcher abre de novo quando terminar.
-french.UpdateNote=Mise à jour de {#AppName}. Ne fermez pas cette fenêtre et ne lancez pas le jeu : le lanceur se rouvre une fois terminé.
-german.UpdateNote={#AppName} wird aktualisiert. Schließe dieses Fenster nicht und starte das Spiel nicht: Der Launcher öffnet sich wieder, wenn es fertig ist.
-italian.UpdateNote=Aggiornamento di {#AppName}. Non chiudere questa finestra e non avviare il gioco: il launcher si riapre al termine.
-polish.UpdateNote=Aktualizacja {#AppName}. Nie zamykaj tego okna i nie uruchamiaj gry: launcher otworzy się ponownie po zakończeniu.
-turkish.UpdateNote={#AppName} güncelleniyor. Bu pencereyi kapatmayın ve oyunu başlatmayın: bittiğinde başlatıcı yeniden açılacak.
-chinesesimplified.UpdateNote=正在更新 {#AppName}。请勿关闭此窗口或启动游戏：完成后启动器会重新打开。
-japanese.UpdateNote={#AppName} を更新しています。このウィンドウを閉じたりゲームを起動したりしないでください。完了するとランチャーが再び開きます。
-korean.UpdateNote={#AppName} 업데이트 중입니다. 이 창을 닫거나 게임을 시작하지 마세요. 완료되면 런처가 다시 열립니다.
+UpdateNote=Updating {#ShortName}. Don't close this window or start the game: the launcher opens again when it is done.
+russian.UpdateNote=Обновление {#ShortName}. Не закрывайте это окно и не запускайте игру: лаунчер откроется снова, когда оно закончится.
+arabic.UpdateNote=جارٍ تحديث {#ShortName}. لا تغلق هذه النافذة ولا تبدأ اللعبة: سيفتح المشغّل من جديد عند الانتهاء.
+spanish.UpdateNote=Actualizando {#ShortName}. No cierres esta ventana ni inicies el juego: el lanzador se abre de nuevo al terminar.
+brazilianportuguese.UpdateNote=Atualizando o {#ShortName}. Não feche esta janela nem inicie o jogo: o launcher abre de novo quando terminar.
+french.UpdateNote=Mise à jour de {#ShortName}. Ne fermez pas cette fenêtre et ne lancez pas le jeu : le lanceur se rouvre une fois terminé.
+german.UpdateNote={#ShortName} wird aktualisiert. Schließe dieses Fenster nicht und starte das Spiel nicht: Der Launcher öffnet sich wieder, wenn es fertig ist.
+italian.UpdateNote=Aggiornamento di {#ShortName}. Non chiudere questa finestra e non avviare il gioco: il launcher si riapre al termine.
+polish.UpdateNote=Aktualizacja {#ShortName}. Nie zamykaj tego okna i nie uruchamiaj gry: launcher otworzy się ponownie po zakończeniu.
+turkish.UpdateNote={#ShortName} güncelleniyor. Bu pencereyi kapatmayın ve oyunu başlatmayın: bittiğinde başlatıcı yeniden açılacak.
+chinesesimplified.UpdateNote=正在更新 {#ShortName}。请勿关闭此窗口或启动游戏：完成后启动器会重新打开。
+japanese.UpdateNote={#ShortName} を更新しています。このウィンドウを閉じたりゲームを起動したりしないでください。完了するとランチャーが再び開きます。
+korean.UpdateNote={#ShortName} 업데이트 중입니다. 이 창을 닫거나 게임을 시작하지 마세요. 완료되면 런처가 다시 열립니다.
 
 [Code]
 // The launcher's GOLD and MUTED (bbport_launcher_win.py) as $bbggrr; the rest comes from the style.
@@ -258,9 +265,9 @@ function GetDriveType(Root: String): LongWord;
 function DefaultInstallDir(Param: String): String;
 begin
   if GetDriveType('D:\') = DRIVE_FIXED then
-    Result := 'D:\Games\{#AppName}'
+    Result := 'D:\Games\{#ShortName}'
   else
-    Result := ExpandConstant('{sd}') + '\Games\{#AppName}';
+    Result := ExpandConstant('{sd}') + '\Games\{#ShortName}';
 end;
 
 // Where a shortcut leads ('' when it cannot be read).
@@ -286,7 +293,7 @@ begin
   Result := True;
   Desktop := ExpandConstant('{autodesktop}');
   Launcher := ExpandConstant('{app}\BLauncher.exe');
-  if FileExists(Desktop + '\{#AppName}.lnk') then begin
+  if FileExists(Desktop + '\{#ShortName}.lnk') then begin
     Result := False;
     exit;
   end;
@@ -325,6 +332,7 @@ var
   BarTimer: LongWord;
   BarHot: Integer;
   BarHeld, BarMoving: Boolean;
+  NoClose: Boolean;  // the launcher's update: InitializeWizard reads WizardSilent (the uninstall cannot)
 
 function SetTimer(Wnd: HWND; IDEvent, Elapse: LongWord; TimerFunc: LongWord): LongWord;
   external 'SetTimer@user32.dll stdcall';
@@ -471,7 +479,7 @@ begin
   BarClose := BarButton(True, W - ScaleX(46));
   BarClose.OnClick := @BarCloseClick;
   // the launcher's update (/SILENT /NOCANCEL) cannot be stopped halfway: no close button either
-  BarClose.Visible := not (WizardSilent and (Form = WizardForm));
+  BarClose.Visible := not NoClose;
   BarMin := BarButton(False, W - 2 * ScaleX(46));
   BarMin.OnClick := @BarMinClick;
   // Windows 11: round corners and a thin LINE edge, as other windows have
@@ -518,6 +526,7 @@ end;
 
 procedure InitializeWizard;
 begin
+  NoClose := WizardSilent;
   if WizardSilent then
     UpdateNote;
   Header(WizardForm.PageNameLabel, WizardForm.PageDescriptionLabel, True);

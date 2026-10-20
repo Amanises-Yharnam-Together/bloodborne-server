@@ -200,6 +200,8 @@ LANG = 'en'
 # Play page sets co-op up and PLAY starts it, always at the game's fixed 60 FPS (bbport_coop; it took
 # over the release's bat files, Kaniel 2026-10-13).
 COOP_INSTALL = os.environ.get('BB_COOP_INSTALL') == '1' or (PORT_DIR / 'event-reference.json').is_file()
+# The co-op release's name (Kaniel 2026-10-20), as the setup has it (tools\release\setup.iss).
+COOP_NAME, COOP_SHORT_NAME = 'Yharnam Together: Bloodborne Seamless Co-op', 'Yharnam Together'
 HARDER_CHOICES = [('off', ('Off (the normal game)', 'Выключено (обычная игра)')),
                   (bbport_coop.HARDER_ON, ('Harder: enemy HP ×3, damage ×1.5, poise ×3',
                                            'Сложнее: HP врагов ×3, урон ×1.5, стойкость ×3'))]
@@ -1358,6 +1360,33 @@ def fetch_news(url=NEWS_URL, timeout=6):
 
 def cached_news():
     return parse_news(load_json(CONFIG_DIR / 'news.json', None)) or parse_news(NEWS_FALLBACK)
+
+
+# Under the banner, every release's patch notes from the latest back to the first (Kaniel 2026-10-20,
+# in place of the website's info cards): the releases' own (bbport_coop.release_notes), the last list
+# read kept for a start offline.
+PATCH_NOTES_FILE = 'patch-notes.json'
+
+
+def valid_patch_notes(data):
+    """The release_notes() entries of a list read back from the cache; anything else is dropped."""
+    def texts(value):
+        return [t for t in value if isinstance(t, str) and t.strip()] if isinstance(value, list) else []
+    return [{'version': r['version'], 'date': r.get('date') if isinstance(r.get('date'), str) else '',
+             'notes': texts(r.get('notes')), 'known': texts(r.get('known'))}
+            for r in data if isinstance(r, dict) and isinstance(r.get('version'), str)] if isinstance(data, list) else []
+
+
+def cached_patch_notes():
+    return valid_patch_notes(load_json(CONFIG_DIR / PATCH_NOTES_FILE, None))
+
+
+def fetch_patch_notes():
+    """Every release's notes as GitHub lists them now; None when they cannot be read."""
+    try:
+        return bbport_coop.release_notes(bbport_coop.fetch_releases(timeout=10)) or None
+    except (OSError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2673,7 +2702,7 @@ class Launcher:
         # first (then it is the combination's modifier); the side buttons held when the wait began.
         self.pending_modifier, self.side_buttons_down, self.side_poll = None, set(), None
         self.controls_message = None
-        root.title('Bloodborne Seamless Co-op' if COOP_INSTALL else 'Bloodborne — bbport')
+        root.title(COOP_NAME if COOP_INSTALL else 'Bloodborne — bbport')
         root.configure(bg=BG)
         self.dpi = root.winfo_fpixels('1i') / 96.0
         self.motion = Motion(root, tk.TclError, os.environ.get('BB_LAUNCHER_ANIMATIONS', '1') != '0'
@@ -3127,7 +3156,7 @@ class Launcher:
         if COOP_INSTALL:
             # The co-op release's own version (VERSION.txt), never the upstream port's (Kaniel 2026-10-16).
             release = coop_release_version()
-            self.side.set_texts(_('Seamless Co-op', 'Бесшовный кооператив') + '  ·  ' + (
+            self.side.set_texts(COOP_SHORT_NAME + '  ·  ' + (
                 f'v{release}' if release else _('development build', 'сборка разработчика')), '')
         else:
             self.side.set_texts(_('native port · Windows', 'нативный порт · Windows') + f'  ·  v{VERSION}', '')
@@ -3172,8 +3201,13 @@ class Launcher:
         self.play_button = PlayButton(self, bar, _('PLAY', 'ИГРАТЬ'), self.play)
         self.play_button.pack(side='right', padx=(px(8), px(24)))
         self.stop_button = FlatButton(self, bar, _('Stop', 'Остановить'), self.stop, bg=BG)
-        # Shown once a newer release is out (coop_check_update).
+        # Shown once a newer release is out (coop_check_update); until then Check for updates holds its place
+        # (Kaniel 2026-10-20).
         self.update_button = FlatButton(self, bar, _('Update', 'Обновить'), self.coop_install_update, 'primary', bg=BG)
+        self.check_button = FlatButton(self, bar, _('Check for updates', 'Проверить обновления'),
+                                       self.coop_check_now, bg=BG)
+        if COOP_INSTALL:
+            self.check_button.pack(side='right', padx=(0, px(12)), after=self.play_button.canvas)
         left = tk.Frame(bar, bg=BG)
         left.pack(side='left', fill='y', padx=(px(30), 0), pady=(px(12), px(10)))
         icons = tk.Frame(left, bg=BG)
@@ -3338,6 +3372,7 @@ class Launcher:
         page = self.scrolled_page('home', None, None)
         self.news_holder = self.tk.Frame(page, bg=PANEL)
         self.news_holder.pack(fill='both', expand=True)
+        self.patch_notes = cached_patch_notes()
         self.render_news(cached_news())
 
     def paint_street(self, header, width):
@@ -3359,22 +3394,50 @@ class Launcher:
         header.painted_width = width
 
     def load_news(self):
-        """Off the window's thread: the website's news.json; kept for the next start offline."""
-        news = fetch_news()
-        if not news:
+        """Off the window's thread: the website's news.json and the releases' patch notes; kept for the next
+        start offline."""
+        news, notes = fetch_news(), fetch_patch_notes()
+        if not news and not notes:
             return
-        try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            (CONFIG_DIR / 'news.json').write_text(json.dumps(news, ensure_ascii=False, indent=1), encoding='utf-8')
-        except OSError:
-            pass
-        self.ui_calls.put(lambda: self.render_news(news))
+        for name, data in (('news.json', news), (PATCH_NOTES_FILE, notes)):
+            if data:
+                try:
+                    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                    (CONFIG_DIR / name).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
+                except OSError:
+                    pass
+
+        def show():
+            if notes:
+                self.patch_notes = notes
+            self.render_news(news or self.news)
+        self.ui_calls.put(show)
+
+    def news_point(self, parent, row, text, fg=TEXT):
+        """One point of the notes: a gold diamond and the text wrapping beside it."""
+        tk, px = self.tk, self.px
+        line = tk.Frame(parent, bg=CARD)
+        line.grid(row=row, column=0, columnspan=2, sticky='we', pady=(px(8), 0))
+        gem = tk.Canvas(line, width=px(14), height=px(16), bg=CARD, highlightthickness=0, bd=0)
+        gem.create_polygon(diamond(px(5), px(9), px(3)), fill=GOLD if fg == TEXT else GOLD_DIM, outline='')
+        gem.pack(side='left', anchor='n')
+        self.flow(line, text, 'body', fg).pack(side='left', fill='x', expand=True)
 
     def render_news(self, news):
         tk, px = self.tk, self.px
         self.news = news
         for child in self.news_holder.winfo_children():
             child.destroy()
+        # The banner is the latest release's (Kaniel 2026-10-20: its notes as the release has them); the
+        # website's title and intro only while they are about that release.
+        releases = getattr(self, 'patch_notes', None) or []
+        latest = releases[0] if releases else None
+        points, known = (latest['notes'], latest['known']) if latest else (news['notes'], [])
+        if latest:
+            current = news['version'].lstrip('v') == latest['version']
+            news = dict(news, kicker=_('Patch notes'), version=f"v{latest['version']}", date=latest['date'],
+                        title=news['title'] if current else _("What's new in v{}").format(latest['version']),
+                        intro=news['intro'] if current else '')
         banner = self.card(self.news_holder, None, pad=34)
         banner.frame.pack_configure(pady=(px(28), px(18)))
         meta = '   ·   '.join(part for part in (news['kicker'], news['version'], news['date']) if part)
@@ -3405,30 +3468,28 @@ class Launcher:
             self.flow(banner, news['intro'], 'body', MUTED).grid(row=r, column=0, columnspan=2, sticky='we',
                                                                  pady=(px(10), 0))
             r += 1
-        for note in news['notes']:
-            row = tk.Frame(banner, bg=CARD)
-            row.grid(row=r, column=0, columnspan=2, sticky='we', pady=(px(8), 0))
-            gem = tk.Canvas(row, width=px(14), height=px(16), bg=CARD, highlightthickness=0, bd=0)
-            gem.create_polygon(diamond(px(5), px(9), px(3)), fill=GOLD, outline='')
-            gem.pack(side='left', anchor='n')
-            self.flow(row, note).pack(side='left', fill='x', expand=True)
+        for note in points:
+            self.news_point(banner, r, note)
+            r += 1
+        for note in known:
+            self.news_point(banner, r, _('Known issue: {}').format(note), MUTED)
             r += 1
         if news['link']:
             link = news['link']
             self.button(banner, link['text'], lambda url=link['url']: webbrowser.open(url)).grid(
                 row=r, column=0, columnspan=2, sticky='w', pady=(px(20), 0))
-        if news['info']:
-            cards = tk.Frame(self.news_holder, bg=PANEL)
-            cards.pack(fill='x', padx=px(32), pady=(0, px(24)))
-            for i, item in enumerate(news['info']):
-                cards.columnconfigure(i, weight=1, uniform='info')
-                body = self.card(cards, None, grid={'row': 0, 'column': i,
-                                                    'padx': (0 if i == 0 else px(8), 0 if i == len(news['info']) - 1
-                                                             else px(8))}, pad=22)
-                body.columnconfigure(0, minsize=0)
-                self.label(body, spaced(item['title']), 'h2').grid(row=0, column=0, columnspan=2, sticky='w')
-                self.flow(body, item['text'], 'small', MUTED).grid(row=1, column=0, columnspan=2, sticky='we',
-                                                                   pady=(px(8), 0))
+        if len(releases) > 1:
+            # every earlier release in a row, newest first, back to the first one
+            earlier = self.card(self.news_holder, _('Earlier releases'), pad=30)
+            earlier.frame.pack_configure(pady=(0, px(24)))
+            for release in releases[1:]:
+                head = '   ·   '.join(part for part in (f"v{release['version']}", release['date']) if part)
+                self.label(earlier, spaced(head), 'small_bold', GOLD).grid(
+                    row=self.next_row(earlier), column=0, columnspan=2, sticky='w', pady=(px(22), px(2)))
+                for note in release['notes']:
+                    self.news_point(earlier, self.next_row(earlier), note)
+                for note in release['known']:
+                    self.news_point(earlier, self.next_row(earlier), _('Known issue: {}').format(note), MUTED)
 
     # --- settings: general --------------------------------------------------------------------
 
@@ -5591,6 +5652,14 @@ class Launcher:
     # ---- updates -------------------------------------------------------------------------------
     # --- updates of the co-op release (Kaniel 2026-10-16) ----------------------------------------
 
+    def coop_check_now(self):
+        """The bottom bar's Check for updates: says on the status line what it found."""
+        if self.updating:
+            return
+        self.check_button.configure(state='disabled')
+        self.status.configure(text=_('Checking for updates…'), fg=MUTED)
+        threading.Thread(target=self.coop_check_update, args=(True,), daemon=True).start()
+
     def coop_check_update(self, manual=False, auto=False):
         """Helper thread: the newest release of this repository (every release, pre-releases too); a newer
         one shows the Update button, and with the automatic update switch on (at the start: AUTO) installs."""
@@ -5602,21 +5671,25 @@ class Launcher:
             release, failure = None, error
 
         def show():
+            self.check_button.configure(state='normal')
             if failure:
                 if manual:
-                    self.update_line.configure(text=_('Could not check for updates: {}',
-                                                      'Не удалось проверить обновления: {}').format(failure), fg=BAD)
+                    text = _('Could not check for updates: {}', 'Не удалось проверить обновления: {}').format(failure)
+                    self.update_line.configure(text=text, fg=BAD)
+                    self.status.configure(text=text, fg=BAD)
                 return
             if not release:
                 if manual:
-                    self.update_line.configure(text=_('You have the latest version.', 'У вас последняя версия.')
-                                               if current else _('This build has no release version.',
-                                                                 'У этой сборки нет версии релиза.'), fg=MUTED)
+                    text = (_('You have the latest version.', 'У вас последняя версия.') if current else
+                            _('This build has no release version.', 'У этой сборки нет версии релиза.'))
+                    self.update_line.configure(text=text, fg=MUTED)
+                    self.status.configure(text=text, fg=MUTED)
                 return
             self.update_release = release
             text = _('Update to v{}', 'Обновить до v{}').format(release['version'])
             self.update_button.configure(text=text)
             if not self.update_button.canvas.winfo_manager():
+                self.check_button.canvas.pack_forget()
                 self.update_button.pack(side='right', padx=(0, self.px(12)), after=self.play_button.canvas)
             self.update_line.configure(text=_('Version {} is available.', 'Доступна версия {}.').format(
                 release['version']), fg=GOLD)
