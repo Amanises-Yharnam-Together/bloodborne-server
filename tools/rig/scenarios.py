@@ -3460,3 +3460,27 @@ SCENARIOS["witch-flicker"] = {
                                          r"0x16000000 \(off, \+on\):[^\n]* \+?0x1000802[45]\b"]},
     "timeout": 300,
 }
+
+
+# Unarmed (the rig's characters have under 15 Insight): the host's ambush event switches all nine
+# off for good and ends, its slot done flags on. The guest's copies stayed on (rig 2026-10-21: the
+# guest saw nine enemies the host did not), since the host's switch is not followed far from the
+# host; with the slot done it is (AmbushSlotFlag).
+SCENARIOS["mist-ambush-unarmed"] = {
+    "about": "#300: with the ambush unarmed (host under 15 Insight) the guest by Hemwick's woods "
+             "sees its enemies off, as the host has them",
+    "roles": {
+        "host": [START, f"set-flag {WITCH_DEFEATED} 0", f"set-flag {NIGHT} 1",
+                 "wait-session 2 300", "wait 5", f"travel {WITCH_ABODE_LAMP}", "godmode",
+                 f"expect-map {HEMWICK}", f"expect-flag {MIST_ARMED} 0", "wait 10", "census 300",
+                 f"expect-disabled {MIST_ENEMY} 1", "sync unarmed-checked", "expect-session 2"],
+        "guest": [START, f"set-flag {WITCH_DEFEATED} 0", f"set-flag {NIGHT} 1",
+                  "wait-session 2 300", "wait 5", f"travel {WITCH_ABODE_LAMP}", "godmode",
+                  f"expect-map {HEMWICK}", "wait 5", f"travel {CHARNEL_LANE_LAMP}", "wait 5",
+                  "census 150", f"expect-disabled {MIST_ENEMY} 1 20", "census 150",
+                  "sync unarmed-checked", "expect-session 2"],
+    },
+    "syncs": {"unarmed-checked": {"chapter": "mist-ambush-unarmed", "roles": ["host", "guest"]}},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
+}

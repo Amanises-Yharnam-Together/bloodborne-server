@@ -2160,6 +2160,16 @@ std::vector<CharacterShown> HostNearStates::Fill(u32 host_map,
     return filled;
 }
 
+std::optional<s32> AmbushSlotFlag(s32 entity) {
+    constexpr s32 FirstEnemy = 2200500;
+    constexpr s32 FirstSlotFlag = 12204000;
+    constexpr s32 Slots = 9;
+    if (entity < FirstEnemy || entity >= FirstEnemy + Slots) {
+        return std::nullopt;
+    }
+    return FirstSlotFlag + (entity - FirstEnemy);
+}
+
 std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& switched_off,
                                                std::span<const CharacterSwitch> mine) {
     std::vector<CharacterSwitch> changes;
@@ -2174,16 +2184,17 @@ std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& sw
 std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown> host,
                                                  std::span<const CharacterSwitch> mine,
                                                  const std::unordered_set<u32>& switched_off,
-                                                 const std::unordered_set<u32>& kill_hidden) {
+                                                 const std::unordered_set<u32>& kill_hidden,
+                                                 const std::unordered_set<u32>& off_for_good) {
     struct HostSwitch {
-        bool off = false; // removed or switched off near the host
+        bool off = false; // removed or switched off near the host (or for good)
         bool on = false;  // on near the host, alive
     };
     std::unordered_map<u32, HostSwitch> hosts;
     for (const CharacterShown& character : host) {
         const bool off = character.hidden || character.disabled;
-        hosts[character.handle] = {!character.distant && off,
-                                   !character.distant && !off && !character.dead};
+        const bool followed = !character.distant || off_for_good.contains(character.handle);
+        hosts[character.handle] = {followed && off, !character.distant && !off && !character.dead};
     }
     std::vector<CharacterSwitch> changes;
     for (const CharacterSwitch& character : mine) {

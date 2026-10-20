@@ -2111,6 +2111,30 @@ TEST(BloodborneHiddenCharacters, AGuestSwitchesOffWhatTheHostRemoved) {
         << "nothing from the host: nothing changes";
 }
 
+// Rig 2026-10-21 (mist-ambush-guest): with a host under 15 Insight, Hemwick's mist ambush
+// (m22_00 event 12204000) switches its nine enemies off for good and ends, its slot's done flag
+// on; the guest's copies stayed on, since the host's switch is not followed far from the host
+// (its events park characters there). An ambush enemy the host has off with its slot done is off
+// for good at any distance; one still waiting (slot not done) is left to the guest's own event.
+TEST(BloodborneHiddenCharacters, AGuestSwitchesOffAnAmbushTheHostEndedAtAnyDistance) {
+    EXPECT_EQ(AmbushSlotFlag(2200500), 12204000);
+    EXPECT_EQ(AmbushSlotFlag(2200508), 12204008);
+    EXPECT_EQ(AmbushSlotFlag(2200509), std::nullopt);
+    EXPECT_EQ(AmbushSlotFlag(2200810), std::nullopt) << "the Witch's Mad One";
+    const std::vector<CharacterShown> host{
+        {0x10008022, false, true, true}, // off, far from the host, its slot done
+        {0x10008023, false, true, true}, // off, far, still waiting
+    };
+    const std::vector<CharacterSwitch> guest{{0x10008022, false}, {0x10008023, false}};
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {}, {0x10008022}),
+              (std::vector<CharacterSwitch>{{0x10008022, true}}));
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {}), std::vector<CharacterSwitch>{})
+        << "far from the host otherwise: not followed";
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {0x10008022}, {0x10008022}),
+              std::vector<CharacterSwitch>{})
+        << "one the kill board hid is left alone";
+}
+
 // Kaniel's friend Lisara 2026-10-15 (v0.3.1-local): in the Forbidden Woods she never saw the enemy
 // that comes out of the red mist (0x1000801e), though Kaniel fought it beside her. It starts
 // switched off in both worlds; Kaniel's event switched it on, hers never did, and a guest only

@@ -1600,11 +1600,19 @@ struct CharacterSwitch {
 // only if this member turned it off (`switched_off`); never one the kill board hid
 // (`kill_hidden`). A boss is left to this member's own fight (the Witch of Hemwick's vanish
 // switches her in every game: Kaniel's playtest 2026-10-20, she flickered for a guest), apart from
-// switching back on one this member turned off.
+// switching back on one this member turned off. Off at any distance where the host's switch is
+// off for good (`off_for_good`: an ambush its event ended, AmbushSlotFlag).
 std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown> host,
                                                  std::span<const CharacterSwitch> mine,
                                                  const std::unordered_set<u32>& switched_off,
-                                                 const std::unordered_set<u32>& kill_hidden);
+                                                 const std::unordered_set<u32>& kill_hidden,
+                                                 const std::unordered_set<u32>& off_for_good = {});
+// The Hemwick woods' mist ambush (m22_00 event 12204000, a slot per enemy 2200500-2200508): the
+// slot's done flag of `entity`, if it is one. With the flag on and the host's copy off, the event
+// switched it off for good (unarmed: a host under 15 Insight), so a guest follows that far from
+// the host too; its own copy of the event does not run (rig 2026-10-21).
+std::optional<s32> AmbushSlotFlag(s32 entity);
+constexpr u32 AmbushMap = 0x16000000; // Hemwick Charnel Lane (m22_00)
 // A character's hits switch (event command 2004:39; `off`: no hits). The Witch of Hemwick's Mad
 // Ones wait with their hits off, and her summon (m22_00 event 12204839, which waits on her AI)
 // turns them on in the host's game only: the guests' copies were switched on (SwitchedLikeTheHost)
