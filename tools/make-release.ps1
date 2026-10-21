@@ -298,7 +298,7 @@ Seamless co-op for Bloodborne on Bloodborne PC (the native Windows port).
 1. Download ``$setupName`` and run it (it installs for your Windows user; keep "Create a desktop shortcut" ticked).
 2. Open **Yharnam Together**. It finds your game; fill in the Co-op card: host (runs the co-op server) or player, the host's IP, an account.
 3. Press **PLAY**. The host's co-op server starts by itself; Windows asks once to let co-op through its firewall. Everyone must reach the host's UDP port 31314 (and TCP 31313, 31315, 20443).
-4. Continue, Load Game or New Game opens the team screen: make a team of up to four, Ready, and the leader begins the hunt.
+4. Continue, Load Game or New Game opens the team screen: make a team of up to four (guests are ready on their own) and the leader begins the hunt.
 
 The full setup guide, with pictures: https://bloodborne.seamlesscoop.dev/docs/install
 
