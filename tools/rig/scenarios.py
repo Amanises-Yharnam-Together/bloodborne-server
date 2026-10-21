@@ -3484,3 +3484,95 @@ SCENARIOS["mist-ambush-unarmed"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 300,
 }
+
+
+# Kaniel's playtest 2026-10-20: the Witch's Abode lamp broke for the whole party. Its "light it"
+# request (ABODE_LAMP_REQUEST, common event 7100: lights the lamp once, and ends at once on a load
+# with the request on) was set while she lived and lit nothing; it reached the host, and the
+# host's reached the guests as a story step. Here the guest's world starts that way (request on,
+# lamp unlit): loading Hemwick clears it. The host then lights the lamp after her kill: the guest
+# never takes the host's request, and the lamp reaches its lamp list.
+ABODE_LAMP_REQUEST = 72200201
+ABODE_LAMP_ACTIVE = 12207830  # the lamp's active flag: lit for this player
+SCENARIOS["abode-lamp-broken"] = {
+    "about": "a guest's Abode lamp light request that lit nothing is cleared as Hemwick loads; "
+             "the host lights the lamp after the Witch's kill and the guest gets it lit, never the "
+             "host's request",
+    "roles": {
+        "host": [START, f"set-flag {WITCH_DEFEATED} 1", f"travel {WITCH_ABODE_LAMP}", "godmode",
+                 f"expect-map {HEMWICK}", "wait-session 2 300", "sync lamp-ready",
+                 f"set-flag {ABODE_LAMP_REQUEST} 1", f"wait-flag {ABODE_LAMP_ACTIVE} 1 20",
+                 "sync lamp-lit", "sync lamp-checked", "expect-session 2"],
+        "guest": [START, f"set-flag {WITCH_DEFEATED} 1", f"set-flag {ABODE_LAMP_ACTIVE} 0",
+                  f"set-flag {ABODE_LAMP_REQUEST} 1", f"travel {WITCH_ABODE_LAMP}", "godmode",
+                  f"expect-map {HEMWICK}", f"wait-flag {ABODE_LAMP_REQUEST} 0 10",
+                  "wait-session 2 300", "sync lamp-ready", "sync lamp-lit", "wait 15",
+                  f"expect-flag {ABODE_LAMP_ACTIVE} 1", f"expect-flag {ABODE_LAMP_REQUEST} 0",
+                  "sync lamp-checked", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "abode-lamp-broken", "roles": ["host", "guest"]}
+              for name in ("lamp-ready", "lamp-lit", "lamp-checked")},
+    "expect": {"guest": [r"lamp light requests that lit nothing cleared on map 0x16000000: "
+                         rf"{ABODE_LAMP_REQUEST}\b",
+                         r"lamps[^\n]* 2201951[^\n]* are lit for this player too"]},
+    "forbid": {"host": SESSION_HOLDS,
+               "guest": [*SESSION_HOLDS,
+                         rf"the host's story steps followed here[^\n]* {ABODE_LAMP_REQUEST}\b"]},
+    "timeout": 300,
+}
+
+
+# Kaniel's playtest 2026-10-20: during the Witch of Hemwick fight krolebord (a guest) saw the Witch's
+# Abode lamp, which shows only once she is dead (m22_00 common event 7000: character 2200951 and
+# object 2201951 switched off until flag 12201800), while the host was far; near the host it was
+# gone again. The lamp's character stayed off in his log; these look at the lamp object too
+# (`object`, its enable switch), with Charnel Lane's lit lamp (2201950) beside it.
+ABODE_LAMP_CHARACTER = 2200951
+LAMP_OBJECTS = "object 2201951 2201950"
+ABODE_LAMP_SHOWN = [rf"disabled 0 at [^\n]* entity {ABODE_LAMP_CHARACTER}\b",
+                    r"autoplay object 2201951: enabled 1"]
+SCENARIOS["abode-lamp-far"] = {
+    "about": "the Witch's Abode lamp (character and object) stays off for a guest by it while the "
+             "Witch lives, with the host far away and with the host beside it",
+    "roles": {
+        "host": [START, f"set-flag {WITCH_DEFEATED} 0", f"travel {CHARNEL_LANE_LAMP}", "godmode",
+                 f"expect-map {HEMWICK}", "wait-session 2 300", "sync lamp-ready", "wait 20",
+                 "census 60", LAMP_OBJECTS, "sync lamp-far", f"travel {WITCH_ABODE_LAMP}",
+                 "wait 15", "census 60", LAMP_OBJECTS, "sync lamp-near", "wait 10",
+                 "sync lamp-checked", f"expect-flag {WITCH_DEFEATED} 0", "expect-session 2"],
+        "guest": [*HEMWICK_START, "wait 2", LAMP_OBJECTS, "wait 5", LAMP_OBJECTS,
+                  "wait-session 2 300", LAMP_OBJECTS,
+                  "sync lamp-ready", "wait 10", LAMP_OBJECTS, "wait 10", "census 60", LAMP_OBJECTS,
+                  "sync lamp-far", "sync lamp-near", "wait 5", "census 60", LAMP_OBJECTS,
+                  "sync lamp-checked", f"expect-flag {WITCH_DEFEATED} 0", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "abode-lamp-far", "roles": ["host", "guest"]}
+              for name in ("lamp-ready", "lamp-far", "lamp-near", "lamp-checked")},
+    "expect": {role: [r"autoplay object 2201951: enabled 0"] for role in ("host", "guest")},
+    "forbid": {"host": SESSION_HOLDS, "guest": [*SESSION_HOLDS, *ABODE_LAMP_SHOWN]},
+    "timeout": 300,
+}
+# The playtest's order: both at the Abode with the fight on (her fight starts with flag 12204800),
+# then the host leaves for Charnel Lane and comes back.
+SCENARIOS["abode-lamp-host-leaves"] = {
+    "about": "the Witch's Abode lamp (character and object) stays off for a guest by it while the "
+             "Witch lives, after the host was beside it, once the host leaves and once it is back",
+    "roles": {
+        "host": [*HEMWICK_START, "wait-session 2 300", "set-flag 12204800 1", "sync lamp-ready",
+                 "wait 10", "census 60", LAMP_OBJECTS, f"travel {CHARNEL_LANE_LAMP}", "wait 20",
+                 "sync lamp-far", "sync lamp-far-checked", f"travel {WITCH_ABODE_LAMP}", "wait 10",
+                 "sync lamp-near", "sync lamp-checked", f"expect-flag {WITCH_DEFEATED} 0",
+                 "expect-session 2"],
+        "guest": [*HEMWICK_START, "wait-session 2 300", "sync lamp-ready", "wait 10", "census 60",
+                  LAMP_OBJECTS, "sync lamp-far", "wait 5", "census 60", LAMP_OBJECTS, "wait 10",
+                  LAMP_OBJECTS, "sync lamp-far-checked", "sync lamp-near", "wait 5", "census 60",
+                  LAMP_OBJECTS, "sync lamp-checked", f"expect-flag {WITCH_DEFEATED} 0",
+                  "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "abode-lamp-host-leaves", "roles": ["host", "guest"]}
+              for name in ("lamp-ready", "lamp-far", "lamp-far-checked", "lamp-near",
+                           "lamp-checked")},
+    "expect": {"guest": [r"autoplay object 2201951: enabled 0"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": [*SESSION_HOLDS, *ABODE_LAMP_SHOWN]},
+    "timeout": 300,
+}

@@ -308,6 +308,20 @@ void TickGuestLampTrip() {
     }
 }
 
+// Whether the character with entity id `entity` is switched off in this game (none: not loaded).
+std::optional<bool> LampCharacterOff(s32 entity) {
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000) {
+        return std::nullopt;
+    }
+    for (const auto& [character, id] : CharacterEntityIds(world)) {
+        if (id == entity) {
+            return IsCharacterDisabled(character);
+        }
+    }
+    return std::nullopt;
+}
+
 void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers) {
     const s32 flag = static_cast<s32>(registers->r15);
     // A ritual altar's talk runs in every game: only the talker's game sets its warp.
@@ -323,6 +337,19 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
                      flag);
         }
         return;
+    }
+    // A lamp whose boss lives (its character still off here) is not lit: event 7100 would run on
+    // the request, light nothing and end (Kaniel's playtest 2026-10-20, the Witch's Abode).
+    if (party_controller && InPartySession()) {
+        if (const auto lamp = LampOfLightRequest(flag);
+            lamp && RefusesLampLight(flag, LampCharacterOff(lamp->character))) {
+            registers->rax = reinterpret_cast<u64>(no_talk_flag_range.data());
+            LOG_INFO(Debug,
+                     "Bloodborne party: lamp {} is not lit yet (its boss lives); request {} "
+                     "refused",
+                     lamp->character, flag);
+            return;
+        }
     }
     const bool guest =
         party_controller && party_controller->SearchEffectId() == SmallResonantBellEffect;

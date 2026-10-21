@@ -1278,6 +1278,50 @@ std::optional<s32> LampOfActiveFlag(s32 flag) {
     return map * 10000 + 1950 + within / 20;
 }
 
+namespace {
+
+constexpr s32 LightRequestBase = 70000000;
+constexpr s32 LightRequestLow = 200;
+constexpr s32 LampMapFirst = 211;
+constexpr s32 LampMapLast = 399;
+constexpr s32 LampsPerMap = 20;
+
+} // namespace
+
+std::optional<LampLight> LampOfLightRequest(s32 flag) {
+    const s32 offset = flag - LightRequestBase;
+    if (offset < 0) {
+        return std::nullopt;
+    }
+    const s32 map = offset / 10000;
+    const s32 lamp = offset % 10000 - LightRequestLow;
+    if (map < LampMapFirst || map > LampMapLast || lamp < 0 || lamp >= LampsPerMap) {
+        return std::nullopt;
+    }
+    return LampLight{.character = map * 10000 + 950 + lamp,
+                     .active_flag = 10007810 + map * 10000 + lamp * 20};
+}
+
+bool RefusesLampLight(s32 flag, std::optional<bool> lamp_character_off) {
+    return LampOfLightRequest(flag).has_value() && lamp_character_off.value_or(false);
+}
+
+std::vector<s32> LightRequestsToClear(u32 packed_map, const std::function<bool(s32)>& on) {
+    const s32 map = static_cast<s32>((packed_map >> 24) & 0xFF) * 10 +
+                    static_cast<s32>((packed_map >> 16) & 0xFF);
+    std::vector<s32> clear;
+    if (map < LampMapFirst || map > LampMapLast) {
+        return clear;
+    }
+    for (s32 lamp = 0; lamp < LampsPerMap; ++lamp) {
+        const s32 request = LightRequestBase + map * 10000 + LightRequestLow + lamp;
+        if (on(request) && !on(LampOfLightRequest(request)->active_flag)) {
+            clear.push_back(request);
+        }
+    }
+    return clear;
+}
+
 bool IsBulkFlagChange(size_t changed_flags) {
     return changed_flags > 64;
 }

@@ -855,6 +855,25 @@ bool PostsShownState(s64 now_ms, s64 world_changed_ms);
 // to its lamp entity (map * 10000 + 1950 + lamp); the game clears the flag again for a character
 // whose lamp list ([0x0553B120]+0xC70) lacks the lamp.
 std::optional<s32> LampOfActiveFlag(s32 flag);
+// A lamp's "light it" request (70000000 + map * 10000 + 200 + lamp, maps 211-399, lamps 0-19):
+// the lamp talk sets it, and common event 7100 lights the lamp once and ends; on any load with the
+// request on it ends at once. Its lamp's character (map * 10000 + 950 + lamp, which common event
+// 7000 keeps switched off until the lamp's boss is dead) and active flag (LampOfActiveFlag).
+struct LampLight {
+    s32 character = 0;
+    s32 active_flag = 0;
+    bool operator==(const LampLight&) const = default;
+};
+std::optional<LampLight> LampOfLightRequest(s32 flag);
+// Kaniel's playtest 2026-10-20: krolebord lit the Witch's Abode lamp while she lived; his event
+// 7100 ran, lit nothing and ended, and the lamp never lit after her kill. A light request is
+// refused while its lamp's character is off in this game (`lamp_character_off`, none: no such
+// character, left to the game).
+bool RefusesLampLight(s32 flag, std::optional<bool> lamp_character_off);
+// The light requests on (`on`) of the lamps of `packed_map` whose lamp is not lit for this player
+// (its active flag off): the request lit nothing, or it came from another player's world. Cleared
+// as the map loads, so its event 7100 lights the lamp again.
+std::vector<s32> LightRequestsToClear(u32 packed_map, const std::function<bool(s32)>& on);
 // The other player's "set this event flag" (0x017C0570) and "event ended" (0x017C0901) messages
 // leave these flags and events alone in a party: what one player received is not given to the
 // other (the Hunter's Dream messengers' gift events and flags, 12101020-12101029, and the

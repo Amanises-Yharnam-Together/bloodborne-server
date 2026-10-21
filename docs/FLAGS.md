@@ -49,6 +49,7 @@ and the item flags) as the host's world reports reach it, between loads (`TeamSt
 | 72100300-72100309, 72100420-72100429 | Session | | a ritual altar's layer pick and "warp to the layer" (event 12107100): a request, not progress; as the host's, every teammate in the Dream warped with the host into the void (2026-10-20) |
 | 72101000-72101099 | Per player | carried home | the pick in the Dream messengers' talk |
 | 72102000-72103999 | Session | headstone trip | a Dream headstone's "travel to <lamp>": a request, not progress |
+| 7MMM02LL, map codes 211-399, lamps 0-19 | Per player | carried home | a lamp's "light it" request (common event 7100 lights the lamp once, and ends at once on a load with it on): each player's own; the lit lamp reaches the party by its active flags. One set while the Witch of Hemwick lived broke her lamp for the whole party (2026-10-20); a load of the lamp's map clears a request whose lamp is not lit |
 | 7MMM01LL, map codes 211-399 | Session | lamp trip | a lamp's "travel to the Hunter's Dream": a request, not progress |
 | 94k00000-94k05999, altars k 0-9 | Shared | carried home; clears shared too | a ritual altar's dungeon record: a ritual or a join at one member's altar puts the dungeon on every member's (team altars) |
 

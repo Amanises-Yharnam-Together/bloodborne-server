@@ -280,6 +280,17 @@ inline constexpr std::array LastRows{
     Range(72102000, 72103999, FlagOwner::Session, FlagHeadstoneTrip,
           "a Dream headstone's \"travel to <lamp>\" (7210MMML for event 12107000): a request, "
           "not progress"),
+    FlagRange{.first = 72110200,
+              .last = 73990219,
+              .period = 10000,
+              .low = 200,
+              .high = 219,
+              .rule = {FlagOwner::PerPlayer, FlagCarriesHome},
+              .why = "a lamp's \"light it\" request (7MMM02LL, map codes 211-399, lamps 0-19; "
+                     "common event 7100 lights the lamp once, and ends at once on a load with it "
+                     "on): each player's own, a lit lamp reaches the party by its active flags "
+                     "(Kaniel's playtest 2026-10-20: one set while the Witch of Hemwick lived "
+                     "broke her lamp for the whole party)"},
     FlagRange{.first = 72110000,
               .last = 73999999,
               .period = 10000,

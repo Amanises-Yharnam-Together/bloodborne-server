@@ -733,6 +733,50 @@ TEST(BloodborneLamps, ALampLitByAnotherMemberIsTheirsToo) {
     EXPECT_EQ(LampOfActiveFlag(12415390), std::nullopt);
 }
 
+// A lamp's "light it" request (70000000 + map * 10000 + 200 + lamp, common event 7100) belongs to
+// the lamp's character (map * 10000 + 950 + lamp: common event 7000 keeps it switched off until
+// the lamp's boss is dead) and its active flag (lit for this player).
+TEST(BloodborneLamps, ALightRequestNamesItsLamp) {
+    EXPECT_EQ(LampOfLightRequest(72200201),
+              (std::optional<LampLight>{{.character = 2200951, .active_flag = 12207830}}));
+    EXPECT_EQ(LampOfLightRequest(72200200),
+              (std::optional<LampLight>{{.character = 2200950, .active_flag = 12207810}}));
+    EXPECT_EQ(LampOfLightRequest(72410219),
+              (std::optional<LampLight>{{.character = 2410969, .active_flag = 12418190}}));
+    for (const s32 flag : {72200101, 72200220, 72100201, 74000200, 12207830, 0}) {
+        EXPECT_EQ(LampOfLightRequest(flag), std::nullopt) << flag;
+    }
+}
+
+// Kaniel's playtest 2026-10-20: krolebord lit the Witch's Abode lamp while she lived. His game's
+// event 7100 ran on the request, lit nothing and ended, so the lamp never lit after her kill. A
+// request for a lamp whose character is still off here (its boss lives) is refused.
+TEST(BloodborneLamps, NoLightRequestWhileTheLampsBossLives) {
+    EXPECT_TRUE(RefusesLampLight(72200201, true));
+    EXPECT_FALSE(RefusesLampLight(72200201, false));
+    EXPECT_FALSE(RefusesLampLight(72200201, std::nullopt)) << "no such character: as the game";
+    EXPECT_FALSE(RefusesLampLight(72200101, true)) << "a lamp trip, not a light";
+    EXPECT_FALSE(RefusesLampLight(12207830, true));
+}
+
+// A world with a light request on but its lamp not lit for this player (the request lit nothing,
+// or came from another player's world) never lights it again: event 7100 ends at once on a load
+// with the request on. A load of the lamp's map clears such requests, so the lamp lights again.
+TEST(BloodborneLamps, ALoadClearsALightRequestThatLitNothing) {
+    constexpr u32 Hemwick = 0x16000000;        // m22_00: map code 220
+    constexpr u32 CathedralWard = 0x18010000;  // m24_01: 241
+    constexpr u32 ForbiddenWoods = 0x17000000; // m23_00: 230
+    const std::set<s32> on{72200201, 72200200, 12207810, 72410219, 12418190, 72300205};
+    const auto is_on = [&](s32 flag) { return on.contains(flag); };
+    EXPECT_EQ(LightRequestsToClear(Hemwick, is_on), (std::vector<s32>{72200201}))
+        << "the Abode's request lit nothing; Charnel Lane's lamp is lit";
+    EXPECT_EQ(LightRequestsToClear(ForbiddenWoods, is_on), (std::vector<s32>{72300205}));
+    EXPECT_TRUE(LightRequestsToClear(CathedralWard, is_on).empty());
+    EXPECT_TRUE(LightRequestsToClear(Hemwick, [](s32) { return false; }).empty());
+    EXPECT_TRUE(LightRequestsToClear(Hemwick, [](s32) { return true; }).empty());
+    EXPECT_TRUE(LightRequestsToClear(0x15000000, is_on).empty()) << "the Dream has no such lamps";
+}
+
 // The lamp tracer watches the byte holding one flag: block, byte and mask, MSB first.
 TEST(BloodborneLamps, TheTracerFindsTheByteOfAFlag) {
     const FlagBit bit = FlagBitLocation(12417830, 1000);
