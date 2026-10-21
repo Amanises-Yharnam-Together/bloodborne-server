@@ -325,6 +325,32 @@ class CoopSettingsTests(unittest.TestCase):
         self.assertTrue(self.app.server_row.winfo_manager())
 
 
+    def test_how_to_connect_shows_the_steps_and_gives_the_host_their_vpn_address(self):
+        """Kaniel 2026-10-21: players got lost at the VPN step; the co-op card has a help button with the
+        Radmin VPN steps, and the host can take this PC's Radmin address with one press."""
+        card = self.app.coop_card
+        self.assertTrue(card.winfo_ismapped())
+        with mock.patch.object(bbport_coop, 'vpn_addresses', return_value=[('Radmin VPN', '26.12.34.56')]):
+            self.app.open_coop_help()
+            self.settle()
+            self.assertFalse(card.winfo_ismapped(), 'the help takes the card\'s place')
+            self.assertTrue(self.app.coop_help.winfo_ismapped())
+            self.assertEqual(self.app.coop_help_address.cget('text'), "This PC's Radmin VPN address: 26.12.34.56")
+            self.assertTrue(self.app.coop_help_use.canvas.winfo_ismapped())
+            self.app.coop_help_use.invoke()
+            self.settle()
+            self.assertEqual(self.app.coop_vars['host_ip'].get(), '26.12.34.56')
+            self.assertFalse(self.app.coop_help_use.canvas.winfo_ismapped(), 'nothing left to take')
+        bottom = self.app.coop_help.winfo_rooty() + self.app.coop_help.winfo_height()
+        self.assertLessEqual(bottom, self.root.winfo_rooty() + self.root.winfo_height(), 'fits in the window')
+        with mock.patch.object(bbport_coop, 'vpn_addresses', return_value=[]):
+            self.app.coop_help_refresh()
+        self.assertIn('No Radmin VPN address', self.app.coop_help_address.cget('text'))
+        self.app.close_coop_help()
+        self.settle()
+        self.assertTrue(card.winfo_ismapped())
+        self.assertFalse(self.app.coop_help.winfo_ismapped())
+
     def test_the_side_column_shows_the_releases_version_not_the_ports(self):
         """Kaniel 2026-10-16: the version is the co-op release's (VERSION.txt), not the upstream fork's."""
         sub = self.app.side.canvas.itemcget(self.app.side.sub, 'text')
