@@ -825,6 +825,21 @@ bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 
 // 2026-10-18: a save that took the host's "holds the Sword Hunter Badge" from a team world never
 // got its own badge from the Cleric Beast.
 std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool holds);
+// Whether a weapon of OwnedWeaponFlags is in `held` (the inventory's weapon ids): any upgrade
+// level, its base id + 100 * level up to +10, as the common events check it.
+bool HoldsWeapon(u32 weapon, std::span<const u32> held);
+// An owned-weapon flag (OwnedWeaponFlags) in a party: on once this player holds the weapon (a
+// guest's events never set it: a phantom's do not run), and once per save slot (`recheck`) off
+// while it does not, so a save that took the host's flags from a team world sells its own
+// weapons only (Kaniel 2026-10-21). The value it must take, else nothing.
+std::optional<bool> OwnedWeaponFlagFix(bool party_configured, bool flag_on, bool holds,
+                                       bool recheck);
+// Common events 5500-5521 (the Uncanny and Lost DLC weapons) end at once unless the local player
+// is a host-type character (4:3 10000 type 0, then 1000:2), and an event that ends sets its own
+// flag: a phantom guest's game set all 22 on every load in a session, so the shop sold them all
+// (krolebord's log 2026-10-21, "set ... 5500 ... 5521" at the join's load). These follow the
+// player's weapons every second, not only on the save slot's recheck.
+bool RechecksOwnedWeaponFlagAlways(s32 flag);
 // A Dream headstone's flag (DreamHeadstones) as this player's own lamps make it: on while one of
 // them is lit (`on` reads a flag); nullopt for any other flag.
 std::optional<bool> HeadstoneLampsLit(s32 flag, const std::function<bool(s32)>& on);
