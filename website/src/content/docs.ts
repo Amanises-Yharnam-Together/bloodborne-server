@@ -166,7 +166,7 @@ const install: DocPage = {
         {
           type: "ol",
           items: [
-            "When the host's IP is this PC's own address, PLAY starts the co-op server first. If it ever stops, it restarts by itself.",
+            "The host presses Start server (bottom left) first; the line beside it says Running. If the server ever stops, it restarts by itself. Stop server stops it.",
             "The first time, Windows asks once to let co-op through its firewall. Say yes: the launcher adds the rules for you.",
             "The first start prepares a game folder that links to your game. Nothing is copied.",
             "The game starts. Making a team happens in the game: see [Playing together](/docs/play).",
@@ -197,7 +197,7 @@ const install: DocPage = {
             ],
             [
               "Start server, Stop server",
-              "For running the server without the game, for example when the host plays later. The word beside them says whether it is running.",
+              "The host starts the co-op server here before PLAY (PLAY does not start it) and stops it when everyone is done. The words beside them say whether it is running.",
             ],
             [
               "The line under them",
@@ -642,7 +642,7 @@ const launcher: DocPage = {
             ],
             [
               "Start server, Stop server",
-              "Run the host's server without the game, for example when the host joins later. The word beside them says whether it is running.",
+              "The host starts the co-op server here before PLAY (PLAY does not start it) and stops it when everyone is done. The words beside them say whether it is running.",
             ],
             [
               "PLAY",
@@ -2043,7 +2043,7 @@ const radmin: DocPage = {
             ],
             [
               "Ping works but the game doesn't connect",
-              "Check that **Host's IP address** is the host's `26.` address on every PC, the host's too, and that the host pressed PLAY or **Start server** first. Everyone must be on the same release.",
+              "Check that **Host's IP address** is the host's `26.` address on every PC, the host's too, and that the host pressed **Start server** first. Everyone must be on the same release.",
             ],
             [
               "High ping or lag",

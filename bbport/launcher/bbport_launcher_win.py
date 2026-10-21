@@ -197,7 +197,7 @@ import bbport_coop  # noqa: E402
 LANG = 'en'
 
 # The seamless co-op release (BLauncher.exe with the co-op files beside it, or BB_COOP_INSTALL=1): the
-# Play page sets co-op up and PLAY starts it, always at the game's fixed 60 FPS (bbport_coop; it took
+# Play page sets co-op up and PLAY plays it, always at the game's fixed 60 FPS (bbport_coop; it took
 # over the release's bat files, Kaniel 2026-10-13).
 COOP_INSTALL = os.environ.get('BB_COOP_INSTALL') == '1' or (PORT_DIR / 'event-reference.json').is_file()
 # The co-op release's name (Kaniel 2026-10-20), as the setup has it (tools\release\setup.iss).
@@ -2688,6 +2688,7 @@ class Launcher:
         self.downloading = self.downloading_fsr4vk = self.fsr4vk_hashing = self.rechecking = False
         self.updating, self.update_release = False, None  # the co-op release's update (coop_check_update)
         self.close_scheduled = False  # "Close the launcher when the game starts" is armed once per run
+        self.server_checking = self.server_starting = False  # the server line: a check, a Start server under way
         self.installing, self.install_proc, self.install_cancel = False, None, threading.Event()
         self.install_card = self.install_hide = self.pkg_dialog = None
         self.output = queue.Queue()
@@ -2736,6 +2737,8 @@ class Launcher:
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
         root.after(30, self.start_motion)
+        if COOP_INSTALL:
+            root.after(500, self.coop_watch_server)
         threading.Thread(target=self.detect_gpu, daemon=True).start()
         if self.app.get('check_updates', True) and not COOP_TEST:
             threading.Thread(target=self.check_update, daemon=True).start()
@@ -3223,7 +3226,8 @@ class Launcher:
         self.checks['upscaler'].pack_forget()  # only once the saved upscaler was changed
         self.server_row = None
         if COOP_INSTALL:
-            # The host's server: PLAY starts it on the host's PC; these are for a host who only hosts.
+            # The host's one server, started and stopped only here (Kaniel 2026-10-21: PLAY no longer starts
+            # it); the line says whether it runs.
             row = self.server_row = tk.Frame(icons, bg=BG)
             row.pack(side='left', padx=(px(14), 0))
             tk.Frame(row, bg=LINE, width=1, height=px(26)).pack(side='left', padx=(0, px(14)))
@@ -3759,8 +3763,8 @@ class Launcher:
                 self.coop_picked.add(key)
             return box
 
-        # No Player/Host switch (Kaniel 2026-10-16): the host types their own address, and PLAY starts the
-        # server when the address is this PC's (bbport_coop.is_this_pc).
+        # No Player/Host switch (Kaniel 2026-10-16): the host types their own address and starts the server
+        # with Start server (Kaniel 2026-10-21: PLAY no longer starts it).
         cell = self.cell(card, 3, 0, _("Host's IP address (VPN or public; the host types their own)",
                                        'IP хоста (VPN или внешний; хост вводит свой)'))
         ttk.Entry(cell, textvariable=var('host_ip')).pack(fill='x')
@@ -3816,8 +3820,10 @@ class Launcher:
               'address. In Radmin VPN, right-click the host → Copy IP address.',
               'Все, и хост тоже, вписывают Radmin-адрес хоста (начинается с 26.) в «IP хоста». В Radmin VPN: '
               'правый клик по хосту → «Копировать IP-адрес».'),
-            _('The host presses PLAY first. Windows asks once to let co-op through its firewall: allow it.',
-              'Хост нажимает «Играть» первым. Windows один раз спросит про брандмауэр: разрешите.'),
+            _('The host presses Start server (bottom left), then PLAY. Windows asks once to let co-op through its '
+              'firewall: allow it.',
+              'Хост нажимает «Запустить сервер» (внизу слева), затем «Играть». Windows один раз спросит про '
+              'брандмауэр: разрешите.'),
         ]
         for number, text in enumerate(steps, 1):
             row = self.next_row(card)
@@ -4053,10 +4059,14 @@ class Launcher:
             return
         self.coop_server_line.configure(text=_('Starting…', 'Запуск…'), fg=MUTED)
         host_ip = self.coop['host_ip']
+        self.server_starting = True
 
         def work():
-            self.coop_firewall()
-            said = bbport_coop.start_servers(PORT_DIR, host_ip)
+            try:
+                self.coop_firewall()
+                said = bbport_coop.start_servers(PORT_DIR, host_ip)
+            finally:
+                self.server_starting = False
             running = bbport_coop.servers_running()
             text = _('Running', 'Работает') if running else _('Not running', 'Не работает')
             self.ui_calls.put(lambda: self.coop_server_line.configure(text=text, fg=OK if running else BAD))
@@ -4070,6 +4080,29 @@ class Launcher:
             self.ui_calls.put(lambda: self.coop_server_line.configure(
                 text=_('Stopped ({})', 'Остановлен ({})').format(stopped), fg=MUTED))
         threading.Thread(target=work, daemon=True).start()
+
+    def coop_watch_server(self):
+        """Every few seconds the server line says whether this PC's co-op server runs (Reddit 2026-10-21: it
+        stayed empty while the server ran)."""
+        if not self.server_checking and not self.server_starting:
+            self.server_checking = True
+            threading.Thread(target=self.coop_check_server, daemon=True).start()
+        self.root.after(SERVER_CHECK_MS, self.coop_watch_server)
+
+    def coop_check_server(self):
+        try:
+            running = bbport_coop.servers_running()
+            if running:
+                text, color = _('Running', 'Работает'), OK
+            elif bbport_coop.is_this_pc(self.coop.get('host_ip', '')):
+                text, color = _('Not running: press Start server to host',
+                                'Не работает: чтобы стать хостом, нажмите «Запустить сервер»'), CAUTION
+            else:
+                text, color = '', MUTED  # a guest's server is the host's
+            if not self.server_starting:
+                self.ui_calls.put(lambda: self.coop_server_line.configure(text=text, fg=color))
+        finally:
+            self.server_checking = False
 
     def coop_firewall(self):
         """This install's firewall rules, asking Windows for them (one UAC prompt) when they are missing."""
@@ -4099,16 +4132,11 @@ class Launcher:
         threading.Thread(target=self.coop_prepare_and_play, args=(dict(self.coop),), daemon=True).start()
 
     def coop_prepare_and_play(self, settings):
-        """Off the window's thread: the host's server, the account, the firewall and the game folder;
-        then the game starts on the window's thread."""
+        """Off the window's thread: the firewall and the game folder; then the game starts on the window's
+        thread. The host's server is not started here: only Start server starts it (Kaniel 2026-10-21)."""
         failed, note, root = None, '', None
         try:
-            if bbport_coop.is_this_pc(settings['host_ip']) and not bbport_coop.servers_running():
-                self.coop_say(_('Starting the co-op server…', 'Запуск сервера кооператива…'))
-                self.coop_firewall()
-                bbport_coop.start_servers(PORT_DIR, settings['host_ip'])
-            else:
-                self.coop_firewall()
+            self.coop_firewall()
             # No account step (phase 11): the host's server makes the player's account at its first
             # sign-in, and the game's team screen says when it cannot reach the server.
             root = bbport_coop.view_root(PORT_DIR)
@@ -6065,6 +6093,9 @@ def update_install_note():
              'Окно установщика показывает ход установки. Не закрывайте его и не запускайте игру: лаунчер '
              'откроется снова, когда она закончится.')
 
+
+# How often the server line checks this PC's co-op server.
+SERVER_CHECK_MS = 5000
 
 # How long the launcher stays after it starts the setup, so the setup's window is up before it goes.
 UPDATE_HANDOVER_MS = 2000

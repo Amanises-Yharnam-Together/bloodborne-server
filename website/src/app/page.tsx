@@ -161,7 +161,7 @@ const steps: StartStep[] = [
   },
   {
     title: "Fill in the Co-op page",
-    text: "Everyone types the host's address, the host included. PLAY then starts the server on the host's PC.",
+    text: "Everyone types the host's address, the host included. The host presses Start server before PLAY.",
     href: "/docs/install#coop-card",
     src: "/docs/launcher-coop.webp",
     width: 1200,

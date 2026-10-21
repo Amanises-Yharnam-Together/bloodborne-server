@@ -56,8 +56,9 @@ def valid_ip(value):
 
 
 def is_this_pc(value):
-    """Whether the host's IP is an address of this PC: then this PC hosts (PLAY starts the server). There
-    is no Player/Host switch (Kaniel 2026-10-16); an address can be bound only where it is the PC's own."""
+    """Whether the host's IP is an address of this PC: then this PC hosts (it starts the server with Start
+    server). There is no Player/Host switch (Kaniel 2026-10-16); an address can be bound only where it is the
+    PC's own."""
     if not valid_ip(value):
         return False
     try:

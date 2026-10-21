@@ -233,7 +233,7 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(env['SHADPS4_P2P_PORT'], '51700')
 
     def test_this_pc_hosts_when_the_host_ip_is_its_own(self):
-        """No Player/Host switch (Kaniel 2026-10-16): PLAY starts the server when the host's IP is this PC's."""
+        """No Player/Host switch (Kaniel 2026-10-16): this PC hosts when the host's IP is its own."""
         import socket
         own = [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith('127.')]
         if own:

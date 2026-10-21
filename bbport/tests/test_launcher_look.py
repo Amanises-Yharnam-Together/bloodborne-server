@@ -325,6 +325,44 @@ class CoopSettingsTests(unittest.TestCase):
         self.assertTrue(self.app.server_row.winfo_manager())
 
 
+    def test_play_never_starts_the_server(self):
+        """Kaniel 2026-10-21: one server, started only with Start server; PLAY on the host's PC no longer
+        starts it (players did not know it ran)."""
+        scratch = Path(self.tmp.name)
+        settings = dict(bbport_coop.DEFAULTS, host_ip='26.1.2.3', account='Lisara', password='pw')
+        with mock.patch.object(launcher, 'PORT_DIR', scratch), \
+                mock.patch.object(bbport_coop, 'is_this_pc', return_value=True), \
+                mock.patch.object(bbport_coop, 'servers_running', return_value=False), \
+                mock.patch.object(bbport_coop, 'start_servers') as start, \
+                mock.patch.object(bbport_coop, 'needs_prepare', return_value=False), \
+                mock.patch.object(bbport_coop, 'view_root', return_value=scratch), \
+                mock.patch.object(bbport_coop, 'copy_events'), \
+                mock.patch.object(self.app, 'coop_firewall', return_value=True), \
+                mock.patch.object(self.app, 'coop_start_game') as start_game:
+            self.app.coop_prepare_and_play(settings)
+            self.settle()
+        start.assert_not_called()
+        start_game.assert_called_once()
+        self.assertIsNone(start_game.call_args[0][2], 'the game still starts')
+
+    def test_the_server_line_says_whether_the_server_runs(self):
+        """Reddit 2026-10-21: the line beside Start server stayed empty while the server ran."""
+        self.app.coop['host_ip'] = '26.1.2.3'
+        with mock.patch.object(bbport_coop, 'is_this_pc', return_value=True):
+            with mock.patch.object(bbport_coop, 'servers_running', return_value=True):
+                self.app.coop_check_server()
+                self.settle()
+            self.assertEqual(self.app.coop_server_line.cget('text'), 'Running')
+            with mock.patch.object(bbport_coop, 'servers_running', return_value=False):
+                self.app.coop_check_server()
+                self.settle()
+            self.assertEqual(self.app.coop_server_line.cget('text'), 'Not running: press Start server to host')
+        with mock.patch.object(bbport_coop, 'is_this_pc', return_value=False), \
+                mock.patch.object(bbport_coop, 'servers_running', return_value=False):
+            self.app.coop_check_server()
+            self.settle()
+        self.assertEqual(self.app.coop_server_line.cget('text'), '', "a guest's server is the host's")
+
     def test_how_to_connect_shows_the_steps_and_gives_the_host_their_vpn_address(self):
         """Kaniel 2026-10-21: players got lost at the VPN step; the co-op card has a help button with the
         Radmin VPN steps, and the host can take this PC's Radmin address with one press."""
