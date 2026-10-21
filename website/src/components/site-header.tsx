@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { LogoMark } from "@/components/logo";
+import { SocialLinks } from "@/components/social-links";
 import { REPO_URL, site } from "@/lib/site";
 
 const nav = [
@@ -34,6 +35,7 @@ export function SiteHeader() {
           <a href={REPO_URL} rel="noopener" className="nav-link hidden py-1 sm:inline">
             GitHub
           </a>
+          <SocialLinks className="hidden sm:flex" />
         </nav>
       </div>
     </header>

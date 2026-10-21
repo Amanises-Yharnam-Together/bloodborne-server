@@ -5,7 +5,7 @@ import { SiteFooter } from "@/components/site-footer";
 import { Backdrop } from "@/components/backdrop";
 import { SiteHeader } from "@/components/site-header";
 import { JsonLd } from "@/lib/json-ld";
-import { REPO_URL, site, siteUrl } from "@/lib/site";
+import { REPO_URL, SOCIAL_LINKS, site, siteUrl } from "@/lib/site";
 import "./globals.css";
 
 const garamond = EB_Garamond({
@@ -75,7 +75,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             inLanguage: "en",
             url: siteUrl,
             description: site.description,
-            sameAs: [REPO_URL],
+            sameAs: [REPO_URL, ...SOCIAL_LINKS.map((link) => link.href)],
           }}
         />
       </body>

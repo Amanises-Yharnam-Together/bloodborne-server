@@ -9,6 +9,16 @@ export const SITE_DOMAIN = "bloodborne.seamlesscoop.dev";
 export const RELEASES_URL = `${REPO_URL}/releases`;
 export const LATEST_RELEASE_URL = `${RELEASES_URL}/latest`;
 export const ISSUES_URL = `${REPO_URL}/issues`;
+// The project's own channels, shown in the header and footer.
+export const SOCIAL_LINKS = [
+  {
+    id: "youtube",
+    label: "YouTube",
+    href: "https://www.youtube.com/channel/UCY_8yufPmucngGywT5ChOBQ",
+  },
+  { id: "discord", label: "Discord", href: "https://discord.gg/YD2YsN4y8r" },
+  { id: "x", label: "X", href: "https://x.com/yharnamtogether" },
+] as const;
 export const blob = (path: string) => `${REPO_URL}/blob/main/${path}`;
 
 export const site = {
@@ -70,14 +80,18 @@ export function absoluteUrl(path = "/"): string {
   return new URL(path, `${siteUrl}/`).toString();
 }
 
+// The trailer on YouTube; NEXT_PUBLIC_TRAILER_YOUTUBE_ID swaps in another video without a code change.
+export const TRAILER_YOUTUBE_ID = "MBlRNpzBqmo";
+export const youtubeWatchUrl = (id: string) => `https://www.youtube.com/watch?v=${id}`;
+
 /**
- * The trailer. Set NEXT_PUBLIC_TRAILER_YOUTUBE_ID to a YouTube video id (or a full YouTube URL)
- * and the landing page embeds it; unset, the page shows a framed placeholder.
+ * The trailer. NEXT_PUBLIC_TRAILER_YOUTUBE_ID may hold a YouTube video id or a full YouTube URL;
+ * unset or not a video, the landing page plays TRAILER_YOUTUBE_ID.
  */
-export function resolveTrailerId(env: Env = process.env): string | null {
+export function resolveTrailerId(env: Env = process.env): string {
   const raw = env.NEXT_PUBLIC_TRAILER_YOUTUBE_ID?.trim();
-  if (!raw) return null;
+  if (!raw) return TRAILER_YOUTUBE_ID;
   const fromUrl = raw.match(/(?:youtu\.be\/|[?&]v=|\/embed\/|\/shorts\/)([\w-]{11})/);
   const id = fromUrl ? fromUrl[1] : raw;
-  return /^[\w-]{11}$/.test(id) ? id : null;
+  return /^[\w-]{11}$/.test(id) ? id : TRAILER_YOUTUBE_ID;
 }
