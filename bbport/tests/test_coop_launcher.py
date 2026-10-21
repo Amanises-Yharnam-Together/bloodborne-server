@@ -55,6 +55,21 @@ class AnswersTests(unittest.TestCase):
         self.assertTrue(coop.valid_harder('3,1.5,3'))
         self.assertFalse(coop.valid_harder('3,1.5'))
 
+    def test_players_set_their_own_enemy_multipliers(self):
+        """Kaniel 2026-10-21: the presets were too specific; a custom setting takes any multipliers the game
+        takes (1 to 10 each, as ParseHarderEnemies), and all 1 is the normal game."""
+        self.assertEqual(coop.harder_value('2', '1.25', '4'), '2,1.25,4')
+        self.assertEqual(coop.harder_value(1, 1, 1), 'off')
+        self.assertEqual(coop.harder_value('25', '0.5', 'x'), '10,1,1', 'held to what the game takes')
+        self.assertEqual(coop.harder_value(1.333, 2, 2), '1.33,2,2')
+        for preset in (coop.HARDER_BIT, coop.HARDER_ON, coop.HARDER_MUCH):
+            self.assertTrue(coop.valid_harder(preset), preset)
+        self.assertFalse(coop.valid_harder('11,1,1'), 'the game drops a multiplier above 10')
+        self.assertFalse(coop.valid_harder('0.5,1,1'), 'and one below 1')
+        self.assertFalse(coop.valid_harder('1,1,1'))
+        env = coop.game_environment({}, dict(coop.DEFAULTS, harder='2,1.25,4'), Path('.'), Path('.'))
+        self.assertEqual(env['SHADPS4_BLOODBORNE_HARDER_ENEMIES'], '2,1.25,4')
+
     def test_missing_answers_are_named(self):
         # No party settings: teams are made in the game (phase 6), so no party name or password.
         self.assertNotIn('party_name', coop.DEFAULTS)
@@ -453,7 +468,8 @@ class UpdateTests(unittest.TestCase):
         import bbport_lang
         launcher = Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py'
         source = launcher.read_text(encoding='utf-8')
-        names = {'build_coop_help', 'coop_help_refresh', 'coop_help_refresh_public', 'coop_router_said'}
+        names = {'build_coop_help', 'coop_help_refresh', 'coop_help_refresh_public', 'coop_router_said',
+                 'build_coop_custom'}
         pieces = [f for f in ast.walk(ast.parse(source)) if isinstance(f, ast.FunctionDef) and f.name in names]
         self.assertEqual({f.name for f in pieces}, names)
         texts = {n.args[0].value for f in pieces for n in ast.walk(f) if isinstance(n, ast.Call)
@@ -472,6 +488,20 @@ class UpdateTests(unittest.TestCase):
         docs = Path(__file__).resolve().parents[2] / 'website' / 'src' / 'content' / 'docs.ts'
         if docs.exists():
             self.assertIn('slug: "radmin"', docs.read_text(encoding='utf-8'), 'the page the help links to')
+
+    def test_the_enemy_choices_are_translated_everywhere(self):
+        import ast
+        import bbport_lang
+        launcher = Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py'
+        tree = ast.parse(launcher.read_text(encoding='utf-8'))
+        choices = next(n.value for n in tree.body if isinstance(n, ast.Assign)
+                       and getattr(n.targets[0], 'id', '') == 'HARDER_CHOICES')
+        texts = [t.elts[1].elts[0].value for t in choices.elts] + ['Enemies (the same for every player)']
+        self.assertIn('Custom', texts)
+        for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
+            table = bbport_lang.table(language)
+            for text in texts:
+                self.assertTrue(table.get(text), f'{language}: {text}')
 
     def test_the_setup_updates_this_install_silently(self):
         command = coop.setup_command(Path('C:/Temp/Setup.exe'), Path('C:/Games/Co-op'))

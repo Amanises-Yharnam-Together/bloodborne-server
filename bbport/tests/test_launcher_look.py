@@ -463,6 +463,26 @@ class CoopSettingsTests(unittest.TestCase):
             self.settle(1.0)
         close_ports.assert_called_once()
 
+    def test_custom_enemies_take_the_players_own_multipliers(self):
+        """Kaniel 2026-10-21: the presets were too specific; Custom shows HP, damage and poise fields."""
+        box = self.app.coop_enemies
+        custom = [v for v, _t in launcher.HARDER_CHOICES].index('custom')
+        self.assertFalse(self.app.coop_custom.winfo_ismapped())
+        box.current(custom)
+        box.event_generate('<<ComboboxSelected>>')
+        self.settle()
+        self.assertTrue(self.app.coop_custom.winfo_ismapped())
+        for v, rate in zip(self.app.coop_custom_vars, ('2', '1.25', '4')):
+            v.set(rate)
+        self.settle(0.5)
+        self.assertEqual(self.app.coop_vars['harder'].get(), '2,1.25,4')
+        self.assertEqual(self.app.coop['harder'], '2,1.25,4', 'saved')
+        box.current(0)
+        box.event_generate('<<ComboboxSelected>>')
+        self.settle(0.5)
+        self.assertFalse(self.app.coop_custom.winfo_ismapped())
+        self.assertEqual(self.app.coop['harder'], 'off')
+
     def test_how_to_connect_shows_the_steps_and_gives_the_host_their_vpn_address(self):
         """Kaniel 2026-10-21: players got lost at the VPN step; the co-op card has a help button with the
         Radmin VPN steps, and the host can take this PC's Radmin address with one press."""
