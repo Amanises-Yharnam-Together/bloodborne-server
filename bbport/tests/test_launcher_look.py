@@ -348,6 +348,12 @@ class CoopSettingsTests(unittest.TestCase):
 
     def test_the_server_line_says_whether_the_server_runs(self):
         """Reddit 2026-10-21: the line beside Start server stayed empty while the server ran."""
+        # The check the launcher started on its own asks the real port (0.3 s on Windows when nothing
+        # listens); its answer must land before the mocked ones, not after.
+        end = time.time() + 5
+        while self.app.server_checking and time.time() < end:
+            self.settle(0.05)
+        self.settle()
         self.app.coop['host_ip'] = '26.1.2.3'
         with mock.patch.object(bbport_coop, 'is_this_pc', return_value=True):
             with mock.patch.object(bbport_coop, 'servers_running', return_value=True):
