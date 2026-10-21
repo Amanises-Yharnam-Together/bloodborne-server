@@ -68,6 +68,36 @@ def is_this_pc(value):
         return False
 
 
+# The VPNs players use, by the address range each hands out: the host's address on one of them goes
+# into Host's IP address (the launcher's connection help offers this PC's own).
+VPN_RANGES = (('Radmin VPN', ipaddress.IPv4Network('26.0.0.0/8')),
+              ('Tailscale', ipaddress.IPv4Network('100.64.0.0/10')))
+
+
+def vpn_name(value):
+    """The VPN an address belongs to ('Radmin VPN', 'Tailscale'), '' for any other address."""
+    try:
+        address = ipaddress.IPv4Address(value)
+    except ValueError:
+        return ''
+    return next((name for name, network in VPN_RANGES if address in network), '')
+
+
+def own_addresses():
+    """This PC's IPv4 addresses (every adapter's, on Windows), [] when they cannot be read."""
+    try:
+        return socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        return []
+
+
+def vpn_addresses(addresses=None):
+    """This PC's VPN addresses as (VPN, address), Radmin VPN first."""
+    found = [(vpn_name(ip), ip) for ip in (own_addresses() if addresses is None else addresses)]
+    order = [name for name, _network in VPN_RANGES]
+    return sorted({pair for pair in found if pair[0]}, key=lambda pair: (order.index(pair[0]), pair[1]))
+
+
 def valid_name(value):
     return bool(re.fullmatch(r'[A-Za-z0-9_-]{3,16}', value or ''))
 

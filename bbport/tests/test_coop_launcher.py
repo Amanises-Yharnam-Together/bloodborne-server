@@ -242,6 +242,19 @@ class PlayTests(unittest.TestCase):
         self.assertFalse(coop.is_this_pc(''))
         self.assertFalse(coop.is_this_pc('not an ip'))
 
+    def test_this_pcs_vpn_address_is_found_radmin_first(self):
+        """The connection help offers the host their own VPN address (Kaniel 2026-10-21: players got lost at
+        the VPN step)."""
+        self.assertEqual(coop.vpn_name('26.12.34.56'), 'Radmin VPN')
+        self.assertEqual(coop.vpn_name('100.101.7.9'), 'Tailscale')
+        self.assertEqual(coop.vpn_name('100.128.0.1'), '', 'outside the 100.64.0.0/10 range')
+        self.assertEqual(coop.vpn_name('192.168.1.20'), '')
+        self.assertEqual(coop.vpn_name('not an ip'), '')
+        self.assertEqual(coop.vpn_addresses(['192.168.1.20', '100.101.7.9', '26.12.34.56', '26.12.34.56']),
+                         [('Radmin VPN', '26.12.34.56'), ('Tailscale', '100.101.7.9')])
+        self.assertEqual(coop.vpn_addresses(['192.168.1.20']), [])
+        self.assertIsInstance(coop.vpn_addresses(), list)
+
     def test_the_host_overrides_point_the_game_at_the_host(self):
         self.assertEqual(json.loads(coop.host_overrides('26.1.2.3')),
                          {'https://ss4.scej-network.jp:20443': 'http://26.1.2.3:20443'})
@@ -422,6 +435,29 @@ class UpdateTests(unittest.TestCase):
             for text in texts:
                 self.assertTrue(table.get(text), f'{language}: {text}')
                 self.assertEqual(table[text].count('{}'), text.count('{}'), f'{language}: {text}')
+
+    def test_the_connection_help_is_translated_everywhere_and_links_the_website_guide(self):
+        import ast
+        import bbport_lang
+        launcher = Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py'
+        source = launcher.read_text(encoding='utf-8')
+        names = {'build_coop_help', 'coop_help_refresh'}
+        pieces = [f for f in ast.walk(ast.parse(source)) if isinstance(f, ast.FunctionDef) and f.name in names]
+        self.assertEqual({f.name for f in pieces}, names)
+        texts = {n.args[0].value for f in pieces for n in ast.walk(f) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Name) and n.func.id == '_' and n.args and isinstance(n.args[0], ast.Constant)}
+        self.assertGreater(len(texts), 10)
+        self.assertIn("_('How to connect', 'Как подключиться'), self.open_coop_help", source,
+                      'the co-op card opens the help')
+        for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
+            table = bbport_lang.table(language)
+            for text in texts:
+                self.assertTrue(table.get(text), f'{language}: {text}')
+                self.assertEqual(table[text].count('{}'), text.count('{}'), f'{language}: {text}')
+        self.assertIn("RADMIN_GUIDE = 'https://bloodborne.seamlesscoop.dev/docs/radmin'", source)
+        docs = Path(__file__).resolve().parents[2] / 'website' / 'src' / 'content' / 'docs.ts'
+        if docs.exists():
+            self.assertIn('slug: "radmin"', docs.read_text(encoding='utf-8'), 'the page the help links to')
 
     def test_the_setup_updates_this_install_silently(self):
         command = coop.setup_command(Path('C:/Temp/Setup.exe'), Path('C:/Games/Co-op'))

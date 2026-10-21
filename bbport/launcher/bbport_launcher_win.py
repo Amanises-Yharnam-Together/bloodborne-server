@@ -1313,6 +1313,9 @@ def console_encoding():
 # The home page's banner (Kaniel 2026-10-16): news and patch notes from the website, a file the site
 # serves as it is (website/public/launcher/news.json). The last copy read is kept for a start offline.
 NEWS_URL = 'https://bloodborne.seamlesscoop.dev/launcher/news.json'
+# The co-op connection help's links: the website's Radmin VPN guide and Radmin's own download page.
+RADMIN_GUIDE = 'https://bloodborne.seamlesscoop.dev/docs/radmin'
+RADMIN_DOWNLOAD = 'https://www.radmin-vpn.com'
 NEWS_FALLBACK = {
     'kicker': 'Seamless Co-op',
     'title': 'Hunt Yharnam together',
@@ -3708,6 +3711,7 @@ class Launcher:
             CaptionButton(self, strip, kind, command, bg=BG).pack(side='right')
         holder = tk.Frame(cover, bg=BG)
         holder.place(relx=0.5, rely=0.5, anchor='center', width=px(820))
+        self.coop_help_holder = holder
         card = self.card(holder, _('Co-op', 'Кооператив'), pad=32)
         card.frame.pack_configure(padx=0, pady=0)
         card.columnconfigure(0, weight=1, uniform='coop', minsize=0)
@@ -3757,9 +3761,12 @@ class Launcher:
 
         # No Player/Host switch (Kaniel 2026-10-16): the host types their own address, and PLAY starts the
         # server when the address is this PC's (bbport_coop.is_this_pc).
-        ttk.Entry(self.cell(card, 3, 0, _("Host's IP address (VPN or public; the host types their own)",
-                                          'IP хоста (VPN или внешний; хост вводит свой)')),
-                  textvariable=var('host_ip')).pack(fill='x')
+        cell = self.cell(card, 3, 0, _("Host's IP address (VPN or public; the host types their own)",
+                                       'IP хоста (VPN или внешний; хост вводит свой)'))
+        ttk.Entry(cell, textvariable=var('host_ip')).pack(fill='x')
+        # Players were lost at the VPN step (Kaniel 2026-10-21): the steps are one press away.
+        self.button(cell, _('How to connect', 'Как подключиться'), self.open_coop_help).pack(
+            anchor='w', pady=(px(8), 0))
         # No account name or password (phase 11): the player's id is made once and kept in coop.json,
         # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
         self.coop_enemies = combo(self.cell(card, 3, 1, _('Enemies (the same for every player)',
@@ -3778,9 +3785,96 @@ class Launcher:
         self.coop_missing = self.label(done_row, '', 'small', CAUTION)
         self.coop_missing.pack(side='right', padx=(0, px(16)))
         self.coop_host = done_row  # coop_changed waits for the card to be built
+        self.coop_card = card.frame
+        self.coop_help = None
         self.coop_changed()
         if not self.coop_game_folder():
             self.coop_search(None, quiet=True)
+
+    def build_coop_help(self):
+        """How the players reach the host, in the co-op card's place (Kaniel 2026-10-21: players got lost at
+        the VPN step): the Radmin VPN steps of the website's guide, this PC's VPN address with a button that
+        makes it the host's, what to check when nothing connects, and the full guide with pictures."""
+        tk, px = self.tk, self.px
+        card = self.card(self.coop_help_holder, _('How to connect', 'Как подключиться'), pad=28)
+        card.frame.pack_configure(padx=0, pady=0)
+        self.flow(card, _("The host's PC runs the co-op server, so every other player has to reach it. The easy "
+                          'way is Radmin VPN: free, no account, no router settings. Each player sets it up once.',
+                          'Сервер кооператива работает на ПК хоста, и остальным нужно до него достучаться. Проще '
+                          'всего через Radmin VPN: бесплатно, без аккаунта и настроек роутера. Каждый настраивает '
+                          'его один раз.'), 'body', MUTED).grid(
+            row=1, column=0, columnspan=2, sticky='we', pady=(px(6), px(4)))
+        steps = [
+            _('Everyone: install Radmin VPN, open it and turn it on with the power button at the top.',
+              'Все: установите Radmin VPN, откройте его и включите кнопкой питания вверху.'),
+            _('The host: Network → Create a new network. Pick a name nobody else uses and a password, and '
+              'send both to the others.',
+              'Хост: «Сеть» → «Создать сеть». Придумайте редкое имя и пароль и отправьте их остальным.'),
+            _('Everyone else: Network → Join an existing network, with that name and password.',
+              'Остальные: «Сеть» → «Присоединиться к сети» с этим именем и паролем.'),
+            _("Everyone, the host too, types the host's Radmin address (it starts with 26.) into Host's IP "
+              'address. In Radmin VPN, right-click the host → Copy IP address.',
+              'Все, и хост тоже, вписывают Radmin-адрес хоста (начинается с 26.) в «IP хоста». В Radmin VPN: '
+              'правый клик по хосту → «Копировать IP-адрес».'),
+            _('The host presses PLAY first. Windows asks once to let co-op through its firewall: allow it.',
+              'Хост нажимает «Играть» первым. Windows один раз спросит про брандмауэр: разрешите.'),
+        ]
+        for number, text in enumerate(steps, 1):
+            row = self.next_row(card)
+            self.label(card, f'{number}.', 'body_bold', GOLD).grid(row=row, column=0, sticky='nw', pady=(px(8), 0))
+            self.flow(card, text).grid(row=row, column=0, columnspan=2, sticky='we', padx=(px(26), 0),
+                                       pady=(px(8), 0))
+        mine = tk.Frame(card, bg=CARD)
+        mine.grid(row=self.next_row(card), column=0, columnspan=2, sticky='we', pady=(px(14), 0))
+        self.coop_help_address = self.label(mine, '', 'body', TEXT)
+        self.coop_help_address.pack(side='left')
+        self.coop_help_use = self.button(mine, _("I'm the host: use it", 'Я хост: подставить'), self.coop_use_own_vpn)
+        self.flow(card, _("Still no connection? Turn other VPNs such as NordVPN off, check that the host has a "
+                          "green dot in Radmin VPN, and that every PC has the host's 26. address.",
+                          'Всё равно не подключается? Выключите другие VPN, например NordVPN, проверьте, что у '
+                          'хоста зелёная точка в Radmin VPN и что на каждом ПК вписан 26.-адрес хоста.'),
+                  'small', MUTED).grid(row=self.next_row(card), column=0, columnspan=2, sticky='we', pady=(px(14), 0))
+        buttons = tk.Frame(card, bg=CARD)
+        buttons.grid(row=self.next_row(card), column=0, columnspan=2, sticky='we', pady=(px(20), 0))
+        self.button(buttons, _('Get Radmin VPN', 'Скачать Radmin VPN'),
+                    lambda: webbrowser.open(RADMIN_DOWNLOAD)).pack(side='left')
+        self.button(buttons, _('Full guide with pictures', 'Подробная инструкция с картинками'),
+                    lambda: webbrowser.open(RADMIN_GUIDE)).pack(side='left', padx=(px(8), 0))
+        self.button(buttons, _('Back', 'Назад'), self.close_coop_help, 'primary', width=px(150)).pack(side='right')
+        return card.frame
+
+    def open_coop_help(self):
+        if self.coop_help is None:
+            self.coop_help = self.build_coop_help()
+        self.coop_help_refresh()
+        self.coop_card.pack_forget()
+        self.coop_help.pack(fill='x')
+
+    def close_coop_help(self):
+        self.coop_help.pack_forget()
+        self.coop_card.pack(fill='x')
+
+    def coop_help_refresh(self):
+        """This PC's VPN address (looked up each time the help opens: Radmin VPN may have just been turned on)."""
+        found = bbport_coop.vpn_addresses()
+        self.coop_own_vpn = found[0][1] if found else ''
+        if found:
+            self.coop_help_address.configure(text=_("This PC's {} address: {}", 'Адрес этого ПК в {}: {}').format(
+                *found[0]), fg=TEXT)
+            if self.coop_vars['host_ip'].get().strip() == self.coop_own_vpn:
+                self.coop_help_use.pack_forget()
+            else:
+                self.coop_help_use.pack(side='left', padx=(self.px(12), 0))
+        else:
+            self.coop_help_address.configure(text=_('No Radmin VPN address on this PC yet: install it and turn it on.',
+                                                    'На этом ПК пока нет адреса Radmin VPN: установите и включите его.'),
+                                             fg=CAUTION)
+            self.coop_help_use.pack_forget()
+
+    def coop_use_own_vpn(self):
+        if self.coop_own_vpn:
+            self.coop_vars['host_ip'].set(self.coop_own_vpn)
+            self.coop_help_refresh()
 
     def coop_ready(self):
         """What the co-op settings still lack (the window's words), [] when PLAY can start."""
@@ -3795,6 +3889,8 @@ class Launcher:
 
     def open_coop(self, required=False):
         self.coop_required = required
+        if self.coop_help is not None and self.coop_help.winfo_manager():
+            self.close_coop_help()
         self.coop_cover.place(x=0, y=0, relwidth=1, relheight=1)
         self.coop_cover.lift()
         self.coop_changed()
