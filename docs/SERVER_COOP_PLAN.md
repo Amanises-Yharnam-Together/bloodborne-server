@@ -377,12 +377,16 @@ Each phase: red-green tests first, all CI checks, rig scenarios named below, mer
      (`TeamGate::Choose`). Drawn by the port's overlay (`bbport_overlay.cpp` `Team::Screen`, the
      menu's colours and ornaments, the game's serif): four hunters' places (emblem, name, state:
      choosing, ready, in the hunt, away; the leader marked), the hunters online with Invite, the
-     invitations with Join and Decline, and Create / Leave the team, Ready / Not ready (a member)
-     or Begin the hunt (the leader: its Ready and the Start), Play alone. It takes the pad and the
-     keyboard (the arrows / d-pad move over the buttons, Cross / Enter presses, the mouse works);
-     Insert and L3 + R3 still open the settings. Rig: `team-screen` (shows it), `team-ready`,
-     `team-start`, `team-alone` press its buttons once it is up (the title's Cross until then);
-     scenario `team-screen` (drawn, pictures). Placeholder emblems, no portraits yet (the game has
+     invitations with Join and Decline, and Create / Leave the team, Begin the hunt (the leader:
+     its Ready and the Start; in no team the save plays alone) and the world it plays (the
+     leader's opens the world list). Kaniel 2026-10-20: no Play alone and no Ready to press: a
+     member's screen says its save is ready by itself (`TeamGate::Decision::ready`), and the
+     leader begins as soon as the members are in (one not ready yet goes in once it is). It
+     takes the pad and the keyboard (the arrows / d-pad move over the buttons, Cross / Enter
+     presses, the mouse works); Insert and L3 + R3 still open the settings. Rig: `team-screen`
+     (shows it), `team-ready` (waits for the screen's own Ready), `team-start`, `team-alone`
+     press its buttons once it is up (the title's Cross until then); scenario `team-screen`
+     (drawn, pictures). Placeholder emblems, no portraits yet (the game has
      drawn no character at the title).
 
    **5b built 2026-10-14** (with the team lobby): a team's world is its event flags that are the

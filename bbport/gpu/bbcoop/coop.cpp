@@ -493,9 +493,7 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
     return 1;
 }
 
-static_assert(BBCOOP_TEAM_GO_READY == int(Core::Bloodborne::TeamGate::Choice::Ready) &&
-              BBCOOP_TEAM_GO_UNREADY == int(Core::Bloodborne::TeamGate::Choice::Unready) &&
-              BBCOOP_TEAM_GO_START == int(Core::Bloodborne::TeamGate::Choice::Start) &&
+static_assert(BBCOOP_TEAM_GO_START == int(Core::Bloodborne::TeamGate::Choice::Start) &&
               BBCOOP_TEAM_GO_ALONE == int(Core::Bloodborne::TeamGate::Choice::Alone));
 
 extern "C" int bbcoop_team_screen(void) {

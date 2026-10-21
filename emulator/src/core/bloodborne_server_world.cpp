@@ -1083,6 +1083,14 @@ bool HoldTitleLoadForTeam(u32 slot, bool fresh) {
                 }
             }
         }
+        if (decision.ready) {
+            LOG_INFO(Debug, "Co-op team lobby: the team screen says slot {} is ready", slot);
+            for (bbcoop::TeamRequest& request : team_gate.Choose(TeamGate::Choice::Ready, me)) {
+                bbcoop::Envelope envelope;
+                *envelope.mutable_team_request() = std::move(request);
+                lobby_outbox.push_back(std::move(envelope));
+            }
+        }
         if (decision.step == TeamGate::Step::Hold) {
             return true;
         }
@@ -1546,7 +1554,7 @@ void TeamChoose(TeamGate::Choice choice) {
     if (!team_gate.Holding() || lobby_playing) {
         return;
     }
-    static constexpr std::array<const char*, 4> Names{"ready", "not ready", "start", "alone"};
+    static constexpr std::array<const char*, 3> Names{"ready", "start", "alone"};
     LOG_INFO(Debug, "Co-op team lobby: the team screen chose {}",
              Names[static_cast<size_t>(choice)]);
     for (bbcoop::TeamRequest& request : team_gate.Choose(choice, lobby_member)) {
@@ -2173,20 +2181,26 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
         if (!TeamScreenUp()) {
             return false; // the title's Cross first (TickAutoplayTitle presses it)
         }
-        // The hunt begins only once every member is ready (the lobby refuses it before).
-        if (command.verb == "team-start" && !(lobby && TeamCanBegin(*lobby, me))) {
-            if (elapsed > TimeoutSeconds) {
-                failure = "not every member got ready";
+        // Kaniel 2026-10-20: a member's screen is ready by itself; team-ready waits for that,
+        // and the rig's leader begins once every member is (the lobby would start without one
+        // not ready yet, which then goes in by itself).
+        if (command.verb == "team-ready" || command.verb == "team-start") {
+            const bool ready = command.verb == "team-ready" ? lobby && TeamMemberReady(*lobby, me)
+                                                            : lobby && TeamCanBegin(*lobby, me);
+            if (!ready) {
+                if (elapsed > TimeoutSeconds) {
+                    failure = command.verb == "team-ready" ? "the team screen never said ready"
+                                                           : "not every member got ready";
+                }
+                return false;
             }
-            return false;
         }
         if (command.verb == "team-worlds") {
             // Kaniel 2026-10-17: the world list (the port's team screen opens it once asked).
             team_worlds_asked.store(true, std::memory_order_relaxed);
-        } else if (command.verb != "team-screen") {
-            TeamChoose(command.verb == "team-ready"   ? TeamGate::Choice::Ready
-                       : command.verb == "team-start" ? TeamGate::Choice::Start
-                                                      : TeamGate::Choice::Alone);
+        } else if (command.verb == "team-start" || command.verb == "team-alone") {
+            TeamChoose(command.verb == "team-start" ? TeamGate::Choice::Start
+                                                    : TeamGate::Choice::Alone);
         }
         done = true;
     } else if (command.verb == "team-leave") {

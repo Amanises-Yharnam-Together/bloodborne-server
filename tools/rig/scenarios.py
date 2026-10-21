@@ -1686,7 +1686,7 @@ SCENARIOS = {
     },
     "team-screen": {
         "about": "the team screen after Continue (run drawn: pictures): a team of two forms, the "
-                 "guest readies, the host begins",
+                 "guest is ready by itself, the host begins",
         "roles": {
             "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-screen",
                      "title-wait 3", "title-shot screen-host", "title-wait 10",

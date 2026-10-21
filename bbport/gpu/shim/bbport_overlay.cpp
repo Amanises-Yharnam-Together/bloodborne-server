@@ -2732,7 +2732,7 @@ void TextPrompt() {
 
 // The team screen (phase 5, docs/SERVER_COOP_PLAN.md "The team lobby"): up while the title holds a
 // save's load for the team (bbcoop_team_screen). Four hunters' places, the players online to
-// invite, the invitations, and the buttons: create or leave a team, ready or start, play alone.
+// invite, the invitations, and the buttons: create or leave a team, begin the hunt, its world.
 // Drawn like the menu (its colours and ornaments, the game's serif); focus moves with the
 // d-pad / arrows over the buttons in the order they are drawn, Cross / Enter presses, the mouse
 // works too.
@@ -2747,10 +2747,10 @@ struct Focus {
     int items = 0;
     int move = 0;
     bool activate = false;
-    bool fresh = true; // the screen just came up: the focus goes to the Ready / Begin button
+    bool fresh = true; // the screen just came up: the focus goes to the Begin button
     // The focused button by its id, so the focus stays on it when the rows before it change
-    // (Kaniel 2026-10-14: once an invitation was accepted its row went, and Cross landed on Play
-    // alone); this frame's button ids in order.
+    // (Kaniel 2026-10-14: once an invitation was accepted its row went, and Cross landed on the
+    // next button); this frame's button ids in order.
     std::string id;
     std::vector<std::string> ids;
     bool was_in_team = false;
@@ -3238,7 +3238,7 @@ void Screen() {
     }
     if (picker.open) {
         DrawWorldPicker(draw, win, size);
-        focus.fresh = true; // back on the team screen: the focus goes to Begin / Ready again
+        focus.fresh = true; // back on the team screen: the focus goes to Begin again
         ImGui::End();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
@@ -3262,8 +3262,8 @@ void Screen() {
     if (!lobby.signed_in) {
         status = T("Reaching the co-op server...", "Подключение к кооп-серверу...");
     } else if (!lobby.in_team) {
-        status = T("Not in a team: create one, accept an invitation, or play alone",
-                   "Не в команде: создайте её, примите приглашение или играйте один");
+        status = T("Not in a team: create one or accept an invitation",
+                   "Не в команде: создайте её или примите приглашение");
     } else {
         status = std::string(lobby.members[0].name) + T("'s team", " — команда") + "   " +
                  std::to_string(lobby.member_count) + T(" of 4", " из 4");
@@ -3278,9 +3278,9 @@ void Screen() {
     const float cards_x = win.x + (size.x - (4 * card_w + 3 * gap)) * 0.5f,
                 header_y = win.y + S(MenuArt::Has(MenuArt::HeaderOrnament) ? 140.0f : 128.0f);
     // Full screen: the cards and the two lists (five rows) as one block, in the middle of the room
-    // between the title and the world row.
+    // between the title and the buttons.
     const float block_h = card_h + S(30.0f) + S(50.0f) + 5 * S(42.0f);
-    const float room = (win.y + size.y - S(166.0f) - S(60.0f)) - header_y;
+    const float room = (win.y + size.y - S(166.0f) - S(30.0f)) - header_y;
     const float cards_y = header_y + std::max(0.0f, (room - block_h) * 0.5f);
     for (int i = 0; i < BBCOOP_LOBBY_TEAM; ++i) {
         const bool taken = lobby.in_team && i < lobby.member_count;
@@ -3373,39 +3373,7 @@ void Screen() {
     }
     ImGui::PopFont();
 
-    // Kaniel 2026-10-17: the world the hunt plays, one of the server's (any team plays any of them,
-    // each kept apart). Its leader (or a player in no team yet: the team it makes takes it) opens
-    // the list to choose it; the others see which it is.
-    if (!lobby.menu && (lobby.in_team || lobby.signed_in)) {
-        ImGui::PushFont(MenuArt::Font(), 20.0f);
-        const bbcoop_lobby_world* chosen =
-            lobby.world >= 0 && lobby.world < lobby.world_count ? &lobby.worlds[lobby.world] : nullptr;
-        std::string world = chosen ? chosen->name : T("A new world", "Новый мир");
-        if (chosen && chosen->when[0]) {
-            world += std::string("  ·  ") + chosen->when;
-        }
-        const ImVec2 row_size(S(640.0f), S(40.0f));
-        const ImVec2 row_at(win.x + (size.x - row_size.x) * 0.5f, win.y + size.y - S(166.0f) - S(52.0f));
-        if (CanPickWorld()) {
-            const std::string text = std::string(T("Choose a world  —  ", "Выбрать мир  —  ")) + world;
-            if (Button(draw, "world", Fit(text.c_str(), row_size.x - S(24.0f)).c_str(), row_at, row_size)) {
-                OpenWorldPicker();
-            }
-        } else if (lobby.in_team) {
-            const std::string shown = Fit((std::string(T("World: ", "Мир: ")) + world).c_str(), row_size.x);
-            ts = ImGui::CalcTextSize(shown.c_str());
-            draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, row_at.y + S(8.0f)), Gold(0.85f), shown.c_str());
-        }
-        ImGui::PopFont();
-    }
-
-    // The buttons: the team, ready or start, alone.
-    bool me_ready = false;
-    for (int i = 0; i < lobby.member_count; ++i) {
-        if (std::strcmp(lobby.members[i].id, lobby.me) == 0) {
-            me_ready = lobby.members[i].ready != 0;
-        }
-    }
+    // The buttons: the team, Begin the hunt, the world.
     ImGui::PushFont(MenuArt::Font(), 24.0f);
     const float bw = S(260.0f), bh = S(54.0f);
     // Kaniel 2026-10-19: high enough for the line under them and the key guide over the ornament.
@@ -3452,22 +3420,21 @@ void Screen() {
         ImGui::PopStyleColor();
         return;
     }
-    const char* go = lobby.leader ? T("Begin the hunt", "Начать охоту")
-                     : me_ready   ? T("Not ready", "Не готов")
-                                  : T("Ready", "Готов");
-    // Kaniel 2026-10-14: the hunt begins only once every member is ready (the server refuses it
-    // too); a started team's leader back from a crash goes in at once.
-    bool everyone_ready = lobby.started != 0;
-    if (!everyone_ready) {
-        everyone_ready = true;
+    // Kaniel 2026-10-20: no Ready to press (a member's screen says it is ready by itself) and no
+    // Play alone (alone is a team of one). The leader begins as soon as the members are in: one
+    // still choosing goes in once its screen is up. In no team (the server out of reach too)
+    // Begin plays this save alone.
+    bool everyone_in = lobby.started != 0;
+    if (!everyone_in) {
+        everyone_in = true;
         for (int i = 0; i < lobby.member_count; ++i) {
             const bbcoop_lobby_entry& m = lobby.members[i];
             if (std::strcmp(m.id, lobby.me) != 0 && (!m.ready || m.state == BBCOOP_LOBBY_OFFLINE)) {
-                everyone_ready = false;
+                everyone_in = false;
             }
         }
     }
-    // Into a team (an invitation accepted): the focus goes to Ready.
+    // Into a team (an invitation accepted): the focus goes to Begin.
     if (lobby.in_team && !focus.was_in_team) {
         focus.fresh = true;
     }
@@ -3477,27 +3444,55 @@ void Screen() {
         focus.focus = focus.items; // the next button's index
         focus.id = "go";
     }
-    if (Button(draw, "go", go, ImVec2(bx, by), ImVec2(bw, bh),
-               lobby.in_team != 0 && (!lobby.leader || everyone_ready), true)) {
-        bbcoop_team_choose(lobby.leader ? BBCOOP_TEAM_GO_START
-                           : me_ready   ? BBCOOP_TEAM_GO_UNREADY
-                                        : BBCOOP_TEAM_GO_READY);
+    if (Button(draw, "go", T("Begin the hunt", "Начать охоту"), ImVec2(bx, by), ImVec2(bw, bh),
+               !lobby.in_team || lobby.leader, true)) {
+        bbcoop_team_choose(lobby.in_team ? BBCOOP_TEAM_GO_START : BBCOOP_TEAM_GO_ALONE);
     }
     bx += bw + gap;
-    if (Button(draw, "alone", T("Play alone", "Играть одному"), ImVec2(bx, by), ImVec2(bw, bh))) {
-        bbcoop_team_choose(BBCOOP_TEAM_GO_ALONE);
-    }
     ImGui::PopFont();
+    // Kaniel 2026-10-17: the world the hunt plays, one of the server's (any team plays any of them,
+    // each kept apart). Its leader (or a player in no team yet: the team it makes takes it) opens
+    // the list to choose it; the others see which it is. Kaniel 2026-10-20: in the third button's
+    // place, its name under what the button does (the date is in the list).
+    if (lobby.in_team || lobby.signed_in) {
+        const bbcoop_lobby_world* chosen =
+            lobby.world >= 0 && lobby.world < lobby.world_count ? &lobby.worlds[lobby.world] : nullptr;
+        const char* world = chosen && chosen->name[0] ? chosen->name : T("A new world", "Новый мир");
+        const bool pick = CanPickWorld();
+        const ImVec2 at(bx, by), end(bx + bw, by + bh);
+        bool lit = false;
+        if (pick) {
+            const int index = focus.items;
+            if (Button(draw, "world", "", at, ImVec2(bw, bh))) {
+                OpenWorldPicker();
+            }
+            lit = focus.focus == index;
+        } else if (!MenuArt::Nine(draw, MenuArt::Row, at, end, 12.0f, S(9.0f), 0.5f)) {
+            draw->AddRect(at, end, Gold(0.15f), S(2.0f), 0, S(1.2f));
+        }
+        const float fit = bw - S(24.0f);
+        ImGui::PushFont(MenuArt::Font(), 16.0f);
+        const std::string caption =
+            Fit(pick ? T("Choose a world", "Выбрать мир") : T("The world", "Мир"), fit);
+        ImVec2 cs = ImGui::CalcTextSize(caption.c_str());
+        draw->AddText(ImVec2(bx + (bw - cs.x) * 0.5f, by + S(6.0f)), Gold(pick ? 0.85f : 0.6f), caption.c_str());
+        ImGui::PopFont();
+        ImGui::PushFont(MenuArt::Font(), 21.0f);
+        const std::string name = Fit(world, fit);
+        cs = ImGui::CalcTextSize(name.c_str());
+        draw->AddText(ImVec2(bx + (bw - cs.x) * 0.5f, by + S(26.0f)), lit ? Bright() : Plain(pick ? 1.0f : 0.8f),
+                      name.c_str());
+        ImGui::PopFont();
+    }
 
     // The server's last refusal, the hint and the controls.
     ImGui::PushFont(MenuArt::Font(), 18.0f);
-    const char* hint = lobby.leader && !everyone_ready
-                           ? T("The hunt begins once every hunter is ready.",
-                               "Охота начнётся, когда все охотники будут готовы.")
-                       : lobby.leader ? T("Everyone is ready: begin the hunt together.",
-                                          "Все готовы: начните охоту вместе.")
-                       : lobby.in_team ? T("The leader begins the hunt; you join it when ready.",
-                                           "Лидер начинает охоту; вы присоединитесь, когда будете готовы.")
+    const char* hint = lobby.leader && everyone_in
+                           ? T("Everyone is in: begin the hunt together.", "Все на месте: начните охоту вместе.")
+                       : lobby.leader ? T("Begin when you like: hunters still choosing join the hunt at once.",
+                                          "Начинайте, когда захотите: кто ещё выбирает, сразу вступит в охоту.")
+                       : lobby.in_team ? T("The leader begins the hunt; you join it at once.",
+                                           "Лидер начинает охоту; вы сразу вступите в неё.")
                                        : T("Your character plays its own world alone.",
                                            "Ваш персонаж играет в своём мире один.");
     const char* line = lobby.notice[0] ? lobby.notice : hint;

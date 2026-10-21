@@ -78,8 +78,14 @@ bool TeamCanBegin(const bbcoop::LobbyState& lobby, const std::string& me) {
     });
 }
 
+bool TeamMemberReady(const bbcoop::LobbyState& lobby, const std::string& me) {
+    return lobby.has_team() &&
+           std::ranges::any_of(lobby.team().members(), [&](const bbcoop::TeamMember& m) {
+               return m.member() == me && m.ready();
+           });
+}
+
 TeamGate::Decision TeamGate::Tick(const std::string& me, u32 slot_now, s64 now_ms) {
-    (void)me;
     Decision decision;
     if (!holding_since) {
         holding_since = now_ms;
@@ -89,8 +95,20 @@ TeamGate::Decision TeamGate::Tick(const std::string& me, u32 slot_now, s64 now_m
         decision.start = started;
         return decision;
     }
-    if (!alone) {
-        decision.step = Step::Hold; // the team screen is up: the player decides
+    if (alone) {
+        return decision;
+    }
+    decision.step = Step::Hold; // the team screen is up: the leader begins
+    // Kaniel 2026-10-20: a member is ready by itself, with the save its screen is up for.
+    if (lobby && lobby->has_team()) {
+        const auto& members = lobby->team().members();
+        const auto mine = std::ranges::find_if(
+            members, [&](const bbcoop::TeamMember& m) { return m.member() == me; });
+        if (mine != members.end() && (!mine->ready() || mine->slot() != slot_now) &&
+            (!ready_said || now_ms - *ready_said >= ReadyAgainMs)) {
+            ready_said = now_ms;
+            decision.ready = true;
+        }
     }
     return decision;
 }
@@ -100,9 +118,6 @@ std::vector<bbcoop::TeamRequest> TeamGate::Choose(Choice choice, const std::stri
     switch (choice) {
     case Choice::Alone:
         alone = true;
-        break;
-    case Choice::Unready:
-        requests.emplace_back().set_action(bbcoop::TeamRequest::UNREADY);
         break;
     case Choice::Ready:
     case Choice::Start: {
@@ -121,6 +136,7 @@ std::vector<bbcoop::TeamRequest> TeamGate::Choose(Choice choice, const std::stri
 void TeamGate::Reset() {
     started.reset();
     holding_since.reset();
+    ready_said.reset();
     alone = false;
 }
 
