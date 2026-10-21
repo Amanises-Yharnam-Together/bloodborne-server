@@ -2521,9 +2521,28 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
             pointers.push_back(character);
         }
     }
+    // Ambush enemies the host's event switched off for good (AmbushSlotFlag): their slot done.
+    // Looked up only in Hemwick while one off far from the host is on here.
+    std::unordered_set<u32> off_for_good;
+    const auto far_off_on_here = [&](const CharacterShown& at) {
+        return at.distant && (at.hidden || at.disabled) &&
+               std::ranges::any_of(mine, [&](const CharacterSwitch& own) {
+                   return own.handle == at.handle && !own.disabled;
+               });
+    };
+    if (map == AmbushMap && std::ranges::any_of(host, far_off_on_here)) {
+        const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+        if (world >= 0x10000) {
+            for (const auto& [character, entity] : CharacterEntityIds(world)) {
+                if (const auto flag = AmbushSlotFlag(entity); flag && EventFlagOn(*flag)) {
+                    off_for_good.insert(ReadValue<u32>(character, 0x08));
+                }
+            }
+        }
+    }
     std::string which;
     for (const CharacterSwitch& change :
-         SwitchedLikeTheHost(host, mine, switched_off, kill_hidden)) {
+         SwitchedLikeTheHost(host, mine, switched_off, kill_hidden, off_for_good)) {
         const auto at = std::ranges::find(mine, change.handle, &CharacterSwitch::handle);
         if (!SetCharacterDisabled(pointers[at - mine.begin()], change.disabled)) {
             continue;
