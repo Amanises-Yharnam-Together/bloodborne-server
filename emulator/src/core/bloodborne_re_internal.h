@@ -441,6 +441,14 @@ void ForEachWorldCharacter(u64 world, Visit&& visit) {
 bool IsCharacterDisabled(u64 character);
 // The character's enable switch as event command 2004:5 sets it; false if it is no character.
 bool SetCharacterDisabled(u64 character, bool disabled);
+// A character's hits switch: bit 1 (2) of its model's flags ([+0x58]+0x114), set = no hits.
+// Event command 2004:39 (bank 2004 handler case 39, 0x017BC152) calls 0x013CABD0 with the entity
+// id, which for a character sets or clears that bit (at 0x013CAD09) and nothing else.
+constexpr u64 SetEntityHitsOffset = 0x013CABD0;
+constexpr u64 SetCharacterHitsBitOffset = 0x013CAD09;
+bool CharacterHitsOff(u64 character);
+// As 2004:39 does for a character; false if it is no character. The game's thread only.
+bool SetCharacterHitsOff(u64 character, bool off);
 void TickLampRest();
 
 bool EnemiesAreHarder();

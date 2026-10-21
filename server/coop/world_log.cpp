@@ -76,8 +76,7 @@ std::vector<u8> EncodeShownCharacters(std::span<const CharacterShown> characters
     bytes.reserve(characters.size() * 5);
     for (const CharacterShown& character : characters) {
         AppendLittleEndian(bytes, character.handle);
-        bytes.push_back(static_cast<u8>((character.hidden ? 1 : 0) | (character.disabled ? 2 : 0) |
-                                        (character.distant ? 4 : 0) | (character.dead ? 8 : 0)));
+        bytes.push_back(ShownBits(character));
     }
     return bytes;
 }
@@ -89,19 +88,20 @@ std::optional<std::vector<CharacterShown>> DecodeShownCharacters(std::span<const
     std::vector<CharacterShown> characters;
     for (size_t offset = 0; offset < bytes.size(); offset += 5) {
         const u8 state = bytes[offset + 4];
-        characters.push_back({ReadLittleEndian<u32>(bytes, offset), (state & 1) != 0,
-                              (state & 2) != 0, (state & 4) != 0, (state & 8) != 0});
+        characters.push_back(ShownFromBits(ReadLittleEndian<u32>(bytes, offset), state));
     }
     return characters;
 }
 
 u8 ShownBits(const CharacterShown& character) {
     return static_cast<u8>((character.hidden ? 1 : 0) | (character.disabled ? 2 : 0) |
-                           (character.distant ? 4 : 0) | (character.dead ? 8 : 0));
+                           (character.distant ? 4 : 0) | (character.dead ? 8 : 0) |
+                           (character.hits_off ? 16 : 0));
 }
 
 CharacterShown ShownFromBits(u32 handle, u8 bits) {
-    return {handle, (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0, (bits & 8) != 0};
+    return {handle,          (bits & 1) != 0, (bits & 2) != 0,
+            (bits & 4) != 0, (bits & 8) != 0, (bits & 16) != 0};
 }
 
 std::vector<CharacterShown> WorldLogShownCharacters(const WorldLogShown& shown) {
@@ -269,7 +269,8 @@ std::optional<WorldLogProposal> DecodeWorldLogProposal(std::span<const u8> paylo
 }
 
 // The host's name, epoch, last seq, the entry count (u8) and the first entry's seq (u64), then
-// each entry: kind (u8; a Shown's bits in its low half, see WorldLogKind), map, subject, value.
+// each entry: kind (u8; a Shown's low four bits in its low half, see WorldLogKind), map, subject,
+// value (a Shown's bits, all of them).
 std::vector<u8> EncodeWorldLogBatch(const WorldLogBatch& batch) {
     std::vector<u8> payload;
     AppendName(payload, batch.host);
@@ -313,7 +314,7 @@ std::optional<WorldLogBatch> DecodeWorldLogBatch(std::span<const u8> payload) {
         const bool shown = (*kind & 0xF0) == static_cast<u8>(WorldLogKind::Shown);
         batch.entries.push_back({*first + index, *epoch, *map,
                                  shown ? WorldLogKind::Shown : static_cast<WorldLogKind>(*kind),
-                                 *subject, shown ? u32{*kind & 0x0Fu} : *value});
+                                 *subject, *value});
     }
     if (!reader.Done()) {
         return std::nullopt;

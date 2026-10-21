@@ -2203,6 +2203,26 @@ std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown>
     return changes;
 }
 
+std::vector<CharacterHits> HitsLikeTheHost(std::span<const CharacterShown> host,
+                                           std::span<const CharacterHits> mine,
+                                           const std::unordered_set<u32>& kill_hidden) {
+    std::unordered_map<u32, bool> hosts; // handle -> hits off, for those on near the host
+    for (const CharacterShown& character : host) {
+        if (!character.distant && !character.hidden && !character.disabled && !character.dead) {
+            hosts[character.handle] = character.hits_off;
+        }
+    }
+    std::vector<CharacterHits> changes;
+    for (const CharacterHits& character : mine) {
+        const auto it = hosts.find(character.handle);
+        if (it != hosts.end() && it->second != character.off &&
+            !kill_hidden.contains(character.handle)) {
+            changes.push_back({character.handle, it->second});
+        }
+    }
+    return changes;
+}
+
 bool WatchesKills(bool sharing, bool trip_active, bool loading) {
     return sharing && !trip_active && !loading;
 }

@@ -2132,6 +2132,31 @@ TEST(BloodborneHiddenCharacters, FarFromTheHostRidesInBitTwo) {
     EXPECT_EQ(DecodeShownCharacters(EncodeShownCharacters(host)), host);
 }
 
+// Kaniel's playtest 2026-10-20, the Witch of Hemwick: only the host saw the Mad Ones she summons.
+// They wait switched off with their hits off (event command 2004:39); her summon (m22_00 event
+// 12204839) switches one on and turns its hits on, in the host's game only, since it waits on
+// her AI. The guests switched their copies on like the host's (SwitchedLikeTheHost) but their
+// hits stayed off. A guest now turns a character's hits on or off as the host has them, for one
+// that is on near the host.
+TEST(BloodborneHiddenCharacters, AGuestTurnsHitsOnAsTheHostHasThem) {
+    const std::vector<CharacterShown> host{
+        {0x1000801c, false, false, false, false, false}, // summoned: on, hits on
+        {0x1000801d, false, true, false, false, true},   // waiting: off, hits off
+        {0x1000801e, false, false, true, false, false},  // far from the host
+        {0x1000801f, false, false, false, true, false},  // dead in the host's world
+        {0x10008020, false, false, false, false, true},  // on with its hits off in the host's
+    };
+    const std::vector<CharacterHits> guest{{0x1000801c, true},  {0x1000801d, true},
+                                           {0x1000801e, true},  {0x1000801f, true},
+                                           {0x10008020, false}, {0x10008021, true}};
+    EXPECT_EQ(HitsLikeTheHost(host, guest, {}),
+              (std::vector<CharacterHits>{{0x1000801c, false}, {0x10008020, true}}));
+    EXPECT_EQ(HitsLikeTheHost(host, guest, {0x1000801c}),
+              (std::vector<CharacterHits>{{0x10008020, true}}))
+        << "one the kill board hid is left alone";
+    EXPECT_EQ(HitsLikeTheHost({}, guest, {}), std::vector<CharacterHits>{});
+}
+
 TEST(BloodborneHiddenCharacters, AGuestLeavesCharactersFarFromTheHostAsTheyAre) {
     const std::vector<CharacterShown> host{
         {0x1000801b, false, true, true}, // switched off far from the host: the woods' border

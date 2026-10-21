@@ -847,6 +847,20 @@ bool IsCharacterDisabled(u64 character) {
     return control >= 0x10000 && (ReadValue<u8>(control, 0x20) & 1) != 0;
 }
 
+bool CharacterHitsOff(u64 character) {
+    const u64 model = ReadValue<u64>(character, 0x58);
+    return model >= 0x10000 && (ReadValue<u16>(model, 0x114) & 2) != 0;
+}
+
+bool SetCharacterHitsOff(u64 character, bool off) {
+    const u64 model = ReadValue<u64>(character, 0x58);
+    if (model < 0x10000 || !HasMemoryAccess(model + 0x114, sizeof(u16), MemoryProt::CpuWrite)) {
+        return false;
+    }
+    const u16 flags = ReadValue<u16>(model, 0x114);
+    return WriteValue(model, 0x114, static_cast<u16>(off ? flags | 2 : flags & ~2));
+}
+
 s32 CharacterHp(u64 character) {
     const u64 modules = ReadValue<u64>(character, 0x3B0);
     const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;

@@ -3286,6 +3286,40 @@ SCENARIOS["mad-one-back"] = {
     "timeout": 300,
 }
 
+
+# Kaniel's playtest 2026-10-20: only the host saw the Mad Ones the Witch of Hemwick summons. They
+# wait switched off with their hits off (2004:39); her summon (m22_00 12204839, waiting on her AI)
+# turns them on in the host's game only, and a guest's copy switched on like the host's kept its
+# hits off. The guest now copies the host's hits switch: once she summons, the guest turns a Mad
+# One's hits on (0x1000801c and 0x1000801d are the ones her summons bring, 0x1000801b the
+# opening event's). Her fight starts with a player in area 2202805 (m22_00 12201802 sets
+# 12204800); the lamp's warp point is outside it, so the host starts it, and her summons wait for
+# her HP (12204839: hers at 30% or less, or her clone's at half or less).
+WITCH = "0x10008024"  # entity 2200800
+WITCH_CLONE = "0x10008025"  # entity 2200801, switched on as her fight starts
+WITCH_FIGHT_STARTED = 12204800
+SCENARIOS["witch-summons"] = {
+    "about": "the Witch of Hemwick summons Mad Ones in the host's game; the guest's copies get "
+             "their hits turned on like the host's",
+    "roles": {
+        "host": [*HEMWICK_START, "wait-session 2 300", "sync summon-ready",
+                 f"set-flag {WITCH_FIGHT_STARTED} 1", "wait 5", f"hurt {WITCH} 700",
+                 f"hurt {WITCH_CLONE} 1900", "wait 30", "wait 30", "wait 30", "census 60",
+                 "sync summon-checked", "expect-session 2"],
+        "guest": [*HEMWICK_START, "wait-session 2 300", "sync summon-ready", "wait 30", "wait 30",
+                  "wait 30", "census 60", "shot witch-summons", "sync summon-checked",
+                  "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "witch-summons", "roles": ["host", "guest"]}
+              for name in ("summon-ready", "summon-checked")},
+    # A Mad One she summoned, switched on with its hits on (bit 1 of the census' draw word, the
+    # model flags 2004:39 writes) in both games.
+    "expect": {role: [r"census: 0x1000801[cd] [^\n]* disabled 0 at [^\n]* "
+                      r"draw 0x[0-9a-f]*[014589cd] team"] for role in ("host", "guest")},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 420,
+}
+
 # Kaniel 2026-10-20: back in the Dream the guests' headstones said "no place to awaken". Each
 # headstone's talk asks one flag, "a lamp of mine is lit" (12105030-12105034), which m21_00's
 # 12105020-12105024 set in each player's own game from its own lamps (12105031: the Forbidden

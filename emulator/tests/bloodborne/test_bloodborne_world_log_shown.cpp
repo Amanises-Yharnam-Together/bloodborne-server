@@ -56,7 +56,7 @@ const CharacterShown DeadOne{0x1001400b, false, false, false, true};
 } // namespace
 
 TEST(WorldLogShown, BitsAreTheShownBoards) {
-    for (u8 bits = 0; bits < 16; ++bits) {
+    for (u8 bits = 0; bits < 32; ++bits) {
         const CharacterShown character = ShownFromBits(0x10, bits);
         EXPECT_EQ(ShownBits(character), bits);
         EXPECT_EQ(EncodeShownCharacters(std::vector{character}).back(), bits);
@@ -84,6 +84,22 @@ TEST(WorldLogShown, EntriesReadBack) {
     EXPECT_EQ(payload[first_entry + 13 * 1], 3);
     EXPECT_EQ(payload[first_entry + 13 * 2], 0x17);
     EXPECT_EQ(payload[first_entry + 13 * 3], 4);
+}
+
+// The Witch of Hemwick's Mad Ones (Kaniel 2026-10-20): a character's hits switch is bit 4
+// (0x10). The kind byte has room for the low four bits only; the entry's value has them all.
+TEST(WorldLogShown, TheHitsBitReadsBack) {
+    const CharacterShown mad_one{0x1000801c, false, false, false, false, true};
+    EXPECT_EQ(ShownBits(mad_one), 0x10);
+    EXPECT_EQ(ShownFromBits(mad_one.handle, 0x10), mad_one);
+    EXPECT_EQ(DecodeShownCharacters(EncodeShownCharacters(std::vector{mad_one})),
+              std::vector{mad_one});
+    const u64 epoch = WorldLogEpoch(7, 1);
+    const WorldLogBatch batch =
+        Batch(epoch, 3,
+              {ShownMap(1, Yharnam), Shown(2, Yharnam, mad_one.handle, 0x12),
+               Shown(3, Yharnam, Parked.handle, 7)});
+    EXPECT_EQ(DecodeWorldLogBatch(EncodeWorldLogBatch(batch)), batch);
 }
 
 TEST(WorldLogShown, ASnapshotFrameReadsBackAndFitsTheLink) {

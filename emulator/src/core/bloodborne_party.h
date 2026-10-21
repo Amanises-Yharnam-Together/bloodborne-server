@@ -1588,6 +1588,20 @@ std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown>
                                                  std::span<const CharacterSwitch> mine,
                                                  const std::unordered_set<u32>& switched_off,
                                                  const std::unordered_set<u32>& kill_hidden);
+// A character's hits switch (event command 2004:39; `off`: no hits). The Witch of Hemwick's Mad
+// Ones wait with their hits off, and her summon (m22_00 event 12204839, which waits on her AI)
+// turns them on in the host's game only: the guests' copies were switched on (SwitchedLikeTheHost)
+// with no hits (Kaniel 2026-10-20: only the host saw them). What to set on this member's copies
+// (`mine`): the host's switch for each one on near the host and alive there, never one the kill
+// board hid (`kill_hidden`).
+struct CharacterHits {
+    u32 handle = 0;
+    bool off = false;
+    bool operator==(const CharacterHits&) const = default;
+};
+std::vector<CharacterHits> HitsLikeTheHost(std::span<const CharacterShown> host,
+                                           std::span<const CharacterHits> mine,
+                                           const std::unordered_set<u32>& kill_hidden);
 // On this member's map change: back on, every character it switched off (`switched_off`) that is
 // still loaded and off (`mine`). Characters by a map border stay loaded across it.
 std::vector<CharacterSwitch> UndoneOnMapChange(const std::unordered_set<u32>& switched_off,
