@@ -273,6 +273,37 @@ TEST(BloodbornePartyTrip, KeepsTheSessionFromTheTransitionUntilTheNewStageHasLoa
     EXPECT_FALSE(trip.Active(T0 + 2s));
 }
 
+// Rig 2026-10-21 (mist-ambush-guest): the guest's lamp trip began before the session formed, and
+// the join landed during its load; the world teardown found no trip and ended the session. A trip
+// begun outside a session is none (the session's leave is the game's own then), but the party's
+// once a session forms before it arrives.
+TEST(BloodbornePartyTrip, ATripUnderWayWhenTheSessionFormsBecomesTheParty) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    constexpr u32 Hemwick = 0x16000000;
+    PartyTrip trip;
+    trip.StartOutOfSession(T0, CentralYharnam, 0x1000);
+    EXPECT_FALSE(trip.Active(T0 + 1s)) << "no session: no party trip";
+    trip.ObserveStage(Hemwick, true, 0x1000);
+    EXPECT_TRUE(trip.JoinSession(T0 + 2s)) << "the join landed during its load";
+    EXPECT_TRUE(trip.Active(T0 + 2s));
+    EXPECT_FALSE(trip.JoinSession(T0 + 3s)) << "once";
+    trip.ObserveStage(Hemwick, false, 0x2000);
+    EXPECT_FALSE(trip.Active(T0 + 4s)) << "arrived";
+}
+
+// One that arrived before the session formed is over: the join keeps no trip.
+TEST(BloodbornePartyTrip, ATripThatArrivedBeforeTheSessionIsNone) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    constexpr u32 Hemwick = 0x16000000;
+    PartyTrip trip;
+    trip.StartOutOfSession(T0, CentralYharnam, 0x1000);
+    trip.ObserveStage(Hemwick, false, 0x2000);
+    EXPECT_FALSE(trip.JoinSession(T0 + 2s));
+    EXPECT_FALSE(trip.Active(T0 + 2s));
+    trip.StartOutOfSession(T0, CentralYharnam, 0x1000);
+    EXPECT_FALSE(trip.JoinSession(T0 + PartyTrip::Timeout)) << "timed out";
+}
+
 // The trip ends at the first tick on the new stage (the party tick does not run while loading).
 TEST(BloodbornePartyTrip, EndsOnceThePlayerIsOnTheNewStage) {
     constexpr u32 CentralYharnam = 0x18010000;

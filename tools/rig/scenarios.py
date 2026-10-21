@@ -3414,6 +3414,27 @@ SCENARIOS["mist-ambush-guest"] = {
 }
 
 
+# Rig 2026-10-21 (mist-ambush-guest's first version): a guest's lamp trip that began as their
+# session formed: the join lands about 16.0 s after both games are in the world, and only one
+# landing between the warp and the old world's teardown (a second or so) broke it; the mist runs'
+# trip 15.8 s in hit it every time. The join landed during its load,
+# and its world teardown, seeing no party trip, ended the session ("left the session outside a
+# trip"). Joining must hold whenever it lands (Kaniel).
+SCENARIOS["join-during-trip"] = {
+    "about": "a guest's lamp trip is under way when the session forms: it arrives in the session",
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "sync trip-arrived", "wait 10",
+                 "expect-session 2"],
+        "guest": [START, "godmode", "wait 15.7", f"travel {WITCH_ABODE_LAMP}",
+                  f"expect-map {HEMWICK}", "wait-session 2 300", "sync trip-arrived", "wait 10",
+                  "expect-session 2"],
+    },
+    "syncs": {"trip-arrived": {"chapter": "join-during-trip", "roles": ["host", "guest"]}},
+    "forbid": {"host": SESSION_HOLDS, "guest": [*SESSION_HOLDS, *CRASH_CLEANUP]},
+    "timeout": 300,
+}
+
+
 # Kaniel's playtest 2026-10-20: the Witch of Hemwick flickered for krolebord (a guest). Her vanish
 # (m22_00 event 12204812, waiting on her own AI) switches her off and back on in every game, and
 # the guest switched its copies along with the host's board too, out of step with its own fight.

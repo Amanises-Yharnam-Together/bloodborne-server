@@ -495,6 +495,22 @@ public:
         player = from_player;
         needs_load = false;
         loaded = false;
+        out_of_session = false;
+    }
+    // A trip begun outside a session (a lamp's warp before the join): no party trip, the leave
+    // its load does is the game's own, until a session forms while it is under way (JoinSession).
+    void StartOutOfSession(Clock::time_point now, u32 from_stage, u64 from_player) {
+        Start(now, from_stage, from_player);
+        out_of_session = true;
+    }
+    // In a session now: a trip begun outside one and not arrived yet is the party's (the join
+    // landed during its load, rig 2026-10-21: its world teardown ended the session). True once.
+    bool JoinSession(Clock::time_point now) {
+        if (!started || !out_of_session || now - *started >= Timeout) {
+            return false;
+        }
+        out_of_session = false;
+        return true;
     }
     // The world load's own StopRequest (0x0193C65C, a time-of-day reload): a trip only once a load
     // shows (loading, no player, or a new one). At a border it came with no load, the map read
@@ -536,7 +552,7 @@ public:
         return true;
     }
     bool Active(Clock::time_point now) const {
-        return started && now - *started < Timeout;
+        return started && !out_of_session && now - *started < Timeout;
     }
 
 private:
@@ -545,6 +561,7 @@ private:
     u64 player = 0;
     bool needs_load = false;
     bool loaded = false;
+    bool out_of_session = false;
 };
 
 // Join tasks (CSMultiPlayerIns, one per session player, in CSMultiPlayMan's list): the kind at

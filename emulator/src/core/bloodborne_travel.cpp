@@ -1055,8 +1055,30 @@ void StartPartyTrip(const GuestRegisterSnapshot* registers, bool world_reload) {
         if (registers != nullptr) {
             LogGameCallChainAt("party trip", registers->rsp);
         }
+    } else if (!world_reload) {
+        std::scoped_lock lock{party_trip_mutex};
+        party_trip.StartOutOfSession(PartyTrip::Clock::now(), GetCurrentPackedMap(),
+                                     GetLocalPlayer());
     }
 }
+
+// A join that lands while a trip begun outside the session is still loading (a lamp's warp as
+// the session formed, rig 2026-10-21): that trip is the party's, so its world teardown and leave
+// keep the session; what StartPartyTrip keeps for the arrival is taken now.
+[[maybe_unused]] const bool trip_on_join_registered =
+    RegisterLifecycleReset("trip under way", {Lifecycle::Join}, [] {
+        {
+            std::scoped_lock lock{party_trip_mutex};
+            if (!party_trip.JoinSession(PartyTrip::Clock::now())) {
+                return;
+            }
+        }
+        SaveRemoteJoinTasks();
+        effects_before_trip = LocalEffects();
+        ParkEnemyWatch();
+        LOG_INFO(Debug, "Bloodborne party trip: the session formed during a trip, map={:#x}",
+                 CurrentPlace().map);
+    });
 
 bool PS4_SYSV_ABI RecordPartyTrip(u64, const GuestRegisterSnapshot* registers) {
     StartPartyTrip(registers, false);
