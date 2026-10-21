@@ -72,20 +72,22 @@ SHOW_OWN_CHOICES = ("deaths", "ghosts", "lanterns")
 # layout, rites, depth*10 + area (0 Pthumeru, 1 Hintertomb, 2 Loran, 3 Isz), 0x1D; u32 the
 # chalice's goods id; 9 layers of {u32 id, s32 code} (ids 9900000 + key*1000 + 30, 35, 50, 60,
 # 11; -1 for none); the conductor's name, 16 bytes ASCII, and 32 bytes UTF-16; zeros to 140. A
-# ritual builds its dungeon from the player's own chalice; a join through Chalice Dungeon Search
-# builds it from FormData alone. Keyed by RitualLevel * 10 + HolyGrailTypeId: (rites, goods id,
-# layer codes, 0xFF for none), as the game's own records of these chalices have them.
+# ritual takes the chalice from the player's hands but its layout from the record's rites byte:
+# 90 is a standard chalice's story layout, m29_<key>_90_00 (0 gave the story Pthumeru Chalice
+# the root layout m29_10_00_00 and its boss the root loot, rig BB_FILE_TRACE 2026-10-21); a join
+# through Chalice Dungeon Search builds it from FormData alone. Keyed by RitualLevel * 10 +
+# HolyGrailTypeId: (rites, goods id, layer codes, 0xFF for none).
 STANDARD_DUNGEONS = {
-    10: (0, 6109, (0xFF, 0x23, 0x32)),
-    20: (0, 6209, (0xFF, 0x24, 0x32, 0x3C)),
-    21: (0, 6219, (0xFF, 0x23, 0x33, 0x3C, 0x0A)),
-    30: (0, 6309, (0xFF, 0x24, 0x32, 0x3D)),
-    31: (0, 6319, (0xFF, 0x25, 0x33, 0x3C, 0x0A)),
-    40: (10, 6409, (0xFF, 0x24, 0x32, 0x3D, 0x0E)),
-    42: (0, 6429, (0xFF, 0x23, 0x34, 0x3C)),
-    50: (0, 6509, (0xFF, 0x24, 0x32, 0x3D, 0x0E)),
-    52: (0, 6529, (0xFF, 0x26, 0x34, 0x3C)),
-    53: (0, 6539, (0x4F, 0x27, 0x35, 0x43, 0x0F)),
+    10: (90, 6109, (0xFF, 0x23, 0x32)),
+    20: (90, 6209, (0xFF, 0x24, 0x32, 0x3C)),
+    21: (90, 6219, (0xFF, 0x23, 0x33, 0x3C, 0x0A)),
+    30: (90, 6309, (0xFF, 0x24, 0x32, 0x3D)),
+    31: (90, 6319, (0xFF, 0x25, 0x33, 0x3C, 0x0A)),
+    40: (90, 6409, (0xFF, 0x24, 0x32, 0x3D, 0x0E)),
+    42: (90, 6429, (0xFF, 0x23, 0x34, 0x3C)),
+    50: (90, 6509, (0xFF, 0x24, 0x32, 0x3D, 0x0E)),
+    52: (90, 6529, (0xFF, 0x26, 0x34, 0x3C)),
+    53: (90, 6539, (0x4F, 0x27, 0x35, 0x43, 0x0F)),
 }
 # Their ChannelIds: this base plus the key, far above any stored dungeon's.
 STANDARD_CHANNEL_BASE = 2000000000

@@ -82,10 +82,10 @@ class ServiceTest(unittest.TestCase):
                        "UnlockedFlagList": [{"UnlockedFlag": 0}, {"UnlockedFlag": 1},
                                             {"UnlockedFlag": 0}], "UserId": 1}
     # The Pthumeru Chalice's dungeon as the game uploads dungeons (format 5, 140 bytes, little
-    # endian): depth 1 in Pthumeru, layout 0, no rites, the chalice (goods 6109), its layers
+    # endian): depth 1 in Pthumeru, layout 0, rites 90, the chalice (goods 6109), its layers
     # (ids 9910030/35/50 with their codes), conductor "Hunter". A join through Chalice Dungeon
     # Search reads only this (rig 2026-10-18: the old layout showed Depth 0 and died in the load).
-    PTHUMERU_FORM = ("050000008c00000000000a1ddd170000" "0e379700ffffffff1337970023000000"
+    PTHUMERU_FORM = ("050000008c000000005a0a1ddd170000" "0e379700ffffffff1337970023000000"
                      "2237970032000000" + "ff" * 48 + "48756e74657200000000000000000000"
                      "480075006e007400650072" + "00" * 25)
 
@@ -96,6 +96,18 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(base64.b64decode(dungeon["FormData"]).hex(), self.PTHUMERU_FORM)
         self.assertEqual((dungeon["RitualLevel"], dungeon["HolyGrailTypeId"],
                           dungeon["FixedOrGeneral"], dungeon["Status"]), (1, 0, 2, 1))
+
+    def test_standard_chalices_build_their_story_layouts(self):
+        # A ritual builds its dungeon from the record's rites byte (FormData byte 9), even with the
+        # chalice in hand: rites 0 gave the story Pthumeru Chalice the root layout m29_10_00_00
+        # and its boss the root loot; 90 opens m29_10_90_00 (rig BB_FILE_TRACE, 2026-10-21).
+        # Every standard chalice has its one m29_<key>_90_00 in the game's event folder.
+        for key in (10, 20, 21, 30, 31, 40, 42, 50, 52, 53):
+            search = dict(self.PTHUMERU_SEARCH, RitualLevel=key // 10, HolyGrailTypeId=key % 10)
+            found = self.post("/channel/search?user_id=1", search)["ChannelList"]
+            self.assertEqual(len(found), 1, key)
+            form = base64.b64decode(found[0]["FormData"])
+            self.assertEqual((form[8], form[9], form[10]), (0, 90, key), key)
 
     def test_standard_chalice_dungeon_details(self):
         found = self.post("/channel/search?user_id=1", self.PTHUMERU_SEARCH)["ChannelList"]
