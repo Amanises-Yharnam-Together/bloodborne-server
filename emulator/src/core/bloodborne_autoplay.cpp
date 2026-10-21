@@ -1201,6 +1201,21 @@ bool AutoplayRaiseStat(const AutoplayStep& step) {
     return true;
 }
 
+// add-effect <SpEffect>: the effect put on the player through its own add-effect virtual, as the
+// game's events do (4680: a point of Insight, common event 9350's; the rig's characters have few).
+bool AutoplayAddEffect(const AutoplayStep& step) {
+    const u64 player = GetLocalPlayer();
+    if (!HasVirtual(player, CharacterAddSpEffectSlot, AddSpEffectOffset, "autoplay AddSpEffect")) {
+        step.failure = "no player";
+        return false;
+    }
+    const s32 effect = static_cast<s32>(step.Number(0, 0));
+    reinterpret_cast<AddSpEffectFn>(image_base + AddSpEffectOffset)(
+        player, effect, player, 0, 1, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0);
+    LOG_INFO(Debug, "Bloodborne autoplay add-effect: {}", effect);
+    return true;
+}
+
 // peek <target> <offset>, poke <target> <offset> <value> [1] (hex): a character's u32 (or byte)
 // at an offset, logged or written (reverse engineering on the rig: a field's meaning tried in
 // play).
@@ -1474,52 +1489,43 @@ bool AutoplayExpectCompass(const AutoplayStep& step) {
     return false;
 }
 
-// expect-stains <own|members> <compass> <map> [<seconds>] (Kaniel 2026-10-20, bloodstains on the
-// compass and map): within `seconds` (10) this player's own bloodstain (own) or the members'
-// (members) number `compass` on the compass and `map` on the map screen's party data. Logs what
-// both show.
+// expect-stains <compass> <map> [<seconds>] (Kaniel 2026-10-20, bloodstains on the compass and
+// map): within `seconds` (10) the bloodstains shown number `compass` on the compass and `map` on
+// the map screen's data (Kaniel after v1.0.2: only this player's own). Logs what both show.
 bool AutoplayExpectStains(const AutoplayStep& step) {
-    const bool own = step.Arg(0) == "own";
     CompassView view;
     ReadCompass(view);
     PartyPanel panel;
     ReadPartyPanel(panel);
     size_t on_compass = 0, on_map = 0;
     std::string seen;
-    for (size_t i = 0; i < view.stains.size(); ++i) {
-        const CompassStain& stain = view.stains[i];
-        on_compass += (stain.owner < 0) == own ? 1 : 0;
-        seen += fmt::format(" [compass {} at {:.1f} deg, {:.1f} m]",
-                            stain.owner < 0 ? "own" : view.stain_names[i],
-                            stain.bearing * 180.0f / std::numbers::pi_v<float>, stain.distance);
+    if (view.stain) {
+        ++on_compass;
+        seen += fmt::format(" [compass own at {:.1f} deg, {:.1f} m]",
+                            view.stain->bearing * 180.0f / std::numbers::pi_v<float>,
+                            view.stain->distance);
     }
-    const auto on_the_map = [&](const Bloodstain& stain, std::string_view whose, bool mine) {
-        if (stain.map != 0) {
-            on_map += mine == own ? 1 : 0;
-            seen += fmt::format(" [map {} on {:#x} at ({:.1f}, {:.1f}, {:.1f}), {} echoes]", whose,
-                                stain.map, stain.at[0], stain.at[1], stain.at[2], stain.echoes);
-        }
-    };
-    on_the_map(panel.own_stain, "own", true);
-    for (const PanelMember& member : panel.members) {
-        on_the_map(member.stain, member.shown, false);
+    if (const Bloodstain& stain = panel.own_stain; stain.map != 0) {
+        ++on_map;
+        seen += fmt::format(" [map own on {:#x} at ({:.1f}, {:.1f}, {:.1f}), {} echoes]", stain.map,
+                            stain.at[0], stain.at[1], stain.at[2], stain.echoes);
     }
     const std::string text = seen.empty() ? " none" : seen;
-    if (on_compass == static_cast<size_t>(step.Number(1, 0)) &&
-        on_map == static_cast<size_t>(step.Number(2, 0))) {
-        LOG_INFO(Debug, "Bloodborne autoplay stains ({}):{}", step.Arg(0), text);
+    if (on_compass == static_cast<size_t>(step.Number(0, 0)) &&
+        on_map == static_cast<size_t>(step.Number(1, 0))) {
+        LOG_INFO(Debug, "Bloodborne autoplay stains:{}", text);
         return true;
     }
-    if (step.elapsed > step.Number(3, 10.0)) {
+    if (step.elapsed > step.Number(2, 10.0)) {
         step.failure = fmt::format("{} on the compass, {} on the map:{}", on_compass, on_map, text);
     }
     return false;
 }
 
-// pickup-stain [<timeout>]: this player glides through its own bloodstain at walking pace (from
-// 2.5 m short of it, on the way from where it stands, to 1.5 m past), pressing X now and then,
-// until the game's record of it clears. A teleport onto the stain never touches it (rig
-// 2026-10-20).
+// pickup-stain [<timeout>]: this player glides onto its own bloodstain at walking pace (from 2.5 m
+// short of it, on the way from where it stands) and stays on it, pressing X now and then, until the
+// game's record of it clears. A teleport onto the stain never touches it, and a glide past it
+// missed it after a 10 s frame stall (rig 2026-10-21).
 bool AutoplayPickupStain(const AutoplayStep& step) {
     static LampPosition from{}, way{};
     const auto stain = Coop::ReadOwnBloodstain();
@@ -1544,7 +1550,7 @@ bool AutoplayPickupStain(const AutoplayStep& step) {
         LOG_INFO(Debug, "Bloodborne autoplay: bloodstain picked up after {:.1f} s", step.elapsed);
         return true;
     }
-    const float along = std::min(static_cast<float>(step.elapsed) * 1.5f, 4.0f);
+    const float along = std::min(static_cast<float>(step.elapsed) * 1.5f, 2.5f);
     // A heading h faces (-sin h, cos h).
     TeleportLocalPlayer({from[0] + way[0] * along, from[1], from[2] + way[2] * along},
                         std::atan2(-way[0], way[2]));
@@ -1856,6 +1862,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-hp", AutoplayExpectHp},
     {"dump", AutoplayDump},
     {"raise-stat", AutoplayRaiseStat},
+    {"add-effect", AutoplayAddEffect},
     {"peek", AutoplayPeekOrPoke},
     {"poke", AutoplayPeekOrPoke},
     {"expect-hidden", AutoplayExpectHidden},

@@ -808,6 +808,9 @@ bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 
 // 2026-10-18: a save that took the host's "holds the Sword Hunter Badge" from a team world never
 // got its own badge from the Cleric Beast.
 std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool holds);
+// A Dream headstone's flag (DreamHeadstones) as this player's own lamps make it: on while one of
+// them is lit (`on` reads a flag); nullopt for any other flag.
+std::optional<bool> HeadstoneLampsLit(s32 flag, const std::function<bool(s32)>& on);
 // Whether a load of the guest's world gets the kept world changes before its map items and
 // events: at home, and on a party trip (its own world loads while the session stays up).
 bool SetsGuestWorldChangesOnLoad(bool in_session, bool on_trip);
@@ -3187,8 +3190,9 @@ constexpr s64 GiveUpHoldMs = 3'000;
 // and its revive damage on others as "<target>:<down>:<damage>" totals. The answer has the same
 // line per member with the party's revive damage on that member's down added at the end, then a
 // "wipe <id> <map> <member>..." line for each wipe shadNet declared lately.
-// Kaniel 2026-10-20 (bloodstains on the compass and map): a player's bloodstain, the echoes it
-// dropped where it died. The game keeps one, the latest; map 0: none.
+// Kaniel 2026-10-20 (bloodstains on the compass and map): this player's bloodstain, the echoes it
+// dropped where it died. The game keeps one, the latest; map 0: none. Only its own player sees it
+// (Kaniel after v1.0.2: "you only see your bloodstain on compass and map").
 struct Bloodstain {
     u32 map = 0;
     LampPosition at{};
@@ -3214,8 +3218,6 @@ struct MemberVitals {
     // Kaniel 2026-10-18: its Blood Vials and Quicksilver Bullets (the server only, as cutscene).
     u32 vials = 0;
     u32 bullets = 0;
-    // Kaniel 2026-10-20: its bloodstain (the server only, as cutscene).
-    Bloodstain stain;
     bool operator==(const MemberVitals&) const = default;
 };
 // Where the team's host stands (up or down, on a map) on the vitals board, as a resume point.
@@ -3629,8 +3631,6 @@ struct PanelMember {
     // Kaniel 2026-10-18: its vials and bullets, shown beside its name.
     u32 vials = 0;
     u32 bullets = 0;
-    // Kaniel 2026-10-20: its bloodstain, on whatever map it lies (map 0: none).
-    Bloodstain stain;
     bool operator==(const PanelMember&) const = default;
 };
 struct PartyPanel {

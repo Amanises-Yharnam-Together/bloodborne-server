@@ -263,6 +263,44 @@ def patch_host_door_effect(emevd: bytes, edits: list | None = None,
     return bytes(data), patched
 
 
+# A chalice dungeon's last boss reward (m29 12901693, started by the layer's own event file with
+# the lots as parameters, Kaniel 2026-10-20): every player's gem (2003:36), then for the host only
+# an extra lot (2003:4: a gem, or the next Root Chalice, by the dungeon's flags), which a client
+# skips (1003:105 to a label, state 1) and could not be given anyway. The skips never match and the
+# extra lot reaches a client too, so each party member rolls its own (loot is per player). The
+# event already runs in each player's own game (2000:2 0).
+CHALICE_REWARD_EVENTS = {'m29.emevd.dcx': 12901693}
+GOTO_IF_MULTIPLAYER_STATE = (1003, 105)
+
+
+def patch_chalice_rewards(emevd: bytes, edits: list | None = None,
+                          event_id: int = 12901693) -> tuple[bytes, int]:
+    data = bytearray(emevd)
+    fields = struct.unpack_from('<16q', data, 16)
+    event_count, event_offset, instruction_offset, args_offset = (fields[0], fields[1], fields[3],
+                                                                  fields[13])
+    patched = 0
+    for index in range(event_count):
+        event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
+                                                             event_offset + index * 48)
+        if event != event_id:
+            continue
+        for k in range(count):
+            record = instruction_offset + first + k * INSTRUCTION_SIZE
+            bank, ident, length, offset, _ = struct.unpack_from('<iiqqq', data, record)
+            at = args_offset + offset
+            if (bank, ident) == GOTO_IF_MULTIPLAYER_STATE and length >= 2 and data[at + 1] == 1:
+                data[at + 1] = NEVER
+                note(edits, event, k, bank, ident, 'client skip never matches')
+                patched += 1
+            if (bank, ident) == AWARD_ITEM_LOT:
+                struct.pack_into('<i', data, record + 4, AWARD_ITEM_LOT_INCLUDING_CLIENTS)
+                note(edits, event, k, bank, AWARD_ITEM_LOT_INCLUDING_CLIENTS,
+                     'chalice reward for clients too')
+                patched += 1
+    return bytes(data), patched
+
+
 def patch_client_events(emevd: bytes, wanted: set[int],
                         edits: list | None = None) -> tuple[bytes, int]:
     data = bytearray(emevd)
@@ -802,7 +840,8 @@ def patch_file(name: str, original: bytes) -> tuple[bytes | None, list, dict]:
     edits: list = []
     counts = {'boss event checks': 0, 'boss fog checks': 0, 'insight event checks': 0,
               'client event ends': 0, 'local events': 0, 'chalice wall checks': 0,
-              'item pickup checks': 0, 'host door effects': 0, 'ambush checks': 0}
+              'item pickup checks': 0, 'host door effects': 0, 'ambush checks': 0,
+              'chalice reward checks': 0}
     try:
         if name.startswith('m'):
             emevd, counts['boss event checks'] = patch_events(emevd, edits)
@@ -823,6 +862,9 @@ def patch_file(name: str, original: bytes) -> tuple[bytes | None, list, dict]:
         if name in HOST_DOOR_EFFECT:
             emevd, counts['host door effects'] = patch_host_door_effect(
                 emevd, edits, HOST_DOOR_EFFECT[name])
+        if name in CHALICE_REWARD_EVENTS:
+            emevd, counts['chalice reward checks'] = patch_chalice_rewards(
+                emevd, edits, CHALICE_REWARD_EVENTS[name])
         # Last: validate names changed instructions by their number in the game's event, which
         # only inserts move.
         if name in LOCAL_EVENTS:

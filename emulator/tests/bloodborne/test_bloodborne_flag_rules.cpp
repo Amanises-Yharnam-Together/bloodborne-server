@@ -261,6 +261,21 @@ TEST(BloodborneFlagRules, DoorsOneMemberOpenedOpenForTheParty) {
     EXPECT_EQ(std::ranges::adjacent_find(DoorFlags), DoorFlags.end());
 }
 
+// Kaniel 2026-10-20: the enemies rising out of the mist in the Hemwick woods rose only for the
+// host's approach. A guest's own copy of the ambush event (m22_00 12204000, slot k for enemy
+// 2200500 + k) woke the enemy in its game only (rig mist-ambush-guest); the host's copy also rises
+// once its slot's done flag 12204000 + k is on, so the party shares those.
+TEST(BloodborneFlagRules, AnAmbushAGuestWokeRisesForTheHost) {
+    for (s32 flag = 12204000; flag <= 12204008; ++flag) {
+        EXPECT_TRUE(SharedWithParty(flag)) << flag;
+        EXPECT_FALSE(SharesClearsWithParty(flag)) << flag;
+        EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
+        EXPECT_TRUE(TakesHostMapFlag(flag)) << flag;
+    }
+    EXPECT_FALSE(SharedWithParty(12204009));
+    EXPECT_FALSE(SharedWithParty(12204011)); // the ambush armed: the host's Insight decides
+}
+
 TEST(BloodborneFlagRules, BossFoundFlagsArePerPlayer) {
     std::set<s32> found;
     for (const EncounterInsight& boss : EncounterInsights()) {
@@ -313,6 +328,52 @@ TEST(BloodborneFlagRules, HeldItemFlagsAreEachPlayersOwn) {
             HeldItemFlags, [&](const HeldItemFlag& item) { return item.flag == flag; });
         EXPECT_EQ(RuleFor(flag).owner == FlagOwner::PerPlayer, held) << flag;
     }
+}
+
+// Kaniel 2026-10-20: back in the Dream the guests' headstones all said "no place to awaken",
+// and his first one did after a rejoin. Each headstone's talk (t210000-t210004) asks one flag,
+// "a lamp of mine is lit" (12105030-12105034), which m21_00's 12105020-12105024 work out in
+// every player's game from its own lamps. As the host's, the other players' values came in over
+// the game's flag messages and flipped about once a second in all three logs. Those messages are
+// also how a game's own event sets it in a session (rig 2026-10-20: kept off against the other's,
+// it never came on), so a game neither keeps nor takes a value: it takes its own lamps' one.
+TEST(BloodborneFlagRules, DreamHeadstonesReadEachPlayersOwnLamps) {
+    for (const HeadstoneLamps& headstone : DreamHeadstones) {
+        EXPECT_EQ(RuleFor(headstone.flag).owner, FlagOwner::PerPlayer) << headstone.flag;
+        EXPECT_FALSE(CarriesToGuestWorld(headstone.flag)) << headstone.flag;
+        EXPECT_FALSE(TakesHostMapFlag(headstone.flag)) << headstone.flag;
+        EXPECT_FALSE(SharedWithParty(headstone.flag)) << headstone.flag;
+        for (const s32 lamp : headstone.lamps) {
+            if (lamp == 0) {
+                continue;
+            }
+            EXPECT_EQ(RuleFor(lamp).owner, FlagOwner::Shared) << lamp << " a lamp's active flag";
+        }
+    }
+    std::vector<s32> flags;
+    for (const HeadstoneLamps& headstone : DreamHeadstones) {
+        flags.push_back(headstone.flag);
+    }
+    EXPECT_EQ(flags, (std::vector<s32>{12105030, 12105031, 12105032, 12105033, 12105034}));
+    // The flags beside them stay the host's; the Doll's 12100122 too.
+    for (const s32 flag : {12100122, 12105029, 12105035}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Host) << flag;
+    }
+}
+
+// m21_00 12105020-12105024 (01.09): on while any of the headstone's lamps is lit.
+TEST(BloodborneFlagRules, AHeadstoneIsLitByThisPlayersOwnLamps) {
+    const std::set<s32> lit{12407830, 13207810};
+    const auto on = [&](s32 flag) { return lit.contains(flag); };
+    EXPECT_EQ(HeadstoneLampsLit(12105030, on), std::optional<bool>{true}); // Cathedral Ward
+    EXPECT_EQ(HeadstoneLampsLit(12105031, on), std::optional<bool>{true}); // Yahar'gul's first
+    EXPECT_EQ(HeadstoneLampsLit(12105032, on), std::optional<bool>{false});
+    EXPECT_EQ(HeadstoneLampsLit(12105033, on), std::optional<bool>{false});
+    EXPECT_EQ(HeadstoneLampsLit(12105034, on), std::optional<bool>{false});
+    EXPECT_EQ(HeadstoneLampsLit(12105035, on), std::nullopt);
+    EXPECT_EQ(HeadstoneLampsLit(12100122, on), std::nullopt);
+    EXPECT_EQ(HeadstoneLampsLit(12105034, [](s32 flag) { return flag == 13607850; }),
+              std::optional<bool>{true});
 }
 
 // A held-item flag follows what this player holds: on while it holds the item (as 12100450 sets

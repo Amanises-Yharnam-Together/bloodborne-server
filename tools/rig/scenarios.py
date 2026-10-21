@@ -1511,26 +1511,29 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
-    # Kaniel 2026-10-20 ("bloodstains of ours will be displayed on compass and map"): the guest
-    # (given echoes) dies by the lamp and wakes there; its own stain is on its compass and map, the
-    # host's show it too (through the server); the guest stands on it, and it goes from both.
+    # Kaniel 2026-10-20 ("bloodstains of ours will be displayed on compass and map"; after v1.0.2:
+    # "you only see your bloodstain on compass and map"): the guest (given echoes) dies by the lamp
+    # and wakes there; its own stain is on its compass and map, the host's show none while it lies
+    # there; the guest picks it up, and it goes from its own.
     "bloodstain": {
-        "about": "the party's bloodstains: a member's stain on its own and the others' compass "
-                 "and map, gone from both once picked up",
+        "about": "bloodstains: a player's own on its compass and map, never on a teammate's, gone "
+                 "once picked up",
         "settings": PARTY_DEATH,
         "roles": {
             "host": [START, "godmode", "wait-session 2 300", "wait-member-vital dead 180",
-                     "expect-stains members 1 1 60", "shot host-stain-compass",
-                     "expect-stains members 0 0 120", "wait 5"],
+                     "wait-member-vital up 60", "wait 1", "expect-stains 0 0 2",
+                     "shot host-stain-compass", "wait 30"],
+            # The stain is recorded as the guest gets up; it picks it up 6 s later (the host has
+            # looked by then). A longer wait first missed the pickup twice (rig 2026-10-21).
             "guest": [START, "wait-session 2 300", "trade-give echoes 500", "wait 15", *GIVE_UP,
-                      "wait-vital up 60", "wait 5", "expect-stains own 1 1 30",
+                      "wait-vital up 60", "wait 6", "expect-stains 1 1 30",
                       "shot guest-stain-compass", "pickup-stain 15", "wait 3",
-                      "expect-stains own 0 0 30", "wait 30"],
+                      "expect-stains 0 0 30", "wait 10"],
         },
         "expect": {
-            "host": [r"autoplay stains \(members\): \[compass", r"autoplay stains \(members\): none"],
-            "guest": [r"autoplay stains \(own\): \[compass own", r"bloodstain picked up",
-                      r"autoplay stains \(own\): none"],
+            "host": [r"autoplay stains: none"],
+            "guest": [r"autoplay stains: \[compass own", r"bloodstain picked up",
+                      r"autoplay stains: none"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
@@ -2872,6 +2875,11 @@ SCENARIOS["chalice-ritual"] = {
              "server's own dungeon for the chalice: none made the game return to the title)",
     "roles": {"host": [START, "godmode", *CHALICE_ENTER("host"), f"expect-map {CHALICE_DUNGEON}"]},
     "expect": {"host": [r"host in the dungeon"]},
+    # The story chalice's own layout, from the record's rites byte 90: with rites 0 the game built
+    # the root layout m29_10_00_00, whose boss drops the root loot (2026-10-21).
+    "settings": {"BB_FILE_TRACE": "1"},
+    "console_expect": {"host": [r"File trace: /app0/dvdroot_ps4/event/m29_10_90_00/"
+                                r"m29_10_90_00\.emevd"]},
     "timeout": 300,
 }
 
@@ -3310,4 +3318,97 @@ SCENARIOS["witch-summons"] = {
                       r"draw 0x[0-9a-f]*[014589cd] team"] for role in ("host", "guest")},
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 420,
+}
+
+# Kaniel 2026-10-20: back in the Dream the guests' headstones said "no place to awaken". Each
+# headstone's talk asks one flag, "a lamp of mine is lit" (12105030-12105034), which m21_00's
+# 12105020-12105024 set in each player's own game from its own lamps (12105031: the Forbidden
+# Woods lamp 12707810, Hemwick's and Byrgenwerth's; the rig characters have none of them). The
+# host lights the woods lamp before the session; the party's lamps are shared (the server world
+# gave the guest the woods lamp at the join, rig 2026-10-21), so both have headstones 1 and 2 on.
+# As the host's world flags the other's values came in over the game's flag messages and flipped
+# them about once a second (hundreds of "the other player sends flag 1210503x" a minute).
+HEADSTONE_LIT = 12105030  # + n: headstone n+1's "a lamp of mine is lit"
+HEADSTONE_SAMPLES = 8  # one look every 5 s: at a flip a second one of them catches it
+
+
+def headstones_seen(lit: dict[int, int]) -> list[str]:
+    """Each headstone flag as this player's own lamps have it: once the Dream's events set them
+    (some seconds after the arrival: a rig run looked at 5 s and found them all still off), then
+    every 5 s."""
+    return [*(f"wait-flag {flag} 1 60" for flag, on in lit.items() if on),
+            *[step for _ in range(HEADSTONE_SAMPLES)
+              for step in ("wait 5", *(f"expect-flag {flag} {on}" for flag, on in lit.items()))]]
+
+
+# The flag messages of a ping-pong (main before #301: 400 in a minute); a few at the arrival are
+# each game telling the other its own once. Atomic: each repeat takes the next message only (a
+# plain lazy repeat backtracks for ever on a log without 30).
+HEADSTONE_FLIPS = (r"the other player sends flag (?:1210503[0-4]|12100122) "
+                   r"(?=(?>[\s\S]*?the other player sends flag (?:1210503[0-4]|12100122) ){29})")
+SCENARIOS["dream-headstones-lit"] = {
+    "about": "#301: host and guest in the Hunter's Dream, the host with a lamp lit before the "
+             "session (shared with the guest): headstones 1 and 2 lit for both and staying so, "
+             "no flag ping-pong between them",
+    "roles": {
+        "host": [START, f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "godmode", "wait-session 2 300",
+                 f"travel {HUNTERS_DREAM}", "wait-members 2 240", "sync dream-both",
+                 *headstones_seen({HEADSTONE_LIT: 1, HEADSTONE_LIT + 1: 1}),
+                 "sync dream-seen", "expect-session 2"],
+        "guest": [START, f"expect-flag {FORBIDDEN_WOODS_LAMP_LIT} 0", "godmode",
+                  "wait-session 2 300", f"travel {HUNTERS_DREAM}", "wait-members 2 240",
+                  "sync dream-both", *headstones_seen({HEADSTONE_LIT: 1, HEADSTONE_LIT + 1: 1}),
+                  "sync dream-seen", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "dream-headstones-lit", "roles": ["host", "guest"]}
+              for name in ("dream-both", "dream-seen")},
+    "forbid": {role: SESSION_HOLDS + [HEADSTONE_FLIPS] for role in ("host", "guest")},
+    "timeout": 300,
+}
+
+
+# #300 (rig test 2026-10-21): the enemies that rise out of the mist in Hemwick's woods (m22_00
+# event 12204000, a slot each for 2200500-2200508). On each load event 12204010 arms them
+# (MIST_ARMED) for a host with 15 Insight or more (3:26, "SAN値で判定"); unarmed, 12204000 switches
+# them off for good and ends (rig 2026-10-21: the rig's characters have less, and the guest then
+# showed all nine standing while the host had them off). Armed, it switches them off and waits
+# until, at night (flag 9801 or 9802), the local player is within 20 m: then switches them on with
+# their rising animation 6200. The wait also wanted the host's character alive (4:3 player type
+# 0), so only the host's approach woke them; party_boss_events.py's AMBUSH_EVENTS drops that
+# check. 2200507 stands at (-218.9, -21.1, 555.6) (m22_00_00_00.msb), 84 m from the Charnel Lane
+# lamp and 210 m from the Witch's Abode lamp, where the host stays.
+# Rig 2026-10-21 (port): the guest's approach wakes it in the guest's game with and without that
+# check dropped. With both players in the session before Hemwick loads (as here), the server
+# world's "shown" record and map flag 12204007 switch the host's copy on too. When the guest had
+# loaded Hemwick before the session formed, the host's copy stayed off unless the slot flags
+# 12204000-12204008 are shared (#314).
+CHARNEL_LANE_LAMP = 2202950
+NIGHT = 9801
+MIST_ARMED = 12204011
+INSIGHT_POINT = 4680  # the SpEffect common event 9350 gives Insight with, a point each
+MIST_ENEMY = "0x10008022"  # entity 2200507
+BY_MIST_ENEMY = "-216.0 -21.0 552.0 -0.67"  # 4.6 m off, facing it
+# Insight and night before Hemwick loads: its events run with them. The trip there waits for the
+# session (a travel as the join lands left it, rig 2026-10-21).
+MIST_START = [START, f"set-flag {WITCH_DEFEATED} 0",
+              *[step for _ in range(15) for step in (f"add-effect {INSIGHT_POINT}", "wait 1")],
+              f"set-flag {NIGHT} 1", "wait-session 2 300", "wait 5", f"travel {WITCH_ABODE_LAMP}",
+              "godmode", f"expect-map {HEMWICK}", f"wait-flag {MIST_ARMED} 1 10"]
+SCENARIOS["mist-ambush-guest"] = {
+    "about": "#300: a guest walks up to one of Hemwick's mist ambush enemies while the host stays "
+             "at the Witch's Abode lamp: it rises, in both games",
+    "roles": {
+        "host": [*MIST_START, "wait 10", "census 300",
+                 f"expect-disabled {MIST_ENEMY} 1", "sync mist-ready", "sync mist-near",
+                 f"expect-disabled {MIST_ENEMY} 0 30", "census 300", "sync mist-checked",
+                 "expect-session 2"],
+        "guest": [*MIST_START, "wait 5", f"travel {CHARNEL_LANE_LAMP}",
+                  "wait 5", "census 150", f"expect-disabled {MIST_ENEMY} 1", "sync mist-ready",
+                  f"teleport {BY_MIST_ENEMY}", "wait 3", f"expect-disabled {MIST_ENEMY} 0 15",
+                  "census 60", "sync mist-near", "sync mist-checked", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "mist-ambush-guest", "roles": ["host", "guest"]}
+              for name in ("mist-ready", "mist-near", "mist-checked")},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
 }

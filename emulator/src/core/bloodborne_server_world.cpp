@@ -335,14 +335,6 @@ void PutPosition(const LampPosition& at, bbcoop::Position* out) {
     out->set_z(at[2]);
 }
 
-Bloodstain StainOf(const bbcoop::Vitals& vitals) {
-    if (!vitals.has_stain()) {
-        return {};
-    }
-    const bbcoop::Bloodstain& stain = vitals.stain();
-    return {.map = stain.map(), .at = PositionOf(stain.at()), .echoes = stain.echoes()};
-}
-
 void TakeBoard(const bbcoop::Envelope& envelope) {
     switch (envelope.body_case()) {
     case bbcoop::Envelope::kMapBoard: {
@@ -394,8 +386,7 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
                              .revive_damage = entry.revive_damage(),
                              .cutscene = vitals.cutscene(),
                              .vials = vitals.vials(),
-                             .bullets = vitals.bullets(),
-                             .stain = StainOf(vitals)});
+                             .bullets = vitals.bullets()});
         }
         for (const auto& wipe : envelope.vitals_board().wipes()) {
             board.wipes.push_back(
@@ -985,12 +976,6 @@ void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> 
     vitals.set_vials(mine.vials);
     vitals.set_bullets(mine.bullets);
     PutPosition(mine.at, vitals.mutable_at());
-    if (mine.stain.map != 0) {
-        bbcoop::Bloodstain& stain = *vitals.mutable_stain();
-        stain.set_map(mine.stain.map);
-        PutPosition(mine.stain.at, stain.mutable_at());
-        stain.set_echoes(mine.stain.echoes);
-    }
     for (const ReviveHitTotal& hit : hits) {
         bbcoop::ReviveHit* out = vitals.add_hits();
         out->set_target(hit.target);
