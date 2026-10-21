@@ -2131,6 +2131,27 @@ TEST(BloodborneHiddenCharacters, AGuestSwitchesOnWhatTheHostsStorySwitchedOn) {
         << "one the kill board hid stays off";
 }
 
+// Kaniel's playtest 2026-10-20: the Witch of Hemwick flickered for krolebord. Her vanish (m22_00
+// event 12204812, waiting on her own AI) switches her off and back on in every game; the guest
+// switched its copy along with the host's board as well, about 25 times out of step with its own
+// fight. A boss's switch is its fight's: the guest leaves it to its own game, but still undoes a
+// switch-off of its own.
+TEST(BloodborneHiddenCharacters, AGuestLeavesABossSwitchToItsOwnFight) {
+    constexpr bool Boss = true;
+    const std::vector<CharacterShown> host{
+        {0x10008024, false, true}, // the Witch, vanished in the host's world
+        {0x10008025, false},       // her clone, on in the host's world
+        {0x1000801c, false, true}, // a Mad One, off in the host's world
+    };
+    const std::vector<CharacterSwitch> guest{
+        {0x10008024, false, false, Boss}, {0x10008025, true, false, Boss}, {0x1000801c, false}};
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {}, {}),
+              (std::vector<CharacterSwitch>{{0x1000801c, true}}));
+    EXPECT_EQ(SwitchedLikeTheHost(host, guest, {0x10008025}, {}),
+              (std::vector<CharacterSwitch>{{0x10008025, false}, {0x1000801c, true}}))
+        << "a boss this guest switched off itself is switched back on";
+}
+
 // Kaniel's friend 2026-10-11: no enemies in the Forbidden Woods. While the guest was in the
 // Cathedral Ward, the host's world had the woods' enemies by the border switched off (its events
 // park characters far from the player), and the guest switched its copies off too; they stayed off

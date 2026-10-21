@@ -2191,11 +2191,12 @@ std::vector<CharacterSwitch> SwitchedLikeTheHost(std::span<const CharacterShown>
         if (it == hosts.end() || kill_hidden.contains(character.handle)) {
             continue;
         }
-        if (it->second.off && !character.disabled) {
+        // A boss is its own fight's: only what this member switched off itself comes back on.
+        const bool own_off = switched_off.contains(character.handle);
+        if (it->second.off && !character.disabled && !character.boss) {
             changes.push_back({character.handle, true});
         } else if (!it->second.off && character.disabled &&
-                   (switched_off.contains(character.handle) ||
-                    (it->second.on && !character.dead))) {
+                   (own_off || (it->second.on && !character.dead && !character.boss))) {
             changes.push_back({character.handle, false});
         }
     }
