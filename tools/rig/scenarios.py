@@ -2875,6 +2875,11 @@ SCENARIOS["chalice-ritual"] = {
              "server's own dungeon for the chalice: none made the game return to the title)",
     "roles": {"host": [START, "godmode", *CHALICE_ENTER("host"), f"expect-map {CHALICE_DUNGEON}"]},
     "expect": {"host": [r"host in the dungeon"]},
+    # The story chalice's own layout, from the record's rites byte 90: with rites 0 the game built
+    # the root layout m29_10_00_00, whose boss drops the root loot (2026-10-21).
+    "settings": {"BB_FILE_TRACE": "1"},
+    "console_expect": {"host": [r"File trace: /app0/dvdroot_ps4/event/m29_10_90_00/"
+                                r"m29_10_90_00\.emevd"]},
     "timeout": 300,
 }
 
