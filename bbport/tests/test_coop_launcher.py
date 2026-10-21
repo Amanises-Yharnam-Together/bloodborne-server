@@ -453,7 +453,7 @@ class UpdateTests(unittest.TestCase):
         import bbport_lang
         launcher = Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py'
         source = launcher.read_text(encoding='utf-8')
-        names = {'build_coop_help', 'coop_help_refresh', 'coop_help_refresh_public', 'coop_open_router'}
+        names = {'build_coop_help', 'coop_help_refresh', 'coop_help_refresh_public', 'coop_router_said'}
         pieces = [f for f in ast.walk(ast.parse(source)) if isinstance(f, ast.FunctionDef) and f.name in names]
         self.assertEqual({f.name for f in pieces}, names)
         texts = {n.args[0].value for f in pieces for n in ast.walk(f) if isinstance(n, ast.Call)

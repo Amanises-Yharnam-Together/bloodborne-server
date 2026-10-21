@@ -3769,16 +3769,16 @@ class Launcher:
         cell = self.cell(card, 3, 0, _("Host's IP address (VPN or public; the host types their own)",
                                        'IP хоста (VPN или внешний; хост вводит свой)'))
         ttk.Entry(cell, textvariable=var('host_ip')).pack(fill='x')
-        # Players were lost at the VPN step (Kaniel 2026-10-21): the steps are one press away.
-        self.button(cell, _('How to connect', 'Как подключиться'), self.open_coop_help).pack(
-            anchor='w', pady=(px(8), 0))
         # No account name or password (phase 11): the player's id is made once and kept in coop.json,
         # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
         self.coop_enemies = combo(self.cell(card, 3, 1, _('Enemies (the same for every player)',
                                                           'Враги (у всех одинаково)')), 'harder', HARDER_CHOICES)
         holder = self.cell(card, 4, 0, '', span=2)
+        # Players were lost at the VPN step (Kaniel 2026-10-21): the steps are one press away. Below the
+        # fields, so Host IP and Enemies stay on one line.
+        self.button(holder, _('How to connect', 'Как подключиться'), self.open_coop_help).pack(side='left')
         self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
-                    self.coop_import_saves).pack(anchor='w')
+                    self.coop_import_saves).pack(side='left', padx=(px(8), 0))
         self.note(card, _('Make or join a team in the game: Continue, Load Game or New Game opens the team screen. '
                           'Windows asks once to let co-op through its firewall.',
                           'Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают экран '
@@ -3842,6 +3842,9 @@ class Launcher:
         self.coop_help_public = self.flow(internet, '', 'body', MUTED)
         self.coop_help_public.pack(side='left', fill='x', expand=True)
         self.coop_help_copy = self.button(internet, _('Copy', 'Копировать'), self.coop_copy_public)
+        # Kaniel 2026-10-21 asked for a UPnP button: the same ask as Start server makes, by hand.
+        self.coop_help_router = self.button(internet, _('Open ports (UPnP)', 'Открыть порты (UPnP)'),
+                                            self.coop_router_pressed)
         self.flow(card, _("Still no connection? Turn other VPNs such as NordVPN off, check that the host has a "
                           "green dot in Radmin VPN, and that every PC has the host's 26. address.",
                           'Всё равно не подключается? Выключите другие VPN, например NordVPN, проверьте, что у '
@@ -3893,13 +3896,36 @@ class Launcher:
                                                    'Без VPN друзья вписывают ваш интернет-адрес: {}').format(
                 upnp['public']), fg=TEXT)
             self.coop_help_copy.pack(side='left', padx=(self.px(12), 0))
+            self.coop_help_router.pack_forget()
+            return
+        if getattr(self, 'coop_upnp_asking', False):
+            self.coop_help_public.configure(text=_('Asking your router…', 'Спрашиваем роутер…'), fg=MUTED)
+        elif upnp.get('said'):
+            self.coop_help_public.configure(text=upnp['said'], fg=CAUTION)
         else:
             self.coop_help_public.configure(
-                text=_('No VPN? As the host, press Start server: the launcher asks your router to open the ports '
-                       'and shows your internet address here.',
-                       'Без VPN? Хост нажимает «Запустить сервер»: лаунчер попросит роутер открыть порты и покажет '
-                       'здесь ваш интернет-адрес.'), fg=MUTED)
-            self.coop_help_copy.pack_forget()
+                text=_('No VPN? The host can ask their router to open the co-op ports (UPnP) with this button. '
+                       'Start server does it too.',
+                       'Без VPN? Хост может попросить роутер открыть порты кооператива (UPnP) этой кнопкой. '
+                       '«Запустить сервер» тоже это делает.'), fg=MUTED)
+        self.coop_help_copy.pack_forget()
+        self.coop_help_router.pack(side='left', padx=(self.px(12), 0))
+
+    def coop_router_pressed(self):
+        """The UPnP button: asks the router off the window's thread and shows the answer in the help."""
+        if getattr(self, 'coop_upnp_asking', False):
+            return
+        self.coop_upnp_asking = True
+        self.coop_help_refresh_public()
+
+        def work():
+            try:
+                said = self.coop_open_router()
+            finally:
+                self.coop_upnp_asking = False
+            self.ui_calls.put(self.coop_help_refresh_public)
+            self.coop_say(said, OK if (self.coop_upnp or {}).get('state') == 'open' else MUTED)
+        threading.Thread(target=work, daemon=True).start()
 
     def coop_copy_public(self):
         upnp = getattr(self, 'coop_upnp', None) or {}
@@ -4115,8 +4141,13 @@ class Launcher:
         except Exception as error:  # a broken router answer must never stop the server from hosting
             result = {'state': 'none', 'public': '', 'local': '', 'failed': [], 'error': str(error)}
         self.coop_upnp = result
+        said = self.coop_router_said(result)
+        result['said'] = said
         if self.coop_help is not None:
             self.ui_calls.put(self.coop_help_refresh_public)
+        return said
+
+    def coop_router_said(self, result):
         state = result['state']
         if state == 'open':
             return _('Your router opened the co-op ports. Friends without a VPN type your internet address: {}',
@@ -4138,7 +4169,8 @@ class Launcher:
 
     def coop_stop_servers(self):
         def work():
-            if bbport_coop.wants_router(self.coop.get('host_ip', '')):
+            if bbport_coop.wants_router(self.coop.get('host_ip', '')) or \
+                    (getattr(self, 'coop_upnp', None) or {}).get('state') == 'open':
                 try:
                     bbport_upnp.close_ports()
                 except Exception:  # the forwards stay until the next Stop; the server stops regardless

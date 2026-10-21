@@ -423,6 +423,46 @@ class CoopSettingsTests(unittest.TestCase):
             self.settle(1.0)
         open_ports.assert_not_called()
 
+    def test_host_ip_and_enemies_share_a_row(self):
+        """Kaniel 2026-10-21: the How to connect button pushed Host IP above Enemies; it sits below them now."""
+        def walk(widget):
+            yield widget
+            for child in widget.winfo_children():
+                yield from walk(child)
+        name = str(self.app.coop_vars['host_ip'])
+        entry = next(w for w in walk(self.app.coop_card) if w.winfo_class() == 'TEntry'
+                     and str(w.cget('textvariable')) == name)
+        self.assertEqual(entry.winfo_rooty(), self.app.coop_enemies.winfo_rooty())
+        self.assertAlmostEqual(entry.winfo_height(), self.app.coop_enemies.winfo_height(), delta=self.app.px(4))
+
+    def test_the_upnp_button_asks_the_router_and_shows_the_answer(self):
+        """Kaniel 2026-10-21 asked for a UPnP button in the help; Stop server closes what it opened."""
+        with mock.patch.object(bbport_coop, 'vpn_addresses', return_value=[]):
+            self.app.open_coop_help()
+            self.settle()
+        self.assertTrue(self.app.coop_help_router.canvas.winfo_ismapped())
+        refused = {'state': 'none', 'public': '', 'local': '', 'failed': []}
+        with mock.patch.object(bbport_upnp, 'open_ports', return_value=refused) as open_ports:
+            self.app.coop_help_router.invoke()
+            self.settle(1.0)
+        open_ports.assert_called_once()
+        self.assertIn('No router answered', self.app.coop_help_public.cget('text'))
+        self.assertTrue(self.app.coop_help_router.canvas.winfo_ismapped(), 'it can be tried again')
+        opened = {'state': 'open', 'public': '203.0.113.7', 'local': '192.168.4.25', 'failed': []}
+        with mock.patch.object(bbport_upnp, 'open_ports', return_value=opened):
+            self.app.coop_help_router.invoke()
+            self.settle(1.0)
+        self.assertIn('203.0.113.7', self.app.coop_help_public.cget('text'))
+        self.assertTrue(self.app.coop_help_copy.canvas.winfo_ismapped())
+        self.assertFalse(self.app.coop_help_router.canvas.winfo_ismapped())
+        self.app.coop_vars['host_ip'].set('26.12.34.56')
+        self.settle()
+        with mock.patch.object(bbport_upnp, 'close_ports', return_value=3) as close_ports, \
+                mock.patch.object(bbport_coop, 'stop_servers', return_value=0):
+            self.app.coop_stop_servers()
+            self.settle(1.0)
+        close_ports.assert_called_once()
+
     def test_how_to_connect_shows_the_steps_and_gives_the_host_their_vpn_address(self):
         """Kaniel 2026-10-21: players got lost at the VPN step; the co-op card has a help button with the
         Radmin VPN steps, and the host can take this PC's Radmin address with one press."""
