@@ -199,6 +199,12 @@ if(BUILD_TESTING)
     target_link_libraries(test_bloodborne_backend_json PRIVATE Qt6::Core)
     add_test(NAME bloodborne_backend_json COMMAND test_bloodborne_backend_json)
 
+    add_executable(test_request_address EXCLUDE_FROM_ALL
+        tests/test_request_address.cpp
+    )
+    target_include_directories(test_request_address PRIVATE src)
+    add_test(NAME request_address COMMAND test_request_address)
+
     add_executable(test_server_link EXCLUDE_FROM_ALL
         tests/test_server_link.cpp
         src/server_link.cpp
