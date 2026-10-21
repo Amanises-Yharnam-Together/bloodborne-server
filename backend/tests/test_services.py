@@ -176,16 +176,20 @@ class SsInfoTest(unittest.TestCase):
     """ss.info drives how often the game polls for summons; retail's 30-35 s makes every
     (re)join take a minute or more, which defeats seamless auto-rejoin."""
 
-    def fetch_ss_info(self, extra_args):
+    def fetch_ss_info(self, extra_args, address="127.0.0.1", host=None):
         port = free_port()
+        self.port = port
         proc = subprocess.Popen(
-            [sys.executable, "-u", SERVER, "--address", "127.0.0.1", "--port", str(port)] + extra_args,
+            [sys.executable, "-u", SERVER, "--address", address, "--port", str(port)] + extra_args,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             deadline = time.time() + 10
             while True:
                 try:
-                    with urllib.request.urlopen("http://127.0.0.1:{}/bb-eu/ss.info".format(port), timeout=1) as r:
+                    request = urllib.request.Request("http://127.0.0.1:{}/bb-eu/ss.info".format(port))
+                    if host is not None:
+                        request.add_header("Host", host)
+                    with urllib.request.urlopen(request, timeout=1) as r:
                         return base64.b64decode(r.read()).decode("utf-8")
                 except OSError:
                     if time.time() > deadline:
@@ -213,6 +217,32 @@ class SsInfoTest(unittest.TestCase):
         self.assertEqual(self.tag(xml, "SummonDataGetListCoopGuardTimerClampTime2"), "5")
         # Invasion timers are not ours to touch.
         self.assertEqual(self.tag(xml, "SummonDataGetListInvationGuardTimerClampTime2"), "0")
+
+    def test_each_game_is_sent_back_to_the_address_it_used(self):
+        # Without a VPN the host's address is its LAN one (192.168.x); a guest over the internet
+        # reached the host at its public address, and ss.info must send its game there too, or the
+        # guest's game can't get online and never joins the summon session (2026-10-21).
+        xml = self.fetch_ss_info([], address="192.168.4.25", host="203.0.113.7:20443")
+        self.assertIn("http://203.0.113.7:{}".format(self.port), xml)
+        self.assertIn("http://203.0.113.7:31315", xml)
+        self.assertNotIn("192.168.4.25", xml)
+        xml = self.fetch_ss_info([], address="192.168.4.25", host="26.1.2.3:20443")
+        self.assertIn("http://26.1.2.3:31315", xml)
+        # A name (the game's own host) or no usable address: the one the server was given.
+        xml = self.fetch_ss_info([], address="192.168.4.25", host="ss4.scej-network.jp:20443")
+        self.assertIn("http://192.168.4.25:31315", xml)
+        self.assertNotIn("http://ss4.scej-network.jp", xml)
+
+    def test_the_host_header_is_read_as_an_address_only(self):
+        from importlib import util
+        spec = util.spec_from_file_location("bb_dummy_server", SERVER)
+        server = util.module_from_spec(spec)
+        spec.loader.exec_module(server)
+        self.assertEqual(server.address_from_host("203.0.113.7:20443"), "203.0.113.7")
+        self.assertEqual(server.address_from_host("26.1.2.3"), "26.1.2.3")
+        for value in (None, "", "ss4.scej-network.jp:20443", "999.1.2.3:20443", "[::1]:20443",
+                      "1.2.3.4:20443/evil", "1.2.3.4 :20443", "1.2.3.4@x"):
+            self.assertIsNone(server.address_from_host(value), value)
 
     def test_summon_polling_interval_is_configurable(self):
         xml = self.fetch_ss_info(["--summon-poll", "12"])

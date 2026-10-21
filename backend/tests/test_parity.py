@@ -132,9 +132,9 @@ class Server:
         if getattr(self, "log", None):
             self.log.close()
 
-    def send(self, method, path, body=None):
+    def send(self, method, path, body=None, host=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
-        headers = {}
+        headers = {"Host": host} if host else {}
         if body is not None:
             if not isinstance(body, bytes):
                 body = json.dumps(body).encode("utf-8")
@@ -380,13 +380,28 @@ class ParityTest(unittest.TestCase):
     def test_the_hosts_address_is_the_one_given(self):
         # Port forwarding: the host's LAN address is not the one the guests reach, so the kit
         # names it (HOSTIP) and ss.info must send every game there.
+        # A request that names no address (the game's own host name) gets the given one.
         python = self.start("python", "py", address="10.20.30.40")
         shadnet = self.start("shadnet", "sn", address="10.20.30.40")
+        name = "ss4.scej-network.jp:20443"
         for server in (python, shadnet):
-            reply = mask_ports(server, server.send("GET", "/bb-eu/ss.info"))
+            reply = mask_ports(server, server.send("GET", "/bb-eu/ss.info", host=name))
             self.assertIn(b"http://10.20.30.40:<backend>", reply[3])
-        self.assertEqual(normalise(shadnet, mask_ports(shadnet, shadnet.send("GET", "/bb-eu/ss.info"))),
-                         normalise(python, mask_ports(python, python.send("GET", "/bb-eu/ss.info"))))
+        self.assertEqual(normalise(shadnet, mask_ports(shadnet, shadnet.send("GET", "/bb-eu/ss.info", host=name))),
+                         normalise(python, mask_ports(python, python.send("GET", "/bb-eu/ss.info", host=name))))
+
+    def test_each_game_is_sent_back_to_the_address_it_used(self):
+        # Without a VPN the host's address is its LAN one; a guest over the internet reached the
+        # public one, and its ss.info must point there (2026-10-21: the guest stayed invisible).
+        python = self.start("python", "py", address="192.168.4.25")
+        shadnet = self.start("shadnet", "sn", address="192.168.4.25")
+        used = "203.0.113.7:20443"
+        for server in (python, shadnet):
+            reply = mask_ports(server, server.send("GET", "/bb-eu/ss.info", host=used))
+            self.assertIn(b"http://203.0.113.7:<backend>", reply[3])
+            self.assertNotIn(b"192.168.4.25", reply[3])
+        self.assertEqual(normalise(shadnet, mask_ports(shadnet, shadnet.send("GET", "/bb-eu/ss.info", host=used))),
+                         normalise(python, mask_ports(python, python.send("GET", "/bb-eu/ss.info", host=used))))
 
     def test_a_store_moves_between_the_servers(self):
         # Each server writes a store, then both read each store: the same answers.

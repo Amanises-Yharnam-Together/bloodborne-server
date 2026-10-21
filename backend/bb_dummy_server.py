@@ -36,6 +36,7 @@ import argparse
 import base64
 import binascii
 import datetime
+import ipaddress
 import json
 import os
 import re
@@ -858,6 +859,20 @@ def take_broadcast(path, user_id):
 # HTTP
 # --------------------------------------------------------------------------
 
+def address_from_host(value):
+    """The IPv4 address a player reached this server at, from the request's Host header
+    ("203.0.113.7:20443"); None for anything else (no header, a name, IPv6). ss.info sends each
+    game back to that address: without a VPN the host's own address is its LAN one, which the
+    guests can't reach (2026-10-21)."""
+    match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?", (value or "").strip())
+    if not match:
+        return None
+    try:
+        return str(ipaddress.IPv4Address(match.group(1)))
+    except ValueError:
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "bb-dummy/2.0"
@@ -895,8 +910,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == SS_INFO_PATH:
-            self.log_message("ss.info -> %d bytes", len(self.server.ss_info))
-            self._send(self.server.ss_info, "text/plain; charset=utf-8")
+            address = address_from_host(self.headers.get("Host")) or self.server.address
+            ss_info = self.server.ss_info_for(address)
+            self.log_message("ss.info for %s -> %d bytes", address, len(ss_info))
+            self._send(ss_info, "text/plain; charset=utf-8")
             return
         if path == "/status":
             store = self.server.store
@@ -1061,9 +1078,15 @@ def main():
     services_url = "http://{}:{}".format(args.address, args.port)
     summon_url = args.shadnet_webapi or "http://{}:31315".format(args.address)
 
+    def ss_info_for(address):
+        # Each game is sent back to the address it used (address_from_host), else --address.
+        return build_ss_info(args.template, "http://{}:{}".format(address, args.port),
+                             args.shadnet_webapi or "http://{}:31315".format(address),
+                             max(1, args.summon_poll))
+
     # Everything that can fail is checked before the port is taken, so a bad
     # flag or an unwritable store path exits cleanly instead of half-starting.
-    ss_info = build_ss_info(args.template, services_url, summon_url, max(1, args.summon_poll))
+    ss_info_for(args.address)
     store = None
     if args.store:
         try:
@@ -1073,7 +1096,8 @@ def main():
             sys.exit("cannot open content store {}: {}".format(args.store, exc))
 
     httpd = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
-    httpd.ss_info = ss_info
+    httpd.address = args.address
+    httpd.ss_info_for = ss_info_for
     httpd.notice_path = args.notice
     httpd.broadcast_path = args.broadcast
     httpd.login_message_path = args.login_message
