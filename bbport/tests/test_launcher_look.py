@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'launcher'))
 
 if sys.platform == 'win32':
     import bbport_coop
+    import bbport_upnp
     import bbport_launcher_win as launcher
 
 # A 1x1 PNG: a valid picture wherever one is opened.
@@ -362,6 +363,59 @@ class CoopSettingsTests(unittest.TestCase):
             self.app.coop_check_server()
             self.settle()
         self.assertEqual(self.app.coop_server_line.cget('text'), '', "a guest's server is the host's")
+
+    def test_start_server_opens_the_router_and_the_help_shows_the_internet_address(self):
+        """UPnP (Kaniel 2026-10-21): without a VPN, Start server asks the router to open the ports and says
+        what came of it; the help shows the internet address to give the friends, and Stop closes them."""
+        self.app.coop_vars['host_ip'].set('192.168.4.25')
+        self.settle()
+        opened = {'state': 'open', 'public': '203.0.113.7', 'local': '192.168.4.25', 'failed': []}
+        with mock.patch.object(bbport_coop, 'is_this_pc', return_value=True), \
+                mock.patch.object(bbport_coop, 'start_servers', return_value=[]), \
+                mock.patch.object(bbport_coop, 'servers_running', return_value=True), \
+                mock.patch.object(bbport_upnp, 'open_ports', return_value=opened) as open_ports, \
+                mock.patch.object(self.app, 'coop_firewall', return_value=True):
+            self.app.coop_start_servers()
+            self.settle(1.0)
+        open_ports.assert_called_once()
+        self.assertIn('203.0.113.7', self.app.status.cget('text'))
+        with mock.patch.object(bbport_coop, 'vpn_addresses', return_value=[]):
+            self.app.open_coop_help()
+            self.settle()
+        self.assertEqual(self.app.coop_help_public.cget('text'),
+                         'Without a VPN, friends type your internet address: 203.0.113.7')
+        self.assertTrue(self.app.coop_help_copy.canvas.winfo_ismapped())
+        self.app.coop_help_copy.invoke()
+        self.assertEqual(self.root.clipboard_get(), '203.0.113.7')
+        bottom = self.app.coop_help.winfo_rooty() + self.app.coop_help.winfo_height()
+        self.assertLessEqual(bottom, self.root.winfo_rooty() + self.root.winfo_height(), 'fits in the window')
+        with mock.patch.object(bbport_upnp, 'close_ports', return_value=4) as close_ports, \
+                mock.patch.object(bbport_coop, 'stop_servers', return_value=1):
+            self.app.coop_stop_servers()
+            self.settle(1.0)
+        close_ports.assert_called_once()
+        self.assertFalse(self.app.coop_help_copy.canvas.winfo_ismapped(), 'no address once the ports are closed')
+        # Behind carrier-grade NAT the host is told the friends need the VPN.
+        cgnat = {'state': 'cgnat', 'public': '100.72.1.9', 'local': '192.168.4.25', 'failed': []}
+        with mock.patch.object(bbport_coop, 'is_this_pc', return_value=True), \
+                mock.patch.object(bbport_coop, 'start_servers', return_value=[]), \
+                mock.patch.object(bbport_coop, 'servers_running', return_value=True), \
+                mock.patch.object(bbport_upnp, 'open_ports', return_value=cgnat), \
+                mock.patch.object(self.app, 'coop_firewall', return_value=True):
+            self.app.coop_start_servers()
+            self.settle(1.0)
+        self.assertIn('Radmin VPN', self.app.status.cget('text'))
+        # On a VPN address the router is left alone.
+        self.app.coop_vars['host_ip'].set('26.12.34.56')
+        self.settle()
+        with mock.patch.object(bbport_coop, 'is_this_pc', return_value=True), \
+                mock.patch.object(bbport_coop, 'start_servers', return_value=[]), \
+                mock.patch.object(bbport_coop, 'servers_running', return_value=True), \
+                mock.patch.object(bbport_upnp, 'open_ports') as open_ports, \
+                mock.patch.object(self.app, 'coop_firewall', return_value=True):
+            self.app.coop_start_servers()
+            self.settle(1.0)
+        open_ports.assert_not_called()
 
     def test_how_to_connect_shows_the_steps_and_gives_the_host_their_vpn_address(self):
         """Kaniel 2026-10-21: players got lost at the VPN step; the co-op card has a help button with the

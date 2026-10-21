@@ -99,6 +99,12 @@ def vpn_addresses(addresses=None):
     return sorted({pair for pair in found if pair[0]}, key=lambda pair: (order.index(pair[0]), pair[1]))
 
 
+def wants_router(host_ip):
+    """Whether Start server asks the router to open the host's ports (bbport_upnp): not on a VPN address,
+    where the friends come over the VPN, and not with BB_UPNP=0."""
+    return os.environ.get('BB_UPNP', '1') != '0' and valid_ip(host_ip) and not vpn_name(host_ip)
+
+
 def valid_name(value):
     return bool(re.fullmatch(r'[A-Za-z0-9_-]{3,16}', value or ''))
 

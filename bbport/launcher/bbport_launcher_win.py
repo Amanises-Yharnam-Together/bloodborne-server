@@ -193,6 +193,7 @@ import bbport_lang  # noqa: E402
 import bbport_controls  # noqa: E402
 import bbport_steam  # noqa: E402
 import bbport_coop  # noqa: E402
+import bbport_upnp  # noqa: E402
 
 LANG = 'en'
 
@@ -3835,6 +3836,12 @@ class Launcher:
         self.coop_help_address = self.label(mine, '', 'body', TEXT)
         self.coop_help_address.pack(side='left')
         self.coop_help_use = self.button(mine, _("I'm the host: use it", 'Я хост: подставить'), self.coop_use_own_vpn)
+        # Without a VPN: Start server asked the router to open the ports (bbport_upnp, Kaniel 2026-10-21).
+        internet = tk.Frame(card, bg=CARD)
+        internet.grid(row=self.next_row(card), column=0, columnspan=2, sticky='we', pady=(px(8), 0))
+        self.coop_help_public = self.flow(internet, '', 'body', MUTED)
+        self.coop_help_public.pack(side='left', fill='x', expand=True)
+        self.coop_help_copy = self.button(internet, _('Copy', 'Копировать'), self.coop_copy_public)
         self.flow(card, _("Still no connection? Turn other VPNs such as NordVPN off, check that the host has a "
                           "green dot in Radmin VPN, and that every PC has the host's 26. address.",
                           'Всё равно не подключается? Выключите другие VPN, например NordVPN, проверьте, что у '
@@ -3864,6 +3871,7 @@ class Launcher:
         """This PC's VPN address (looked up each time the help opens: Radmin VPN may have just been turned on)."""
         found = bbport_coop.vpn_addresses()
         self.coop_own_vpn = found[0][1] if found else ''
+        self.coop_help_refresh_public()
         if found:
             self.coop_help_address.configure(text=_("This PC's {} address: {}", 'Адрес этого ПК в {}: {}').format(
                 *found[0]), fg=TEXT)
@@ -3876,6 +3884,28 @@ class Launcher:
                                                     'На этом ПК пока нет адреса Radmin VPN: установите и включите его.'),
                                              fg=CAUTION)
             self.coop_help_use.pack_forget()
+
+    def coop_help_refresh_public(self):
+        """The internet address Start server got from the router, or how to get one."""
+        upnp = getattr(self, 'coop_upnp', None) or {}
+        if upnp.get('state') == 'open':
+            self.coop_help_public.configure(text=_('Without a VPN, friends type your internet address: {}',
+                                                   'Без VPN друзья вписывают ваш интернет-адрес: {}').format(
+                upnp['public']), fg=TEXT)
+            self.coop_help_copy.pack(side='left', padx=(self.px(12), 0))
+        else:
+            self.coop_help_public.configure(
+                text=_('No VPN? As the host, press Start server: the launcher asks your router to open the ports '
+                       'and shows your internet address here.',
+                       'Без VPN? Хост нажимает «Запустить сервер»: лаунчер попросит роутер открыть порты и покажет '
+                       'здесь ваш интернет-адрес.'), fg=MUTED)
+            self.coop_help_copy.pack_forget()
+
+    def coop_copy_public(self):
+        upnp = getattr(self, 'coop_upnp', None) or {}
+        if upnp.get('public'):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(upnp['public'])
 
     def coop_use_own_vpn(self):
         if self.coop_own_vpn:
@@ -4070,12 +4100,52 @@ class Launcher:
             running = bbport_coop.servers_running()
             text = _('Running', 'Работает') if running else _('Not running', 'Не работает')
             self.ui_calls.put(lambda: self.coop_server_line.configure(text=text, fg=OK if running else BAD))
+            said = [_(line) for line in said]
+            if running and bbport_coop.wants_router(host_ip):
+                said.append(self.coop_open_router())
             if said:
-                self.coop_say(' '.join(_(line) for line in said), MUTED)
+                self.coop_say(' '.join(said), MUTED)
         threading.Thread(target=work, daemon=True).start()
+
+    def coop_open_router(self):
+        """Off the window's thread: asks the router to forward the host's ports (UPnP) and says what came of
+        it. On a VPN address the friends come over the VPN and the router is left alone."""
+        try:
+            result = bbport_upnp.open_ports()
+        except Exception as error:  # a broken router answer must never stop the server from hosting
+            result = {'state': 'none', 'public': '', 'local': '', 'failed': [], 'error': str(error)}
+        self.coop_upnp = result
+        if self.coop_help is not None:
+            self.ui_calls.put(self.coop_help_refresh_public)
+        state = result['state']
+        if state == 'open':
+            return _('Your router opened the co-op ports. Friends without a VPN type your internet address: {}',
+                     'Роутер открыл порты кооператива. Друзья без VPN вписывают ваш интернет-адрес: {}').format(
+                result['public'])
+        if state == 'cgnat':
+            return _("Your connection has no internet address of its own (carrier-grade NAT), so the router can't "
+                     'open ports: friends need Radmin VPN.',
+                     'У вашего подключения нет своего интернет-адреса (NAT провайдера), роутер не может открыть '
+                     'порты: друзьям нужен Radmin VPN.')
+        if state == 'refused':
+            return _('Your router refused to open {}: friends need Radmin VPN, or forward the ports by hand.',
+                     'Роутер не открыл {}: друзьям нужен Radmin VPN или ручной проброс портов.').format(
+                ', '.join(result['failed']) or '?')
+        return _('No router answered the automatic port opening (UPnP is off or missing): friends need Radmin '
+                 'VPN, or forward the ports by hand.',
+                 'Роутер не ответил на автоматическое открытие портов (UPnP выключен или его нет): друзьям нужен '
+                 'Radmin VPN или ручной проброс портов.')
 
     def coop_stop_servers(self):
         def work():
+            if bbport_coop.wants_router(self.coop.get('host_ip', '')):
+                try:
+                    bbport_upnp.close_ports()
+                except Exception:  # the forwards stay until the next Stop; the server stops regardless
+                    pass
+                self.coop_upnp = None
+                if self.coop_help is not None:
+                    self.ui_calls.put(self.coop_help_refresh_public)
             stopped = bbport_coop.stop_servers(PORT_DIR)
             self.ui_calls.put(lambda: self.coop_server_line.configure(
                 text=_('Stopped ({})', 'Остановлен ({})').format(stopped), fg=MUTED))

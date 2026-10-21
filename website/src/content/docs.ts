@@ -228,6 +228,10 @@ const install: DocPage = {
         },
         {
           type: "p",
+          text: "Without a VPN, **Start server** asks the host's router to open those ports by itself (UPnP) and shows the host's internet address: the others type that address as **Host's IP address**, and the host keeps their own PC's address there. It needs UPnP turned on in the router, and it can't work when the internet provider gives the router no address of its own (carrier-grade NAT, common on mobile internet); the launcher says so, and then a VPN is the way. **Stop server** closes the ports again.",
+        },
+        {
+          type: "p",
           text: "All co-op traffic goes through UDP 31314. The games never talk to each other directly.",
         },
         {

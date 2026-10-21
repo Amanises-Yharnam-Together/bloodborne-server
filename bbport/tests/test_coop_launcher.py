@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'launcher'))
 
@@ -255,6 +256,17 @@ class PlayTests(unittest.TestCase):
         self.assertEqual(coop.vpn_addresses(['192.168.1.20']), [])
         self.assertIsInstance(coop.vpn_addresses(), list)
 
+    def test_start_server_asks_the_router_only_without_a_vpn(self):
+        """UPnP (Kaniel 2026-10-21): the router opens the host's ports when the host's address is its own
+        LAN or internet one; on a VPN address the friends come over the VPN."""
+        with mock.patch.dict(os.environ, {'BB_UPNP': '1'}):
+            self.assertTrue(coop.wants_router('192.168.4.25'))
+            self.assertFalse(coop.wants_router('26.12.34.56'), 'Radmin VPN')
+            self.assertFalse(coop.wants_router('100.101.7.9'), 'Tailscale')
+            self.assertFalse(coop.wants_router(''))
+        with mock.patch.dict(os.environ, {'BB_UPNP': '0'}):
+            self.assertFalse(coop.wants_router('192.168.4.25'), 'turned off')
+
     def test_the_host_overrides_point_the_game_at_the_host(self):
         self.assertEqual(json.loads(coop.host_overrides('26.1.2.3')),
                          {'https://ss4.scej-network.jp:20443': 'http://26.1.2.3:20443'})
@@ -441,7 +453,7 @@ class UpdateTests(unittest.TestCase):
         import bbport_lang
         launcher = Path(__file__).resolve().parents[1] / 'launcher' / 'bbport_launcher_win.py'
         source = launcher.read_text(encoding='utf-8')
-        names = {'build_coop_help', 'coop_help_refresh'}
+        names = {'build_coop_help', 'coop_help_refresh', 'coop_help_refresh_public', 'coop_open_router'}
         pieces = [f for f in ast.walk(ast.parse(source)) if isinstance(f, ast.FunctionDef) and f.name in names]
         self.assertEqual({f.name for f in pieces}, names)
         texts = {n.args[0].value for f in pieces for n in ast.walk(f) if isinstance(n, ast.Call)
@@ -452,6 +464,8 @@ class UpdateTests(unittest.TestCase):
         for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
             table = bbport_lang.table(language)
             for text in texts:
+                if language == 'ru' and text in bbport_lang.KEYS:
+                    continue  # the launcher's older texts carry their Russian beside them in the code
                 self.assertTrue(table.get(text), f'{language}: {text}')
                 self.assertEqual(table[text].count('{}'), text.count('{}'), f'{language}: {text}')
         self.assertIn("RADMIN_GUIDE = 'https://bloodborne.seamlesscoop.dev/docs/radmin'", source)
