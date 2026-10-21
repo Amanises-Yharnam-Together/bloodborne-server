@@ -2516,7 +2516,8 @@ void SwitchCharactersLikeTheHost(u32 map, std::span<const u64> characters,
     for (const u64 character : characters) {
         if (!players.contains(character)) {
             mine.push_back({ReadValue<u32>(character, 0x08), IsCharacterDisabled(character),
-                            DeadInItsWorld(character)});
+                            DeadInItsWorld(character),
+                            HandsOutBoss(NpcTypeOf(character), IsBossSized(character))});
             pointers.push_back(character);
         }
     }
