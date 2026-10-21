@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveSiteUrl, resolveTrailerId } from "@/lib/site";
+import { SOCIAL_LINKS, TRAILER_YOUTUBE_ID, resolveSiteUrl, resolveTrailerId } from "@/lib/site";
 
 describe("resolveSiteUrl", () => {
   it("prefers NEXT_PUBLIC_SITE_URL and drops a trailing slash", () => {
@@ -34,8 +34,17 @@ describe("resolveTrailerId", () => {
       expect(resolveTrailerId({ NEXT_PUBLIC_TRAILER_YOUTUBE_ID: v })).toBe(id);
     }
   });
-  it("is null when unset or not a video id", () => {
-    expect(resolveTrailerId({})).toBeNull();
-    expect(resolveTrailerId({ NEXT_PUBLIC_TRAILER_YOUTUBE_ID: "<script>" })).toBeNull();
+  it("plays the project's trailer when unset or not a video id", () => {
+    expect(resolveTrailerId({})).toBe(TRAILER_YOUTUBE_ID);
+    expect(resolveTrailerId({ NEXT_PUBLIC_TRAILER_YOUTUBE_ID: "<script>" })).toBe(
+      TRAILER_YOUTUBE_ID,
+    );
+  });
+});
+
+describe("SOCIAL_LINKS", () => {
+  it("lists the project's YouTube, Discord and X over https", () => {
+    expect(SOCIAL_LINKS.map((link) => link.id)).toEqual(["youtube", "discord", "x"]);
+    for (const link of SOCIAL_LINKS) expect(link.href).toMatch(/^https:\/\//);
   });
 });
