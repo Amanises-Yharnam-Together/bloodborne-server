@@ -1,0 +1,189 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: screen-space ambient occlusion and indirect light (vk_screen_lighting.h) on the lit
+// opaque scene, before the game's transparents, fog and post-processing.
+// Default: the trace (screen_lighting.glsl) at the trace size, rgb indirect light, a visibility.
+// APPLY: a depth-aware 4x4 gather of the trace at full size, written into the scene color:
+// color * visibility + albedo * light. VIEW 1/2 (BB_LIGHTING_VIEW) shows the visibility or the
+// bounced light alone.
+// RAY_QUERY: the trace also casts occlusion rays against the map's models (vk_ray_occlusion.h).
+#version 460
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_GOOGLE_include_directive : require
+#ifdef RAY_QUERY
+#extension GL_EXT_ray_query : require
+#endif
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform texture2D depth_tex; // D32, depth 0..1 (D3D projection)
+#ifdef APPLY
+layout(binding = 1, rgba16f) uniform image2D scene_img;
+layout(binding = 2) uniform texture2D light_tex;  // the trace: rgb light, a visibility
+layout(binding = 3) uniform texture2D albedo_tex; // the G-buffer's sRGB albedo (linear reads)
+#else
+layout(binding = 1, rgba16f) uniform readonly image2D scene_img;
+layout(binding = 2, rgba16f) uniform writeonly image2D light_img;
+layout(binding = 3) uniform texture2D normal_tex; // the G-buffer's first target: rgb * 2 - 1
+#ifdef RAY_QUERY
+layout(binding = 4) uniform accelerationStructureEXT scene; // the player's map, world space
+#endif
+#endif
+
+layout(push_constant) uniform Constants {
+    vec4 proj;        // x scale, y scale, z scale, z offset
+    vec2 size;        // scene pixels
+    vec2 trace_size;  // trace pixels
+    vec2 albedo_size; // albedo pixels (0: none, grey)
+    float radius;     // view units
+    float max_radiance;
+    float noise;      // per frame 0..1 (0 without a temporal upscaler: a still pattern)
+    float ao_strength;
+    float gi_strength;
+    int directions;
+    int steps;
+    int view;         // APPLY: 0 the scene, 1 visibility, 2 bounced light
+    int normals;      // trace: 1 the G-buffer's normals (normal_tex), 0 from depth
+    int rays;         // RAY_QUERY: occlusion rays a pixel
+    vec4 world[3];    // RAY_QUERY: view (ours) to world, 3x4 rows (the scene's inverse view)
+};
+
+#ifdef RAY_QUERY
+// The map's models are thinned on a 0.5 m grid (within ~0.25 m of the surfaces): rays start that
+// far out, and reach past what the screen-space trace sees (alcoves, ceilings, walls behind).
+const float RayBias = 0.35;
+const float RayReach = 3.0;
+#endif
+
+vec3 LightingViewPos(vec2 pixel);
+vec3 LightingRadiance(vec2 pixel);
+#include "screen_lighting.glsl"
+
+float DepthAt(ivec2 pixel) {
+    return texelFetch(depth_tex, clamp(pixel, ivec2(0), ivec2(size) - 1), 0).r;
+}
+
+vec3 LightingViewPos(vec2 pixel) {
+    const ivec2 p = clamp(ivec2(pixel), ivec2(0), ivec2(size) - 1);
+    const float depth = texelFetch(depth_tex, p, 0).r;
+    if (depth >= 1.0) {
+        return vec3(0.0);
+    }
+    const vec2 ndc = (vec2(p) + 0.5) / size * 2.0 - 1.0;
+    return ViewPos(ndc, ViewZ(depth, proj), proj);
+}
+
+#ifndef APPLY
+vec3 LightingRadiance(vec2 pixel) {
+    return imageLoad(scene_img, clamp(ivec2(pixel), ivec2(0), ivec2(size) - 1)).rgb;
+}
+
+void main() {
+    const ivec2 tp = ivec2(gl_GlobalInvocationID.xy);
+    if (tp.x >= int(trace_size.x) || tp.y >= int(trace_size.y)) {
+        return;
+    }
+    const ivec2 pixel = ivec2((vec2(tp) + 0.5) * size / trace_size);
+    const vec3 p = LightingViewPos(vec2(pixel));
+    if (p.z <= 0.0) {
+        imageStore(light_img, tp, vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+    vec3 n = vec3(0.0);
+    if (normals != 0) {
+        // Bloodborne's view space (the 2026-10-19 capture: x and z opposite to ours, y the same
+        // with the projection's y negative); ours follows the projection's signs.
+        n = texelFetch(normal_tex, pixel, 0).rgb * 2.0 - 1.0;
+        n *= vec3(-sign(proj.x), -sign(proj.y), -1.0);
+    }
+    if (abs(length(n) - 1.0) > 0.2) {
+        n = NormalFromNeighbours(p, LightingViewPos(vec2(pixel + ivec2(-1, 0))),
+                                 LightingViewPos(vec2(pixel + ivec2(1, 0))),
+                                 LightingViewPos(vec2(pixel + ivec2(0, -1))),
+                                 LightingViewPos(vec2(pixel + ivec2(0, 1))));
+    } else {
+        n = normalize(n);
+    }
+    const float n1 = fract(GradientNoise(vec2(tp)) + noise);
+    const float n2 = fract(GradientNoise(vec2(tp) + vec2(47.0, 17.0)) + noise * 1.618034);
+    LightingResult result =
+        TraceLighting(vec2(pixel) + 0.5, p, n, radius, proj.x * size.x * 0.5, directions, steps,
+                      n1, n2, max_radiance, size);
+#ifdef RAY_QUERY
+    if (rays > 0) {
+        const vec4 at = vec4(p, 1.0);
+        const vec3 wp = vec3(dot(world[0], at), dot(world[1], at), dot(world[2], at));
+        const vec3 wn =
+            normalize(vec3(dot(world[0].xyz, n), dot(world[1].xyz, n), dot(world[2].xyz, n)));
+        float occluded = 0.0;
+        for (int i = 0; i < rays; ++i) {
+            const vec3 dir = HemisphereDir(wn, fract(n1 + float(i) * 0.618034),
+                                           fract(n2 + float(i) * 0.7548777));
+            rayQueryEXT query;
+            rayQueryInitializeEXT(query, scene,
+                                  gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFF,
+                                  wp + wn * RayBias, 0.0, dir, RayReach);
+            while (rayQueryProceedEXT(query)) {
+            }
+            const float t = rayQueryGetIntersectionTypeEXT(query, true) ==
+                                    gl_RayQueryCommittedIntersectionTriangleEXT
+                                ? rayQueryGetIntersectionTEXT(query, true)
+                                : -1.0;
+            occluded += RayOcclusionWeight(t, RayReach);
+        }
+        result.open = min(result.open, 1.0 - occluded / float(rays));
+    }
+#endif
+    imageStore(light_img, tp, vec4(result.light, result.open));
+}
+#else
+vec3 LightingRadiance(vec2 pixel) {
+    return vec3(0.0);
+}
+
+void main() {
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= int(size.x) || pixel.y >= int(size.y)) {
+        return;
+    }
+    const float depth = DepthAt(pixel);
+    if (depth >= 1.0) {
+        return; // sky
+    }
+    const float z = ViewZ(depth, proj);
+    // The trace texels around this pixel, weighted by distance and by how close their surface's
+    // depth is (no light or shadow bleeds across silhouettes).
+    const vec2 tc = (vec2(pixel) + 0.5) * trace_size / size - 0.5;
+    const ivec2 base = ivec2(floor(tc));
+    vec4 sum = vec4(0.0);
+    float weights = 0.0;
+    for (int y = -1; y <= 2; ++y) {
+        for (int x = -1; x <= 2; ++x) {
+            const ivec2 t = clamp(base + ivec2(x, y), ivec2(0), ivec2(trace_size) - 1);
+            const ivec2 tpix = ivec2((vec2(t) + 0.5) * size / trace_size);
+            const float tz = ViewZ(DepthAt(tpix), proj);
+            const vec2 d = vec2(t) - tc;
+            const float w = exp(-dot(d, d) * 0.5) * exp(-abs(tz - z) / (0.02 * z + 0.01));
+            sum += texelFetch(light_tex, t, 0) * w;
+            weights += w;
+        }
+    }
+    const vec4 lit = weights > 1e-6 ? sum / weights : vec4(0.0, 0.0, 0.0, 1.0);
+    const vec4 color = imageLoad(scene_img, pixel);
+    vec3 albedo = vec3(0.5);
+    if (albedo_size.x > 0.0) {
+        const ivec2 ap = clamp(ivec2((vec2(pixel) + 0.5) * albedo_size / size), ivec2(0),
+                               ivec2(albedo_size) - 1);
+        albedo = texelFetch(albedo_tex, ap, 0).rgb;
+    }
+    const float visibility = mix(1.0, clamp(lit.a, 0.0, 1.0), ao_strength);
+    const vec3 bounce = albedo * lit.rgb * gi_strength;
+    vec3 result = color.rgb * visibility + bounce;
+    // The debug views at the scene's brightness (Bloodborne's scene averages ~0.02).
+    if (view == 1) {
+        result = vec3(0.06 * visibility);
+    } else if (view == 2) {
+        result = bounce * 4.0;
+    }
+    imageStore(scene_img, pixel, vec4(result, color.a));
+}
+#endif

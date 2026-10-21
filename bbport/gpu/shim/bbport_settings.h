@@ -88,6 +88,15 @@ enum Map3d { Map3dOff, Map3dPrerendered, Map3dLive, Map3dCount };
 /// the bottom of the screen, or a ring around its middle.
 enum CompassPosition : int { CompassTop = 0, CompassBottom = 1, CompassReticle = 2, CompassPositionCount };
 inline constexpr const char* CompassPositionNames[] = {"top", "bottom", "reticle"};
+/// Kaniel 2026-10-19: screen-space lighting (vk_screen_lighting.h; bbport.ini screen_lighting):
+/// ambient occlusion and one bounce of indirect light, traced at half (low) or full (high) size.
+enum ScreenLighting : int {
+    ScreenLightingOff = 0,
+    ScreenLightingLow = 1,
+    ScreenLightingHigh = 2,
+    ScreenLightingCount
+};
+inline constexpr const char* ScreenLightingNames[] = {"off", "low", "high"};
 /// HDR output (HDR10, ST.2084 PQ): the display's peak brightness and the brightness of SDR
 /// white (the game's UI, paper white) the menus offer, in nits. HdrAuto (first): the display's
 /// own values (HdrPeak, HdrPaperWhite); 480 is Windows' brightest SDR content brightness.
@@ -136,6 +145,15 @@ struct Values {
     /// option to view rendered in real time 3d map"): the map screen's 3D view (bbport.ini map_3d,
     /// Map3d*, off by default): prerendered pictures, or the models drawn live on the GPU.
     std::atomic<int> map_3d{Map3dOff};
+    /// Screen-space lighting (ScreenLighting, off by default) and how strong its ambient
+    /// occlusion (0..1, screen_lighting_ao) and bounced light (0..2, screen_lighting_gi) are. Live.
+    std::atomic<int> screen_lighting{ScreenLightingOff};
+    std::atomic<float> screen_lighting_ao{0.7f};
+    std::atomic<float> screen_lighting_gi{1.0f};
+    /// Kaniel 2026-10-21 ("continue with ray tracing"): the screen lighting's shadows also traced
+    /// against the map's own models (vk_ray_occlusion.h; bbport.ini ray_traced_ao, off by default).
+    /// Vulkan ray query is switched on at start, so turning it on needs a restart.
+    std::atomic<bool> ray_traced_ao{false};
     /// Kaniel 2026-10-19 ("a setting to remove fog of war"): the map screen hides what this
     /// character has not walked near (bbport.ini map_fog, on by default); off shows the whole map.
     std::atomic<bool> map_fog{true};

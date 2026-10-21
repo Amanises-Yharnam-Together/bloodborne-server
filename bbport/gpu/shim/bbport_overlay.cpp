@@ -1904,6 +1904,39 @@ void EffectsTab() {
            T("Level of detail of models (game patch). Applies after restarting the game.",
              "Детализация моделей (патч игры). Применяется после перезапуска игры."),
            true, [&](int i) { Store(s.model_lod, lod_values[i], true); });
+    // Kaniel 2026-10-19 ("maybe there is a chance to add ray tracing"): screen-space lighting.
+    const char* lighting_names[] = {T("Off", "Выкл"), T("Low", "Низкое"), T("High", "Высокое")};
+    Choice("screen_lighting", T("Screen lighting", "Экранное освещение"),
+           std::clamp(s.screen_lighting.load(), 0, BbSettings::ScreenLightingCount - 1),
+           BbSettings::ScreenLightingCount, [&](int i) { return lighting_names[i]; },
+           [](int) { return true; },
+           T("Soft shadows in corners and light bounced off nearby surfaces, added to the game's "
+             "own lighting (like ReShade's RTGI). Low works at half size; High costs more GPU time.",
+             "Мягкие тени в углах и свет, отражённый от ближних поверхностей, поверх освещения "
+             "игры (как RTGI в ReShade). Низкое считается в половинном размере; высокое "
+             "нагружает видеочип сильнее."),
+           true, [&](int i) { Store(s.screen_lighting, i, true); });
+    const bool lighting_on = s.screen_lighting != BbSettings::ScreenLightingOff;
+    SliderRow("screen_lighting_ao", T("Corner shadows", "Тени в углах"), s.screen_lighting_ao, 0.0f,
+              1.0f, 0.1f,
+              T("How much corners and contacts darken with screen lighting.",
+                "Насколько темнеют углы и места касания с экранным освещением."),
+              lighting_on);
+    SliderRow("screen_lighting_gi", T("Bounced light", "Отражённый свет"), s.screen_lighting_gi,
+              0.0f, 2.0f, 0.1f,
+              T("How much colour nearby surfaces cast onto each other with screen lighting.",
+                "Сколько цвета ближние поверхности отбрасывают друг на друга с экранным "
+                "освещением."),
+              lighting_on);
+    // Kaniel 2026-10-21 ("continue with ray tracing"): the shadows also ray traced.
+    Toggle("ray_traced_ao", T("Ray-traced shadows", "Трассировка теней"), s.ray_traced_ao,
+           T("Screen lighting's shadows also traced against the area's own models: under "
+             "ceilings, in alcoves and behind the camera. Needs a graphics card with ray tracing; "
+             "turning it on applies after restarting the game.",
+             "Тени экранного освещения также трассируются по моделям самой местности: под "
+             "потолками, в нишах и за камерой. Нужна видеокарта с трассировкой лучей; "
+             "включение применяется после перезапуска игры."),
+           lighting_on);
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         const auto& effect = BbSettings::Effects[e];
         const char* hint =

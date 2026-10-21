@@ -138,6 +138,7 @@ std::u16string dynamic_texts[DynamicSlots];
 enum Field : int {
     OutputRes, Upscaler, Preset, Sharpness, ShowFps, FpsLimit, DlssModel,
     WindowModeField, Hdr, HdrScene, HdrPeak, HdrPaperWhite, HdrHighlights,
+    ScreenLightingField, ScreenLightingAo, ScreenLightingGi, RayTracedAo,
     ModelLod, FastShaderMath, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
 };
 int values[FieldCount];  // what the game's rows show and change (list rows bind ints)
@@ -151,6 +152,8 @@ constexpr float SharpnessStep = 0.2f; // the game's slider: 0..10 -> 0.0 .. 2.0
 constexpr int SharpnessSteps = 11;
 constexpr int LodValues[] = {-2, 0, 1, 2};
 constexpr float HighlightsStep = 0.1f; // the game's slider: 0..10 -> 0.0 .. 1.0
+constexpr float LightingAoStep = 0.1f; // 0..10 -> 0.0 .. 1.0
+constexpr float LightingGiStep = 0.2f; // 0..10 -> 0.0 .. 2.0
 /// Rows with a few ordered choices on the game's 0..10 slider (the quality preset, the output
 /// resolution): a pop-up list let the rows below it show through, so only the last row of a page
 /// is a list. The game keeps its own copy of a slider's value while the page is open, so every
@@ -183,6 +186,11 @@ void Fill(const BbSettings::Values& s, int* values) {
     values[HdrPeak] = BbSettings::HdrPeakIndex(s.hdr_peak_nits);
     values[HdrPaperWhite] = BbSettings::HdrPaperWhiteIndex(s.hdr_paper_white);
     values[HdrHighlights] = std::clamp(int(std::lround(s.hdr_highlights / HighlightsStep)), 0, 10);
+    values[ScreenLightingField] =
+        std::clamp(s.screen_lighting.load(), 0, BbSettings::ScreenLightingCount - 1);
+    values[ScreenLightingAo] = std::clamp(int(std::lround(s.screen_lighting_ao / LightingAoStep)), 0, 10);
+    values[ScreenLightingGi] = std::clamp(int(std::lround(s.screen_lighting_gi / LightingGiStep)), 0, 10);
+    values[RayTracedAo] = s.ray_traced_ao;
     values[FastShaderMath] = s.fast_shader_math;
     values[ModelLod] = 1;
     for (int i = 0; i < 4; ++i) {
@@ -340,6 +348,22 @@ void DefineTexts() {
             "Предел частоты кадров; с лимитом частота разблокируется со следующего запуска",
             limits);
     }
+
+    // Kaniel 2026-10-19 ("maybe there is a chance to add ray tracing"): screen-space lighting.
+    page("Lighting", "Освещение", "Screen-space shadows and bounced light (bbport)",
+         "Экранные тени и отражённый свет (bbport)");
+    row(ScreenLightingField, "Screen lighting", "Экранное освещение",
+        "0-2 off, 3-7 low (half size), 8-10 high (more GPU time)",
+        "0-2 выкл, 3-7 низкое (половинный размер), 8-10 высокое (больше нагрузка)",
+        {off, AddText("Low", "Низкое"), AddText("High", "Высокое")}, Kind::Steps);
+    row(ScreenLightingAo, "Corner shadows", "Тени в углах", "How much corners darken: 0 none, 10 full",
+        "Насколько темнеют углы: 0 нет, 10 полностью", {}, Kind::Slider);
+    row(ScreenLightingGi, "Bounced light", "Отражённый свет",
+        "Colour cast by nearby surfaces: 0 none, 5 natural, 10 double",
+        "Цвет от ближних поверхностей: 0 нет, 5 естественно, 10 вдвое", {}, Kind::Slider);
+    row(RayTracedAo, "Ray-traced shadows", "Трассировка теней",
+        "Shadows traced against the area's models (ray tracing GPU; after a restart)",
+        "Тени по моделям местности (видеокарта с трассировкой; после перезапуска)", toggle);
 
     page("Effects", "Эффекты", "The game's effects (bbport; after a restart)",
          "Эффекты игры (bbport; после перезапуска)");
@@ -927,6 +951,10 @@ void Poll() {
     s.hdr_paper_white =
         BbSettings::HdrPaperWhiteNits[std::clamp(values[HdrPaperWhite], 0, BbSettings::HdrPaperWhiteCount - 1)];
     s.hdr_highlights = std::clamp(values[HdrHighlights], 0, 10) * HighlightsStep;
+    s.screen_lighting = std::clamp(values[ScreenLightingField], 0, BbSettings::ScreenLightingCount - 1);
+    s.screen_lighting_ao = std::clamp(values[ScreenLightingAo], 0, 10) * LightingAoStep;
+    s.screen_lighting_gi = std::clamp(values[ScreenLightingGi], 0, 10) * LightingGiStep;
+    s.ray_traced_ao = values[RayTracedAo] != 0;
     s.model_lod = LodValues[std::clamp(values[ModelLod], 0, 3)];
     s.fast_shader_math = values[FastShaderMath] != 0;
     for (int e = 0; e < BbSettings::EffectCount; ++e) {

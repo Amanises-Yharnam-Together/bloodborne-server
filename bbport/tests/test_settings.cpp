@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
 #include <fstream>
 #include <optional>
 #include <sstream>
@@ -261,6 +262,51 @@ int main() {
         unlink(hdr_file);
     }
     std::puts("PASS: HDR brightness follows the display");
+
+    // Kaniel 2026-10-19 ("we can try building both"): screen-space lighting, off unless picked;
+    // quality and strengths kept in the file, out-of-range values clamped.
+    {
+        char lighting_file[512];
+        std::snprintf(lighting_file, sizeof(lighting_file), "%s/bbport-settings-test-XXXXXX",
+                      temp && temp[0] ? temp : "/tmp");
+        const int fd = mkstemp(lighting_file);
+        assert(fd >= 0);
+        close(fd);
+        setenv("BB_CONFIG", lighting_file, 1);
+        BbSettings::Load();
+        assert(s.screen_lighting == BbSettings::ScreenLightingOff && "off by default");
+        assert(s.screen_lighting_ao == 0.7f && s.screen_lighting_gi == 1.0f);
+        assert(!s.ray_traced_ao && "ray tracing off by default");
+        s.screen_lighting = BbSettings::ScreenLightingHigh;
+        s.screen_lighting_ao = 0.5f;
+        s.screen_lighting_gi = 1.5f;
+        s.ray_traced_ao = true;
+        BbSettings::Save();
+        const std::string saved = Read(lighting_file);
+        assert(saved.find("screen_lighting=high\n") != std::string::npos);
+        assert(saved.find("screen_lighting_ao=0.50\n") != std::string::npos);
+        assert(saved.find("screen_lighting_gi=1.50\n") != std::string::npos);
+        assert(saved.find("ray_traced_ao=1\n") != std::string::npos);
+        s.screen_lighting = BbSettings::ScreenLightingOff;
+        s.ray_traced_ao = false;
+        BbSettings::Load();
+        assert(s.screen_lighting == BbSettings::ScreenLightingHigh && s.screen_lighting_ao == 0.5f &&
+               s.screen_lighting_gi == 1.5f && s.ray_traced_ao);
+        s.ray_traced_ao = false;
+        const int wfd = open(lighting_file, O_WRONLY | O_TRUNC);
+        const char ini[] = "screen_lighting=low\nscreen_lighting_ao=7\nscreen_lighting_gi=-1\n";
+        assert(write(wfd, ini, sizeof(ini) - 1) == ssize_t(sizeof(ini) - 1));
+        close(wfd);
+        BbSettings::Load();
+        assert(s.screen_lighting == BbSettings::ScreenLightingLow);
+        assert(s.screen_lighting_ao == 1.0f && s.screen_lighting_gi == 0.0f && "clamped");
+        assert(std::string(BbSettings::ScreenLightingNames[BbSettings::ScreenLightingOff]) == "off");
+        unlink(lighting_file);
+        s.screen_lighting = BbSettings::ScreenLightingOff;
+        s.screen_lighting_ao = 0.7f;
+        s.screen_lighting_gi = 1.0f;
+    }
+    std::puts("PASS: screen lighting settings");
 
     // Kaniel 2026-10-11: the controls in the game's menu. The lines it does not keep in Values
     // (key.*, pad.*, mouse_*, button_icons: runtime_pad.c and the icon step read them) are read

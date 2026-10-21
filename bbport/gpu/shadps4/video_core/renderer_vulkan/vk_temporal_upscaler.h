@@ -56,6 +56,14 @@ public:
     [[nodiscard]] bool Enabled() const noexcept {
         return enabled;
     }
+    /// The compute shader it runs before: the post-processing starts there.
+    [[nodiscard]] u64 PostTrigger() const noexcept {
+        return trigger_hash;
+    }
+    /// A temporal upscaler (FSR, DLSS, XeSS, TAA) accumulates the frames.
+    [[nodiscard]] bool Temporal() const {
+        return Active();
+    }
 
     /// bbport: FSR 3.1 frame generation (vk_frame_generation.h) takes each frame's depth and
     /// motion vectors at the upscale and the scene before the first UI draw.

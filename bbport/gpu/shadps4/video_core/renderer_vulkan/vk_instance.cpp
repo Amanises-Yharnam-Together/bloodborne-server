@@ -12,6 +12,7 @@
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+#include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
@@ -298,7 +299,9 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
         vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT,
         vk::PhysicalDeviceMutableDescriptorTypeFeaturesEXT,
-        vk::PhysicalDeviceDescriptorBufferFeaturesEXT, vk::PhysicalDeviceFaultFeaturesEXT>();
+        vk::PhysicalDeviceDescriptorBufferFeaturesEXT, vk::PhysicalDeviceFaultFeaturesEXT,
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+        vk::PhysicalDeviceRayQueryFeaturesKHR>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -561,6 +564,27 @@ bool Instance::CreateDevice() {
         LOG_INFO(Render_Vulkan, "fsr4vk: {} found, its device features are enabled",
                  Fsr4Vk::LibraryPathUtf8());
     }
+    // bbport: ray-traced ambient occlusion (vk_ray_occlusion.h), only when the menu has it on
+    // (bbport.ini ray_traced_ao, read before the device starts): acceleration structures and
+    // ray queries in compute shaders.
+    ray_query =
+        BbSettings::Get().ray_traced_ao && vk12_features.bufferDeviceAddress &&
+        feature_chain.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>()
+            .accelerationStructure &&
+        feature_chain.get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery &&
+        extension_available(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+        extension_available(VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+        extension_available(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    if (ray_query) {
+        add_extension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        add_extension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        add_extension(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        const auto as_props = physical_device.getProperties2<
+            vk::PhysicalDeviceProperties2,
+            vk::PhysicalDeviceAccelerationStructurePropertiesKHR>();
+        scratch_alignment = as_props.get<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()
+                                .minAccelerationStructureScratchOffsetAlignment;
+    }
     // bbport: DLSS (optional bridge DLL) needs its own device extensions on NVIDIA GPUs.
     std::vector<const char*> dlss_extensions;
     const std::size_t dlss_first = enabled_extensions.size();
@@ -770,6 +794,12 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceDescriptorBufferFeaturesEXT{
             .descriptorBuffer = true,
         },
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR{
+            .accelerationStructure = true,
+        },
+        vk::PhysicalDeviceRayQueryFeaturesKHR{
+            .rayQuery = true,
+        },
     };
 
     if (!custom_border_color) {
@@ -842,6 +872,10 @@ bool Instance::CreateDevice() {
     if (!fsr4vk) {
         device_chain.unlink<vk::PhysicalDeviceMutableDescriptorTypeFeaturesEXT>();
         device_chain.unlink<vk::PhysicalDeviceDescriptorBufferFeaturesEXT>();
+    }
+    if (!ray_query) {
+        device_chain.unlink<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>();
+        device_chain.unlink<vk::PhysicalDeviceRayQueryFeaturesKHR>();
     }
 
     if (xess) {
