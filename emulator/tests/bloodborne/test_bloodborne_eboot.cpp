@@ -352,6 +352,17 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     EXPECT_EQ(Bytes(0x013CAD09, 16),
               (std::vector<u8>{0x48, 0x8B, 0x40, 0x58, 0x0F, 0xB7, 0x88, 0x14, 0x01, 0x00, 0x00,
                                0x89, 0xCA, 0x83, 0xCA, 0x02}));
+    // Event command 2005:3 (an object's enable switch, the rig's object census): case 3 calls
+    // the hits switch and the entity enable switch, which reads the object registry and sets bit
+    // 14 of the map object's +0x1FC (`mov eax, [rdi + 0x1FC]; mov ecx, eax; and ecx, 0x4000`).
+    EXPECT_EQ(CallTarget(0x017C485F), 0x013CABD0u);
+    EXPECT_EQ(CallTarget(0x017C4869), 0x013CA580u);
+    // `lea rax, [rip + 0x04170BCB]`: the registry pointer at 0x0553B168.
+    EXPECT_EQ(Bytes(0x013CA596, 7), (std::vector<u8>{0x48, 0x8D, 0x05, 0xCB, 0x0B, 0x17, 0x04}));
+    EXPECT_EQ(CallTarget(0x013CA696), 0x015A6CA0u);
+    EXPECT_EQ(Bytes(0x015A6CA0 + 7, 14),
+              (std::vector<u8>{0x8B, 0x87, 0xFC, 0x01, 0x00, 0x00, 0x89, 0xC1, 0x81, 0xE1, 0x00,
+                               0x40, 0x00, 0x00}));
     // The kill autoplay uses: the dead flag (`or byte ptr [r15 + 0x1E3], 1`) on its way out.
     EXPECT_EQ(Bytes(0x018BFAD3, 8),
               (std::vector<u8>{0x41, 0x80, 0x8F, 0xE3, 0x01, 0x00, 0x00, 0x01}));

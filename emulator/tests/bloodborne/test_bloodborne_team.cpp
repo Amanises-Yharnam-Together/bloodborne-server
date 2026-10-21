@@ -348,6 +348,18 @@ TEST(TeamWorld, AGuestFollowsTheStoryStepsTheHostChanged) {
     EXPECT_TRUE(TeamStoryToFollow(before, other).empty());
 }
 
+// Kaniel's playtest 2026-10-20: Lisara's game took the host's "light the Witch's Abode lamp"
+// request (72200201) as a story step, and her own lamp never lit. A lamp's light request is each
+// player's own; the lit lamp reaches the party by its active flags and the lamp lists.
+TEST(TeamWorld, AGuestDoesNotFollowTheHostsLampLightRequest) {
+    WorldFlags before;
+    before.blocks = {1, 9, 1240, 7220};
+    before.on = {1100};
+    WorldFlags after = before;
+    after.on = {1100, 1300, 72200201};
+    EXPECT_EQ(TeamStoryToFollow(before, after), (std::vector<std::pair<s32, bool>>{{1300, true}}));
+}
+
 // Phase 6: the team join without signs or a bell. The host opens its session once it stands in
 // its world and says so once (the server keeps it for its guests); a guest joins the session the
 // server sent when it stands alone in its world.

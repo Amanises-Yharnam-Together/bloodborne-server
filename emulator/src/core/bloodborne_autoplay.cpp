@@ -1216,6 +1216,85 @@ bool AutoplayAddEffect(const AutoplayStep& step) {
     return true;
 }
 
+// The map object of entity `entity`, as event command 2005:3 (bank 2005 case 3, 0x017C480C)
+// finds it in 0x013CA580: the registry at [0x0553B168] (+0x10 map count, +0x18 maps of 0x20, each
+// +0x10 block count and +0x18 blocks of 0x1F8 with a sorted (entity, code) list at +0xF0 count /
+// +0xF8), then the code's block ((code >> 20) & 0xFF of [+0x20], at [+0x28] + block * 0x1F8) and
+// item (code & 0xFFFFF of [block +0xC8], at [block +0xD0] + item * 0x2E0).
+std::optional<u64> MapObjectOfEntity(s32 entity) {
+    const u64 registry = ReadValue<u64>(image_base + EntityObjectRegistryOffset, 0);
+    if (registry < 0x10000 || !HasMemoryAccess(registry, 0x30, MemoryProt::CpuRead)) {
+        return std::nullopt;
+    }
+    std::optional<s32> code;
+    const s32 maps = ReadValue<s32>(registry, 0x10);
+    const u64 map_array = ReadValue<u64>(registry, 0x18);
+    for (s32 map = 0; map < std::min(maps, 64) && map_array >= 0x10000 && !code; ++map) {
+        const u64 entry = map_array + static_cast<u64>(map) * 0x20;
+        const s32 blocks = ReadValue<s32>(entry, 0x10);
+        const u64 block_array = ReadValue<u64>(entry, 0x18);
+        for (s32 block = 0; block < std::min(blocks, 64) && block_array >= 0x10000 && !code;
+             ++block) {
+            const u64 at = block_array + static_cast<u64>(block) * 0x1F8;
+            const s32 count = ReadValue<s32>(at, 0xF0);
+            const u64 pairs = ReadValue<u64>(at, 0xF8);
+            if (pairs < 0x10000 || count <= 0 ||
+                !HasMemoryAccess(pairs, static_cast<u64>(count) * 8, MemoryProt::CpuRead)) {
+                continue;
+            }
+            for (s32 low = 0, high = count - 1; low <= high;) {
+                const s32 middle = (low + high) / 2;
+                const s32 id = ReadValue<s32>(pairs, static_cast<u64>(middle) * 8);
+                if (id == entity) {
+                    const s32 found = ReadValue<s32>(pairs, static_cast<u64>(middle) * 8 + 4);
+                    if (found >= 0) {
+                        code = found;
+                    }
+                    break;
+                }
+                if (id < entity) {
+                    low = middle + 1;
+                } else {
+                    high = middle - 1;
+                }
+            }
+        }
+    }
+    if (!code) {
+        return std::nullopt;
+    }
+    const u32 block = (static_cast<u32>(*code) >> 20) & 0xFF;
+    const u32 item = static_cast<u32>(*code) & 0xFFFFF;
+    if (block >= ReadValue<u32>(registry, 0x20)) {
+        return std::nullopt;
+    }
+    const u64 block_at = ReadValue<u64>(registry, 0x28) + block * 0x1F8;
+    if (block_at < 0x10000 || item >= ReadValue<u32>(block_at, 0xC8)) {
+        return std::nullopt;
+    }
+    const u64 object = ReadValue<u64>(block_at, 0xD0) + item * 0x2E0;
+    return HasMemoryAccess(object, 0x200, MemoryProt::CpuRead) ? std::optional{object}
+                                                               : std::nullopt;
+}
+
+// object <entity>...: each map object's enable switch (bit 14 of +0x1FC, what 2005:3 writes in
+// 0x015A6CA0) and that word, logged (Kaniel's playtest 2026-10-20: a guest saw the Witch's Abode
+// lamp, object 2201951, before her kill).
+bool AutoplayObject(const AutoplayStep& step) {
+    for (size_t index = 0; !step.Arg(index).empty(); ++index) {
+        const s32 entity = static_cast<s32>(step.Number(index, 0));
+        if (const auto object = MapObjectOfEntity(entity)) {
+            const u32 flags = ReadValue<u32>(*object, 0x1FC);
+            LOG_INFO(Debug,
+                     "Bloodborne autoplay object {}: enabled {} flags {:#x} at {:#x} (map {:#x})",
+                     entity, (flags >> 14) & 1, flags, *object, GetCurrentPackedMap());
+        } else {
+            LOG_INFO(Debug, "Bloodborne autoplay object {}: none", entity);
+        }
+    }
+    return true;
+}
+
 // peek <target> <offset>, poke <target> <offset> <value> [1] (hex): a character's u32 (or byte)
 // at an offset, logged or written (reverse engineering on the rig: a field's meaning tried in
 // play).
@@ -1863,6 +1942,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"dump", AutoplayDump},
     {"raise-stat", AutoplayRaiseStat},
     {"add-effect", AutoplayAddEffect},
+    {"object", AutoplayObject},
     {"peek", AutoplayPeekOrPoke},
     {"poke", AutoplayPeekOrPoke},
     {"expect-hidden", AutoplayExpectHidden},

@@ -287,6 +287,26 @@ TEST(BloodborneFlagRules, BossFoundFlagsArePerPlayer) {
     }
 }
 
+// Kaniel's playtest 2026-10-20: the Witch's Abode lamp broke for the whole party. A lamp's "light
+// it" request (7MMM02LL, common event 7100: the talk sets it, the event lights the lamp once and
+// ends at once on any later load with it on) is each player's own: krolebord's, set while she
+// lived, lit nothing and still reached the host, and the host's reached Lisara as a story step.
+// The lit lamp itself is shared by its active flags and the lamp lists.
+TEST(BloodborneFlagRules, ALampsLightRequestIsEachPlayersOwn) {
+    for (const s32 flag : {72110200, 72200200, 72200201, 72410219, 73990200, 73990219}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::PerPlayer) << flag;
+        EXPECT_TRUE(KeepsLocalFlag(true, flag)) << flag;
+        EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
+        EXPECT_FALSE(TakesHostMapFlag(flag)) << flag;
+        EXPECT_FALSE(SharedWithParty(flag)) << flag;
+        EXPECT_FALSE(IsLampTravelFlag(flag)) << flag;
+    }
+    for (const s32 flag : {72200199, 72200220, 72100201}) {
+        EXPECT_NE(RuleFor(flag).owner, FlagOwner::PerPlayer) << flag;
+    }
+    EXPECT_TRUE(IsLampTravelFlag(72200101));
+}
+
 // Kaniel 2026-10-12: the messengers' weapon lines follow each player's own hunter badges, as in
 // the base game. The Dream's 12101000 runs in each player's own game (no network sync) and reads
 // that player's items, so a guest keeps its own lines and never takes or carries the host's.

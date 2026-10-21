@@ -449,6 +449,12 @@ constexpr u64 SetCharacterHitsBitOffset = 0x013CAD09;
 bool CharacterHitsOff(u64 character);
 // As 2004:39 does for a character; false if it is no character. The game's thread only.
 bool SetCharacterHitsOff(u64 character, bool off);
+// Event command 2005:3 (an object's enable switch; bank 2005 handler 0x017C46E0, case 3 at
+// 0x017C480C) calls 0x013CABD0 and then 0x013CA580 with the entity id; the latter finds a map
+// object in the registry at [0x0553B168] and calls 0x015A6CA0, which sets bit 14 of its +0x1FC.
+constexpr u64 EntityObjectRegistryOffset = 0x0553B168;
+constexpr u64 SetEntityEnabledOffset = 0x013CA580;
+constexpr u64 SetMapObjectEnabledOffset = 0x015A6CA0;
 void TickLampRest();
 
 bool EnemiesAreHarder();

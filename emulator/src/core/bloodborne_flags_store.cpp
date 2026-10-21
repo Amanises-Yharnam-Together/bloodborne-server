@@ -495,8 +495,28 @@ void ListLamps(std::span<const s32> lamps) {
     LOG_INFO(Debug, "Bloodborne party: lamps{} are lit for this player too", listed);
 }
 
+// A lamp's light request on with the lamp not lit for this player never lights it again (event
+// 7100 ends at once): cleared as the lamp's map loads (LightRequestsToClear), after the team's
+// world and the session's changes went in. Kaniel's playtest 2026-10-20: the Witch's Abode lamp
+// stayed unlit for the whole party. Raw, as ApplyHostMapState reads it: the map this load makes.
+void ClearLightRequestsThatLitNothing() {
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    const u32 map = GetCurrentPackedMap();
+    std::string cleared;
+    for (const s32 flag : LightRequestsToClear(map, EventFlagOn)) {
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, false);
+        cleared += fmt::format(" {}", flag);
+    }
+    if (!cleared.empty()) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: lamp light requests that lit nothing cleared on map {:#x}:{}",
+                 map, cleared);
+    }
+}
+
 void SetGuestPickupsBeforeMapItems() {
     ApplyTeamWorldOnLoad();
+    ClearLightRequestsThatLitNothing();
     static std::chrono::steady_clock::time_point last{};
     static OncePerTrip trip_load;
     const auto now = std::chrono::steady_clock::now();
@@ -517,6 +537,7 @@ void SetGuestPickupsBeforeMapItems() {
                  "Bloodborne party: set {} of the session's world changes as a trip loads the "
                  "guest's own world",
                  SetGuestWorldChanges(true));
+        ClearLightRequestsThatLitNothing();
     }
     if (now - last < std::chrono::seconds{5}) {
         return;
