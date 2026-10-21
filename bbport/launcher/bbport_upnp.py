@@ -13,6 +13,9 @@ WANIPConnection / WANPPPConnection SOAP actions.
 import ipaddress
 import re
 import socket
+import subprocess
+import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,9 +28,10 @@ SERVICES = ('urn:schemas-upnp-org:service:WANIPConnection:2',
 SEARCH_TARGETS = ('urn:schemas-upnp-org:device:InternetGatewayDevice:2',
                   'urn:schemas-upnp-org:device:InternetGatewayDevice:1') + SERVICES
 DESCRIPTION = 'Yharnam Together co-op'
-# What the host's co-op server listens on (bbport_coop: shadnet, WebAPI, backend; matching and the
-# game traffic it routes).
-HOST_PORTS = (('TCP', 31313), ('TCP', 31315), ('TCP', 20443), ('UDP', 31314))
+# What the guests reach on the host's PC, as its firewall rules (bbport_coop.firewall_commands): the WebAPI
+# and the game's backend, and the UDP port of matching and the game traffic it routes. shadNet's own TCP
+# port stays on the host's PC.
+HOST_PORTS = (('TCP', 31315), ('TCP', 20443), ('UDP', 31314))
 # The router has no internet address of its own: carrier-grade NAT (100.64.0.0/10) or a private one.
 NOT_PUBLIC = [ipaddress.IPv4Network(n) for n in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
                                                   '100.64.0.0/10', '169.254.0.0/16', '0.0.0.0/8')]
@@ -46,29 +50,94 @@ def is_public(address):
     return not any(ip in network for network in NOT_PUBLIC) and not ip.is_loopback and not ip.is_multicast
 
 
-def discover(timeout=2.0):
-    """Locations (description URLs) of the gateways that answered an SSDP search, first answer first."""
+# Adapters a router is never behind: VPNs (Radmin VPN 26.0.0.0/8, Tailscale 100.64.0.0/10), link-local.
+NOT_LAN = [ipaddress.IPv4Network(n) for n in ('26.0.0.0/8', '100.64.0.0/10', '169.254.0.0/16', '127.0.0.0/8')]
+
+
+def lan_addresses():
+    """This PC's addresses a home router can be behind: every adapter's but the VPNs'. Radmin VPN takes
+    the lowest metric and a default route of its own, so a search sent the default way leaves over the VPN
+    and no router hears it (kaniel-pc, 2026-10-21)."""
+    try:
+        addresses = socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        return []
+    return [a for a in dict.fromkeys(addresses)
+            if not any(ipaddress.IPv4Address(a) in network for network in NOT_LAN)]
+
+
+def default_gateways(route_print=None):
+    """(router, this PC's address towards it) of each default route but the VPNs', from Windows'
+    `route print -4 0.0.0.0` (empty elsewhere). A search sent straight to the router comes back through
+    Windows Firewall as the answer to it; a multicast one's answer may not."""
+    if route_print is None:
+        if sys.platform != 'win32':
+            return []
+        try:
+            route_print = subprocess.run(['route', 'print', '-4', '0.0.0.0'], capture_output=True, text=True,
+                                         timeout=5, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
     found = []
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
-        sock.settimeout(timeout)
-        for target in SEARCH_TARGETS:
-            message = ('M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover"\r\n'
-                       f'MX: 2\r\nST: {target}\r\n\r\n')
-            try:
-                sock.sendto(message.encode('ascii'), SSDP_ADDRESS)
-            except OSError:
-                return found
-        while True:
-            try:
-                data, _sender = sock.recvfrom(4096)
-            except OSError:  # the timeout ends the search
-                return found
-            match = re.search(rb'(?im)^location:\s*(\S+)\s*$', data)
-            if match:
-                location = match.group(1).decode('ascii', 'replace')
-                if location.startswith('http://') and location not in found:
-                    found.append(location)
+    for match in re.finditer(r'(?m)^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)\s',
+                             route_print):
+        router, address = match.groups()
+        if not any(ipaddress.IPv4Address(address) in network for network in NOT_LAN) \
+                and (router, address) not in found:
+            found.append((router, address))
+    return found
+
+
+def search_messages():
+    return [('M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "ssdp:discover"\r\n'
+             f'MX: 2\r\nST: {target}\r\n\r\n').encode('ascii') for target in SEARCH_TARGETS]
+
+
+def discover(timeout=2.0, addresses=None):
+    """Locations (description URLs) of the gateways that answered an SSDP search, first answer first. The
+    search goes out of every LAN adapter, to the multicast group and straight to the adapter's usual router
+    address (x.y.z.1: some routers answer only a direct ask)."""
+    import select
+    routers = {address: router for router, address in default_gateways()} if addresses is None else {}
+    sockets = []
+    for address in (lan_addresses() if addresses is None else addresses):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(address))
+            sock.bind((address, 0))
+        except OSError:
+            continue
+        sockets.append(sock)
+        direct = {routers.get(address), address.rsplit('.', 1)[0] + '.1'} - {None}
+        for message in search_messages():
+            for target in [SSDP_ADDRESS] + [(router, SSDP_ADDRESS[1]) for router in sorted(direct)]:
+                try:
+                    sock.sendto(message, target)
+                except OSError:
+                    pass
+    found = []
+    deadline = time.monotonic() + timeout
+    try:
+        while sockets:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            ready, _w, _x = select.select(sockets, [], [], left)
+            for sock in ready:
+                try:
+                    data, _sender = sock.recvfrom(4096)
+                except OSError:
+                    continue
+                match = re.search(rb'(?im)^location:\s*(\S+)\s*$', data)
+                if match:
+                    location = match.group(1).decode('ascii', 'replace')
+                    if location.startswith('http://') and location not in found:
+                        found.append(location)
+    finally:
+        for sock in sockets:
+            sock.close()
+    return found
 
 
 def _local(tag):
