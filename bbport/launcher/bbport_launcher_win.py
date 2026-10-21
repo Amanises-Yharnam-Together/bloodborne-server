@@ -273,6 +273,7 @@ TWEAKS = [
                        'Физика тел как в Dark Souls (тела отлетают дальше)'), False),
 ]
 INI_FLAGS = {'sharpen', 'object_motion', 'frame_generation', 'frame_gen_fit_display', 'show_fps', 'hdr',
+             'fast_shader_math',
              'mouse_camera', 'mouse_invert_y',
              'mouse_no_auto_rotation', *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
 INI_FLOATS = {'sharpness', 'mouse_sensitivity'}  # written with two decimals
@@ -280,7 +281,7 @@ INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': 
                 'object_motion': '1', 'frame_generation': '0', 'show_fps': '1',
                 'frame_gen_provider': 'fsr3', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '1',
                 'output_res': '1920x1080', 'model_lod': '0', 'map_3d': '0',
-                'live_resolution': 'auto', 'window_mode': 'windowed', 'hdr': '0',
+                'live_resolution': 'auto', 'window_mode': 'windowed', 'hdr': '0', 'fast_shader_math': '0',
                 'button_icons': bbport_controls.ICON_DEFAULT, **bbport_controls.MOUSE_DEFAULTS,
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
 # Kaniel 2026-10-19: the map's 3D view (bbport.ini map_3d: BbSettings::Map3d).
@@ -4758,6 +4759,11 @@ class Launcher:
         self.row(f, _('GPU readbacks', 'Чтение данных GPU'), self.choice(f, 'readbacks', 'app', READBACKS),
                  _('How exactly data the GPU writes is copied back for the game.',
                    'Насколько точно данные, записанные GPU, возвращаются игре.'))
+        self.check(f, 'fast_shader_math', 'ini', _('Fast shader math', 'Быстрая математика шейдеров'),
+                   _('Pixel and compute shaders use faster, less strict float math: a little more FPS, the '
+                     'picture can differ slightly. Shaders are compiled again once after a change.',
+                     'Пиксельные и вычислительные шейдеры считают быстрее и менее строго: чуть больше FPS, '
+                     'картинка может немного отличаться. После изменения шейдеры один раз компилируются заново.'))
         f = self.card(page, _('Diagnostics', 'Для разработчика'))
         self.check(f, 'frame_stats', 'app', _('Frame statistics in the log (every 5 s)', 'Статистика кадров в журнале (раз в 5 с)'))
         self.check(f, 'gpu_profile', 'app', _('GPU time per pass in the log', 'Профиль GPU в журнале'))

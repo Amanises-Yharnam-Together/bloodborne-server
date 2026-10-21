@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Schnelle Shader-Mathematik",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Pixel- und Compute-Shader rechnen mit schnellerer, weniger strenger Gleitkomma-Mathematik: etwas mehr FPS, das Bild kann leicht abweichen. Wirkt nach einem Neustart des Spiels; die Shader werden einmal neu kompiliert.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Bildratenlimit, DLSS-Modell und Shader-Mathematik (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Nach einem Neustart: schnellere, weniger strenge Gleitkomma-Mathematik in Shadern; das Bild kann leicht abweichen",
  "Bloodstains on compass and map": "Blutflecken auf Kompass und Karte",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Wo deine Blutechos nach einem Tod liegen: auf dem Kompass auf dieser Karte, auf der Karte auf jeder Karte. Nur du siehst deinen Blutfleck.",
  "Map fog of war": "Kartennebel",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Ein: HUD auf UI-Helligkeit, Flammen über die 16-Bit-Szene. Aus: alles gestreckt",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 keine, 5 Weiß erreicht die Spitze, 10 mehr vom Bild wird heller",
  "Frame rate": "Bildrate",
- "Frame rate limit and DLSS model (bbport)": "Bildratenlimit und DLSS-Modell (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "RTX, nur DLSS: 0-1 Standard, 2-3 K beste Qualität, 4-6 L, 7-8 M schneller, 9-10 J wie K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "Koop läuft mit den festen 60 FPS des Spiels, für jeden Spieler gleich",
  "60 (co-op)": "60 (Koop)",

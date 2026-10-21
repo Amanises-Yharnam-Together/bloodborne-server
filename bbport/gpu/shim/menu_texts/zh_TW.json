@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "快速著色器運算",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "像素與運算著色器使用更快、較不嚴格的浮點運算：FPS 稍微提高，畫面可能略有不同。重新啟動遊戲後生效；著色器會重新編譯一次。",
+ "Frame rate limit, DLSS model and shader math (bbport)": "影格率上限、DLSS 模型與著色器運算（bbport）",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "重新啟動後生效：著色器使用更快、較不嚴格的浮點運算；畫面可能略有不同",
  "Bloodstains on compass and map": "在指南針和地圖上顯示血跡",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "死亡後你的血之迴響所在之處：指南針顯示本地圖的，地圖顯示所有地圖的。只有你能看到自己的血跡。",
  "Map fog of war": "地圖迷霧",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "開啟：HUD 維持介面亮度，火焰借助 16 位元場景。關閉：全部拉伸",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 無，5 白色達到峰值，10 更多畫面變亮",
  "Frame rate": "幀率",
- "Frame rate limit and DLSS model (bbport)": "幀率上限與 DLSS 模型（bbport）",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "僅限 RTX、DLSS：0-1 預設，2-3 K 品質最佳，4-6 L，7-8 M 較快，9-10 J 類似 K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "合作模式以遊戲固定的 60 FPS 執行，所有玩家相同",
  "60 (co-op)": "60（合作）",

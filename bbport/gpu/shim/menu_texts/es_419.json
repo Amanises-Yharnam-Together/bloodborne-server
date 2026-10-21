@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Cálculo rápido de shaders",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Los shaders de píxeles y de cómputo usan cálculos de punto flotante más rápidos y menos estrictos: algo más de FPS, la imagen puede variar un poco. Se aplica al reiniciar el juego; los shaders se compilan de nuevo una vez.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Límite de cuadros, modelo DLSS y cálculo de shaders (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Tras reiniciar: cálculos de punto flotante más rápidos y menos estrictos en los shaders; la imagen puede variar un poco",
  "Bloodstains on compass and map": "Manchas de sangre en brújula y mapa",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Dónde quedan tus ecos de sangre tras una muerte: en la brújula los de este mapa, en el mapa los de todos. Solo tú ves tu mancha de sangre.",
  "Map fog of war": "Niebla del mapa",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Sí: HUD al brillo de la interfaz, llamas realzadas por la escena de 16 bits. No: todo estirado",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 nada, 5 el blanco llega al pico, 10 se ilumina más parte de la imagen",
  "Frame rate": "Tasa de cuadros",
- "Frame rate limit and DLSS model (bbport)": "Límite de cuadros y modelo DLSS (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "RTX, solo DLSS: 0-1 predeterminado, 2-3 K mejor calidad, 4-6 L, 7-8 M más rápido, 9-10 J como K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "El cooperativo funciona a los 60 FPS fijos del juego, igual para todos",
  "60 (co-op)": "60 (cooperativo)",

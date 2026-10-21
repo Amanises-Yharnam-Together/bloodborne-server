@@ -487,6 +487,11 @@ add_executable(pixel-format-test EXCLUDE_FROM_ALL ../tests/test_pixel_format.cpp
 target_compile_options(pixel-format-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(pixel-format-test PRIVATE shim shadps4)
 target_link_libraries(pixel-format-test PRIVATE bbgpu)
+# Stencil-only depth target sizes (shadPS4 #5384).
+add_executable(depth-stencil-test EXCLUDE_FROM_ALL ../tests/test_depth_stencil.cpp)
+target_compile_options(depth-stencil-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(depth-stencil-test PRIVATE shim shadps4)
+target_link_libraries(depth-stencil-test PRIVATE bbgpu)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)

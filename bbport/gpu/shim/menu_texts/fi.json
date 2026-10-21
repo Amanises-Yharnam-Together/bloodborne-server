@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Nopea varjostinlaskenta",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Pikseli- ja laskentavarjostimet käyttävät nopeampaa, vähemmän tarkkaa liukulukulaskentaa: hieman enemmän FPS:ää, kuva voi erota hieman. Tulee voimaan pelin uudelleenkäynnistyksen jälkeen; varjostimet käännetään kerran uudelleen.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Ruudunpäivitysraja, DLSS-malli ja varjostinlaskenta (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Uudelleenkäynnistyksen jälkeen: nopeampaa, vähemmän tarkkaa liukulukulaskentaa varjostimissa; kuva voi erota hieman",
  "Bloodstains on compass and map": "Veritahrat kompassissa ja kartalla",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Missä verihäiveesi ovat kuoleman jälkeen: kompassissa tämän kartan, kartalla kaikkien karttojen. Vain sinä näet veritahrasi.",
  "Map fog of war": "Kartan sumu",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Päällä: HUD käyttöliittymän kirkkaudessa, liekkejä tehostaa 16-bittinen kohtaus. Pois: kaikki venytetään",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 ei mitään, 5 valkoinen saavuttaa huipun, 10 suurempi osa kuvasta kirkastuu",
  "Frame rate": "Ruudunpäivitys",
- "Frame rate limit and DLSS model (bbport)": "Ruudunpäivitysraja ja DLSS-malli (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "Vain RTX, DLSS: 0-1 oletus, 2-3 K paras laatu, 4-6 L, 7-8 M nopeampi, 9-10 J kuin K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "Yhteispeli toimii pelin kiinteällä 60 FPS:llä, sama jokaiselle pelaajalle",
  "60 (co-op)": "60 (yhteispeli)",

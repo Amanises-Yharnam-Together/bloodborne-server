@@ -559,11 +559,13 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
+        .fast_shader_math = EmulatorSettings.IsFastShaderMath(),
         // bbport BB_LAYER_MEMORY: buffers over nearly all memory go through the page table.
         .paged_buffers = VideoCore::BufferCache::LayerPagedActive(),
         // The game's buffer copy shader, from its profile (games/).
         .buffer_copy_shader_hash = Game::BufferCopyShader(),
     };
+    LOG_INFO(Render, "Fast shader math: {}", profile.fast_shader_math ? "on" : "off");
     async_compile = AsyncCompileEnabled() && !EmulatorSettings.IsShaderCollect();
     g_assert_speculative_exit = SpeculativeAssertExit;
     CreateDriverCache();

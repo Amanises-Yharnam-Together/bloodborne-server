@@ -138,7 +138,7 @@ std::u16string dynamic_texts[DynamicSlots];
 enum Field : int {
     OutputRes, Upscaler, Preset, Sharpness, ShowFps, FpsLimit, DlssModel,
     WindowModeField, Hdr, HdrScene, HdrPeak, HdrPaperWhite, HdrHighlights,
-    ModelLod, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
+    ModelLod, FastShaderMath, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
 };
 int values[FieldCount];  // what the game's rows show and change (list rows bind ints)
 u8 bytes[FieldCount];    // the same for toggle and slider rows (they bind bytes)
@@ -183,6 +183,7 @@ void Fill(const BbSettings::Values& s, int* values) {
     values[HdrPeak] = BbSettings::HdrPeakIndex(s.hdr_peak_nits);
     values[HdrPaperWhite] = BbSettings::HdrPaperWhiteIndex(s.hdr_paper_white);
     values[HdrHighlights] = std::clamp(int(std::lround(s.hdr_highlights / HighlightsStep)), 0, 10);
+    values[FastShaderMath] = s.fast_shader_math;
     values[ModelLod] = 1;
     for (int i = 0; i < 4; ++i) {
         if (LodValues[i] == s.model_lod) values[ModelLod] = i;
@@ -309,14 +310,18 @@ void DefineTexts() {
         "0 нет, 5 белый доходит до пика, 10 ярче большая часть картинки", {}, Kind::Slider, true);
 
     // bbport co-op: the frame rate limit (a list, last: it opens below itself) and the DLSS model.
-    page("Frame rate", "Частота кадров", "Frame rate limit and DLSS model (bbport)",
-         "Ограничение кадров и модель DLSS (bbport)");
+    page("Frame rate", "Частота кадров", "Frame rate limit, DLSS model and shader math (bbport)",
+         "Ограничение кадров, модель DLSS и математика шейдеров (bbport)");
     row(DlssModel, "DLSS model", "Модель DLSS",
         "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K",
         "RTX, только DLSS: 0-1 по умолчанию, 2-3 K лучше всего, 4-6 L, 7-8 M быстрее, 9-10 J как K",
         {AddText("Default", "По умолчанию"), AddText("K", "K"), AddText("L", "L"), AddText("M", "M"),
          AddText("J", "J")},
         Kind::Steps);
+    row(FastShaderMath, "Fast shader math", "Быстрая математика",
+        "After a restart: faster, less strict float math in shaders; the picture can differ slightly",
+        "После перезапуска: быстрее и менее строгие вычисления в шейдерах; картинка может немного отличаться",
+        toggle);
     if (BbSettings::FrameRateLocked()) {
         // Co-op: the game's fixed 60 FPS, one choice that cannot change (Apply keeps the limit).
         row(FpsLimit, "FPS limit", "Лимит FPS",
@@ -923,6 +928,7 @@ void Poll() {
         BbSettings::HdrPaperWhiteNits[std::clamp(values[HdrPaperWhite], 0, BbSettings::HdrPaperWhiteCount - 1)];
     s.hdr_highlights = std::clamp(values[HdrHighlights], 0, 10) * HighlightsStep;
     s.model_lod = LodValues[std::clamp(values[ModelLod], 0, 3)];
+    s.fast_shader_math = values[FastShaderMath] != 0;
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         s.effects[e] = values[FirstEffect + e] != 0;
     }

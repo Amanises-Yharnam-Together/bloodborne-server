@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "빠른 셰이더 연산",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "픽셀 셰이더와 컴퓨트 셰이더가 더 빠르고 덜 엄격한 부동소수점 연산을 사용합니다. FPS가 조금 오르고 화면이 약간 달라질 수 있습니다. 게임을 다시 시작한 뒤 적용되며, 셰이더가 한 번 다시 컴파일됩니다.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "프레임 레이트 제한, DLSS 모델, 셰이더 연산 (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "다시 시작 후: 셰이더의 부동소수점 연산이 더 빠르고 덜 엄격해집니다. 화면이 약간 달라질 수 있습니다",
  "Bloodstains on compass and map": "나침반과 지도에 혈흔 표시",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "죽은 뒤 나의 피의 유지가 남은 곳: 나침반에는 이 지역의 것, 지도에는 모든 지역의 것이 표시됩니다. 내 혈흔은 나만 볼 수 있습니다.",
  "Map fog of war": "지도 안개",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "ON: HUD는 UI 밝기 유지, 불꽃은 16비트 장면으로 강조. OFF: 전체를 늘림",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 없음, 5 흰색이 최대에 도달, 10 화면의 더 많은 부분이 밝아짐",
  "Frame rate": "프레임 레이트",
- "Frame rate limit and DLSS model (bbport)": "프레임 레이트 제한과 DLSS 모델(bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "RTX, DLSS 전용: 0-1 기본, 2-3 K 최고 화질, 4-6 L, 7-8 M 더 빠름, 9-10 J K와 비슷",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "협력 플레이는 게임 고유의 고정 60 FPS이며, 모든 플레이어가 같습니다",
  "60 (co-op)": "60(협력)",

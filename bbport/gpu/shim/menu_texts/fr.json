@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "Calcul rapide des shaders",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "Les shaders de pixels et de calcul utilisent des calculs flottants plus rapides et moins stricts : un peu plus d'IPS, l'image peut légèrement différer. S'applique après le redémarrage du jeu ; les shaders sont recompilés une fois.",
+ "Frame rate limit, DLSS model and shader math (bbport)": "Limite d'images, modèle DLSS et calcul des shaders (bbport)",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "Après un redémarrage : calculs flottants plus rapides et moins stricts dans les shaders ; l'image peut légèrement différer",
  "Bloodstains on compass and map": "Taches de sang sur la boussole et la carte",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "Où reposent vos échos de sang après une mort : sur la boussole pour cette carte, sur la carte pour toutes. Vous seul voyez votre tache de sang.",
  "Map fog of war": "Brouillard de la carte",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "Activé : HUD à la luminosité de l'interface, flammes aidées par la scène 16 bits. Désactivé : tout étiré",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 aucun, 5 le blanc atteint la crête, 10 une plus grande part de l'image s'éclaircit",
  "Frame rate": "Fréquence d'images",
- "Frame rate limit and DLSS model (bbport)": "Limite d'images et modèle DLSS (bbport)",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "RTX, DLSS seulement : 0-1 défaut, 2-3 K meilleure qualité, 4-6 L, 7-8 M plus rapide, 9-10 J comme K",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "La coop tourne aux 60 FPS fixes du jeu, identiques pour chaque joueur",
  "60 (co-op)": "60 (coop)",

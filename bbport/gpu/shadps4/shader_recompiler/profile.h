@@ -54,6 +54,8 @@ struct Profile {
     bool needs_unorm_fixup{};
     bool needs_clip_distance_emulation{};
     bool supports_shader_stencil_export{};
+    /// fast_shader_math (shadPS4 #5455; bbport.ini fast_shader_math, off by default).
+    bool fast_shader_math{};
     /// bbport BB_LAYER_MEMORY: guest buffers of IsPagedBuffer size go through the page table.
     bool paged_buffers{};
     /// bbport: the game's buffer copy compute shader (its GCN program hash, from the game's profile;

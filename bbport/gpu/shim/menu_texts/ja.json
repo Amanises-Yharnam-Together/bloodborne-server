@@ -1,4 +1,8 @@
 {
+ "Fast shader math": "高速シェーダー演算",
+ "Pixel and compute shaders use faster, less strict float math: a little more FPS, the picture can differ slightly. Applies after restarting the game; shaders are compiled again once.": "ピクセルシェーダーとコンピュートシェーダーが、より速く厳密さを抑えた浮動小数点演算を使います。FPSが少し上がり、映像がわずかに変わることがあります。ゲームの再起動後に反映され、シェーダーが一度だけ再コンパイルされます。",
+ "Frame rate limit, DLSS model and shader math (bbport)": "フレームレート上限、DLSSモデル、シェーダー演算（bbport）",
+ "After a restart: faster, less strict float math in shaders; the picture can differ slightly": "再起動後に反映：シェーダーの浮動小数点演算を速く、厳密さを抑えます。映像がわずかに変わることがあります",
  "Bloodstains on compass and map": "コンパスと地図に血痕を表示",
  "Where your echoes lie after a death: on the compass on this map, on the map on every map. Only you see your bloodstain.": "死んだ後、あなたの血の遺志が落ちている場所。コンパスにはこのマップのもの、地図にはすべてのマップのものを表示します。自分の血痕は自分にしか見えません。",
  "Map fog of war": "マップの霧",
@@ -252,7 +256,6 @@
  "On: HUD kept at UI brightness, flames helped by the 16-bit scene. Off: all stretched": "ON：HUDはUI輝度のまま、炎は16ビットシーンで強調。OFF：全体を引き伸ばし",
  "0 none, 5 white reaches the peak, 10 more of the picture brightens": "0 なし、5 白がピークに到達、10 映像の多くが明るくなる",
  "Frame rate": "フレームレート",
- "Frame rate limit and DLSS model (bbport)": "フレームレート上限とDLSSモデル（bbport）",
  "RTX, DLSS only: 0-1 default, 2-3 K best quality, 4-6 L, 7-8 M faster, 9-10 J like K": "RTX、DLSSのみ：0-1 標準、2-3 K 最高画質、4-6 L、7-8 M 高速、9-10 J Kに近い",
  "Co-op plays at the game's fixed 60 FPS, the same for every player": "協力プレイはゲーム固定の60 FPSで、全プレイヤー共通",
  "60 (co-op)": "60（協力）",
