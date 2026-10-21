@@ -31,6 +31,7 @@
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "video_core/renderer_vulkan/vk_frame_generation.h"
+#include "video_core/renderer_vulkan/vk_image_dump.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -78,16 +79,10 @@ int DumpFrame() {
     return index++;
 }
 
-struct DumpImage {
-    vk::Image image; ///< in layout General
-    u32 width, height, bytes_per_pixel;
-    const char* name;
-    const char* format;
-    vk::ImageAspectFlagBits aspect = vk::ImageAspectFlagBits::eColor;
-};
+} // namespace
 
 /// Copies `images` into host buffers after the commands recorded so far and writes them to
-/// files once the GPU is done.
+/// files once the GPU is done (vk_image_dump.h).
 void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
                 int frame, std::initializer_list<DumpImage> images) {
     static const std::string dir = [] {
@@ -149,6 +144,8 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
     cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
     std::printf("Dump: frame %d -> %s\n", frame, dir.c_str());
 }
+
+namespace {
 
 void PrintIssues(const char* what, u64 issues) {
     std::printf("Upscaler: %s invalid:", what);

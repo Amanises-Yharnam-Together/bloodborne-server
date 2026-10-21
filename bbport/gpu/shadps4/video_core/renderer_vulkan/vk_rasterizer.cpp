@@ -73,6 +73,8 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     camera_motion->SetObjectMotion(object_motion.get());
     upscaler = std::make_unique<TemporalUpscaler>(instance, scheduler, texture_cache, runtime,
                                                   *camera_motion, *scene_targets);
+    screen_lighting = std::make_unique<ScreenLighting>(instance, scheduler, texture_cache, runtime,
+                                                       *camera_motion, *scene_targets);
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
@@ -698,12 +700,30 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         const auto& vp = regs.viewports[0];
         camera_motion->OnGBufferPass(db_desc.first, vp.xscale < 0.0f ? -1.0f : 1.0f,
                                      vp.yscale < 0.0f ? -1.0f : 1.0f);
+        // bbport: the G-buffer's sRGB target is the albedo (docs/upscaler.md: one of six).
+        if (screen_lighting->Enabled() && db_desc.first == camera_motion->Depth()) {
+            for (s32 cb = 0; cb < std::bit_width(key.mrt_mask); ++cb) {
+                const auto id = cb_descs[cb].first;
+                if (id && ScreenLighting::IsAlbedoFormat(
+                              texture_cache.GetImage(id).info.pixel_format)) {
+                    screen_lighting->OnAlbedo(id);
+                }
+                if (cb == 0 && id &&
+                    ScreenLighting::IsNormalFormat(texture_cache.GetImage(id).info.pixel_format)) {
+                    screen_lighting->OnNormals(id);
+                }
+                if (screen_lighting->DumpDue()) {
+                    screen_lighting->OnGBufferTarget(u32(cb), id);
+                }
+            }
+        }
     }
     if (upscaler->Enabled() && cb_descs[0].first) {
         upscaler->OnColorTarget(cb_descs[0].first);
     }
     // bbport: scene color: a full-size RGBA16F target drawn with the scene depth.
-    if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
+    const bool scene_hooks = upscaler->Enabled() || screen_lighting->Enabled();
+    if (scene_hooks && db_desc.first && db_desc.first == camera_motion->Depth() &&
         cb_descs[0].first && std::popcount(key.mrt_mask) <= 2) {
         const auto& color = texture_cache.GetImage(cb_descs[0].first);
         const auto& depth = texture_cache.GetImage(db_desc.first);
@@ -711,12 +731,16 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
             color.info.size.width == depth.info.size.width &&
             color.info.size.height == depth.info.size.height) {
             upscaler->OnSceneColor(cb_descs[0].first);
+            screen_lighting->OnSceneColor(cb_descs[0].first);
             // Blended geometry without depth writes (not full-screen passes): transparents and
             // effects start. Blended layers writing depth (decals, wet/blood ground) are
             // surfaces and stay in the history.
             if (regs.blend_control[0].enable && !regs.color_buffers[0].info.blend_bypass &&
                 !regs.depth_control.depth_write_enable &&
                 (regs.num_indices > 6 || regs.num_instances.NumInstances() > 1)) {
+                // The opaque scene is lit: the screen lighting goes in before the upscaler's
+                // snapshot of it and before the transparents.
+                screen_lighting->OnOpaqueSceneDone(upscaler->Temporal());
                 upscaler->OnBlendedSceneDraw();
             } else if (regs.num_indices <= 6 && regs.num_instances.NumInstances() <= 1) {
                 // A full-screen pass over the scene (the fog composite): the transparents are in.
@@ -1635,6 +1659,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
         scene_started = false;
         camera_motion->OnDisplayPass(cb_descs[0].first);
+        screen_lighting->OnFrameStart();
         if (upscaler->OnFrameStart()) {
             object_motion->InvalidateHistory();
             camera_motion->InvalidateHistory();
@@ -2013,6 +2038,10 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
             });
         }
     };
+    // bbport: a frame without transparents gets its screen lighting before the post-processing.
+    if (cs.pgm_hash == upscaler->PostTrigger()) {
+        screen_lighting->OnOpaqueSceneDone(upscaler->Temporal());
+    }
     if (upscaler->Enabled()) {
         upscaler->OnDispatch(cs.pgm_hash);
     }

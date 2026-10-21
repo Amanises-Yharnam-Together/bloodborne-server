@@ -1,0 +1,599 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: screen-space lighting, see vk_screen_lighting.h.
+
+#include "video_core/renderer_vulkan/vk_screen_lighting.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+
+#include "bbport_settings.h"
+#include "video_core/host_shaders/screen_lighting_apply_comp.h"
+#include "video_core/host_shaders/screen_lighting_trace_comp.h"
+#include "video_core/host_shaders/screen_lighting_trace_rt_comp.h"
+#include "video_core/renderer_vulkan/vk_camera_motion.h"
+#include "video_core/renderer_vulkan/vk_image_dump.h"
+#include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_ray_occlusion.h"
+#include "video_core/renderer_vulkan/vk_runtime.h"
+#include "video_core/renderer_vulkan/vk_scene_resolution.h"
+#include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/texture_cache/texture_cache.h"
+
+namespace Vulkan {
+
+namespace {
+/// screen_lighting.comp's push constants (std430).
+struct PushConstants {
+    std::array<float, 4> proj;
+    std::array<float, 2> size, trace_size, albedo_size;
+    float radius, max_radiance, noise, ao_strength, gi_strength;
+    s32 directions, steps, view, normals;
+    s32 rays;                    ///< RAY_QUERY: occlusion rays a pixel
+    std::array<float, 12> world; ///< RAY_QUERY: view to world, 3x4 rows
+};
+static_assert(sizeof(PushConstants) == 128 && offsetof(PushConstants, world) == 80);
+
+/// Reach of the occlusion and the bounce, in the game's units (metres): a room's corners and
+/// a body's contact with the ground, not the far side of a street.
+constexpr float Radius = 1.5f;
+/// A sample's brightest channel is capped here (the scene's lamps reach ~1-4): no fireflies.
+constexpr float MaxRadiance = 4.0f;
+
+/// Bytes a texel of the formats the scene's targets use (BB_LIGHTING_DUMP), 0 others.
+u32 BytesPerTexel(vk::Format format) {
+    switch (format) {
+    case vk::Format::eR8Unorm:
+        return 1;
+    case vk::Format::eR8G8Unorm:
+    case vk::Format::eR16Sfloat:
+        return 2;
+    case vk::Format::eR16G16B16A16Sfloat:
+    case vk::Format::eR16G16B16A16Unorm:
+    case vk::Format::eR32G32Sfloat:
+        return 8;
+    case vk::Format::eR32G32B32A32Sfloat:
+        return 16;
+    case vk::Format::eR8G8B8A8Unorm:
+    case vk::Format::eR8G8B8A8Srgb:
+    case vk::Format::eB8G8R8A8Unorm:
+    case vk::Format::eB8G8R8A8Srgb:
+    case vk::Format::eA2B10G10R10UnormPack32:
+    case vk::Format::eA2R10G10B10UnormPack32:
+    case vk::Format::eB10G11R11UfloatPack32:
+    case vk::Format::eR16G16Sfloat:
+    case vk::Format::eR16G16Unorm:
+    case vk::Format::eR32Sfloat:
+    case vk::Format::eR32Uint:
+    case vk::Format::eD32Sfloat:
+    case vk::Format::eD32SfloatS8Uint:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+} // namespace
+
+bool ScreenLighting::IsAlbedoFormat(vk::Format format) {
+    return format == vk::Format::eR8G8B8A8Srgb || format == vk::Format::eB8G8R8A8Srgb ||
+           format == vk::Format::eA8B8G8R8SrgbPack32;
+}
+
+ScreenLighting::ScreenLighting(const Instance& instance_, Scheduler& scheduler_,
+                               VideoCore::TextureCache& texture_cache_, Runtime& runtime_,
+                               CameraMotion& camera_motion_, SceneTargets& scene_targets_)
+    : instance{instance_}, scheduler{scheduler_}, texture_cache{texture_cache_},
+      runtime{runtime_}, camera_motion{camera_motion_}, scene_targets{scene_targets_} {
+    if (const char* view = std::getenv("BB_LIGHTING_VIEW")) {
+        view_mode = std::clamp(std::atoi(view), 0, 2);
+    }
+    const auto features = instance.GetPhysicalDevice()
+                              .getFormatProperties(vk::Format::eR16G16B16A16Sfloat)
+                              .optimalTilingFeatures;
+    supported = bool(features & vk::FormatFeatureFlagBits::eStorageImage);
+    if (instance.IsRayQueryEnabled()) {
+        rays = std::make_unique<RayOcclusion>(instance, scheduler);
+    }
+}
+
+ScreenLighting::~ScreenLighting() {
+    if (trace_pipeline || trace_image.image) {
+        scheduler.Finish();
+    }
+    const auto device = instance.GetDevice();
+    for (auto& entry : view_cache) {
+        if (entry.view) {
+            device.destroyImageView(entry.view);
+        }
+    }
+}
+
+void ScreenLighting::OnFrameStart() {
+    done = false;
+    if (rays && Enabled() && BbSettings::Get().ray_traced_ao) {
+        rays->Update();
+    }
+    scene_color = {};
+    static const char* control = std::getenv("BB_LIGHTING_FILE");
+    ++frames_seen;
+    if (control && frames_seen % 64 == 0) {
+        if (FILE* f = std::fopen(control, "r")) {
+            int quality = -1, view = -1, traced = -1;
+            const int fields = std::fscanf(f, "%d %d %d", &quality, &view, &traced);
+            std::fclose(f);
+            if (fields >= 1 && quality >= 0 && quality < BbSettings::ScreenLightingCount &&
+                BbSettings::Get().screen_lighting != quality) {
+                BbSettings::Get().screen_lighting = quality;
+                std::printf("Screen lighting: %s (control file)\n",
+                            BbSettings::ScreenLightingNames[quality]);
+            }
+            if (fields == 3 && traced >= 0) {
+                BbSettings::Get().ray_traced_ao = traced != 0;
+            }
+            if (fields >= 2 && view >= 0 && view <= 2) {
+                view_mode = view;
+            }
+        }
+    }
+    static const char* dump_trigger = std::getenv("BB_LIGHTING_DUMP");
+    if (dump_trigger && !dump_due && frames_seen % 16 == 0 && std::remove(dump_trigger) == 0) {
+        dump_due = true;
+        gbuffer = {};
+    }
+}
+
+bool ScreenLighting::Enabled() const {
+    return supported && BbSettings::Get().screen_lighting != BbSettings::ScreenLightingOff;
+}
+
+vk::ImageView ScreenLighting::CachedView(const VideoCore::Image& image, vk::Format format,
+                                         vk::ImageAspectFlags aspect) {
+    const vk::Image handle = image.GetImage();
+    ViewEntry* oldest = &view_cache[0];
+    for (auto& entry : view_cache) {
+        if (entry.view && entry.image == handle && entry.uid == image.image_uid &&
+            entry.format == format && entry.aspect == aspect) {
+            entry.last_use = ++view_uses;
+            return entry.view;
+        }
+        if (entry.last_use < oldest->last_use) {
+            oldest = &entry;
+        }
+    }
+    const auto device = instance.GetDevice();
+    if (oldest->view) {
+        scheduler.DeferOperation([device, view = oldest->view] { device.destroyImageView(view); });
+    }
+    *oldest = {
+        .image = handle,
+        .uid = image.image_uid,
+        .format = format,
+        .aspect = aspect,
+        .view = Check(device.createImageView({
+            .image = handle,
+            .viewType = vk::ImageViewType::e2D,
+            .format = format,
+            .subresourceRange = {aspect, 0, 1, 0, 1},
+        })),
+        .last_use = ++view_uses,
+    };
+    return oldest->view;
+}
+
+void ScreenLighting::CreatePipelines() {
+    if (trace_pipeline) {
+        return;
+    }
+    const auto device = instance.GetDevice();
+    const auto layout = [&](std::initializer_list<vk::DescriptorType> types,
+                            vk::UniqueDescriptorSetLayout& set_layout,
+                            vk::UniquePipelineLayout& pipeline_layout) {
+        std::array<vk::DescriptorSetLayoutBinding, 5> bindings{};
+        u32 count = 0;
+        for (const auto type : types) {
+            bindings[count] = {.binding = count,
+                               .descriptorType = type,
+                               .descriptorCount = 1,
+                               .stageFlags = vk::ShaderStageFlagBits::eCompute};
+            ++count;
+        }
+        set_layout = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = count,
+            .pBindings = bindings.data(),
+        }));
+        const vk::PushConstantRange push{.stageFlags = vk::ShaderStageFlagBits::eCompute,
+                                         .offset = 0,
+                                         .size = sizeof(PushConstants)};
+        pipeline_layout = Check(device.createPipelineLayoutUnique({
+            .setLayoutCount = 1,
+            .pSetLayouts = &*set_layout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &push,
+        }));
+    };
+    const auto compute = [&](const auto& code, vk::PipelineLayout pipeline_layout) {
+        const auto module = CompileSPV(code, device);
+        auto pipeline = Check(device.createComputePipelineUnique(
+            {}, vk::ComputePipelineCreateInfo{
+                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
+                              .module = module,
+                              .pName = "main"},
+                    .layout = pipeline_layout,
+                }));
+        device.destroyShaderModule(module);
+        return pipeline;
+    };
+    using T = vk::DescriptorType;
+    layout({T::eSampledImage, T::eStorageImage, T::eStorageImage, T::eSampledImage},
+           trace_desc_layout, trace_layout);
+    layout({T::eSampledImage, T::eStorageImage, T::eSampledImage, T::eSampledImage},
+           apply_desc_layout, apply_layout);
+    trace_pipeline = compute(SCREEN_LIGHTING_TRACE_COMP, *trace_layout);
+    if (rays) {
+        layout({T::eSampledImage, T::eStorageImage, T::eStorageImage, T::eSampledImage,
+                T::eAccelerationStructureKHR},
+               trace_rt_desc_layout, trace_rt_layout);
+        trace_rt_pipeline = compute(SCREEN_LIGHTING_TRACE_RT_COMP, *trace_rt_layout);
+    }
+    apply_pipeline = compute(SCREEN_LIGHTING_APPLY_COMP, *apply_layout);
+}
+
+bool ScreenLighting::EnsureTraceImage(u32 width, u32 height) {
+    if (trace_image.image && trace_width == width && trace_height == height) {
+        return true;
+    }
+    // A size change (quality or resolution): the previous frames' dispatches may still read it.
+    if (trace_image.image) {
+        scheduler.Finish();
+    }
+    const auto device = instance.GetDevice();
+    trace_view.reset();
+    trace_image = VideoCore::UniqueImage(device, instance.GetAllocator());
+    trace_image.Create(vk::ImageCreateInfo{
+        .imageType = vk::ImageType::e2D,
+        .format = vk::Format::eR16G16B16A16Sfloat,
+        .extent = {width, height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = vk::SampleCountFlagBits::e1,
+        .tiling = vk::ImageTiling::eOptimal,
+        .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+        .initialLayout = vk::ImageLayout::eUndefined,
+    });
+    trace_view = Check(device.createImageViewUnique({
+        .image = vk::Image(trace_image),
+        .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eR16G16B16A16Sfloat,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    }));
+    trace_width = width;
+    trace_height = height;
+    return true;
+}
+
+void ScreenLighting::OnOpaqueSceneDone(bool temporal) {
+    if (done || !scene_color || !Enabled()) {
+        return;
+    }
+    done = true;
+    const auto depth_id = camera_motion.Depth();
+    const auto proj = camera_motion.SceneProjection();
+    if (!depth_id || proj[0] == 0.0f || proj[1] == 0.0f) {
+        return;
+    }
+    auto& color = texture_cache.GetImage(scene_color);
+    auto& depth = texture_cache.GetImage(depth_id);
+    if (color.info.pixel_format != vk::Format::eR16G16B16A16Sfloat ||
+        color.info.size.width != depth.info.size.width ||
+        color.info.size.height != depth.info.size.height) {
+        return;
+    }
+    // With live scene resolution the scene is drawn into reduced proxies: read and write those.
+    const bool reduced = scene_targets.Reduced() && scene_targets.EligibleScene(color) &&
+                         scene_targets.EligibleScene(depth);
+    const u32 w = reduced ? scene_targets.Size().width : color.info.size.width;
+    const u32 h = reduced ? scene_targets.Size().height : color.info.size.height;
+    if (!reduced && !(color.usage_flags & vk::ImageUsageFlagBits::eStorage)) {
+        if (!logged) {
+            std::printf("Screen lighting: the scene color is not a storage image, off\n");
+            logged = true;
+        }
+        return;
+    }
+    const bool high = BbSettings::Get().screen_lighting == BbSettings::ScreenLightingHigh;
+    const u32 tw = high ? w : std::max(1u, w / 2), th = high ? h : std::max(1u, h / 2);
+    CreatePipelines();
+    EnsureTraceImage(tw, th);
+
+    scheduler.EndRendering();
+    vk::ImageView color_view{}, depth_view{}, albedo_view{};
+    vk::ImageLayout albedo_layout = vk::ImageLayout::eGeneral;
+    std::array<float, 2> albedo_size{};
+    const auto rw = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite;
+    if (reduced) {
+        VideoCore::ImageViewInfo ci;
+        ci.format = color.info.pixel_format;
+        const auto c = scene_targets.Read(scene_color, ci, vk::PipelineStageFlagBits2::eComputeShader,
+                                          rw);
+        ci.format = depth.info.pixel_format;
+        const auto d = scene_targets.Read(depth_id, ci);
+        if (!(c.usage & vk::ImageUsageFlagBits::eStorage)) {
+            return;
+        }
+        color_view = c.view;
+        depth_view = d.view;
+    } else {
+        color_view = CachedView(color, vk::Format::eR16G16B16A16Sfloat,
+                                vk::ImageAspectFlagBits::eColor);
+        depth_view = CachedView(depth, depth.info.pixel_format, vk::ImageAspectFlagBits::eDepth);
+        runtime.Transit(&depth, vk::ImageLayout::eGeneral,
+                        vk::PipelineStageFlagBits2::eComputeShader,
+                        vk::AccessFlagBits2::eShaderRead);
+        runtime.Transit(&color, vk::ImageLayout::eGeneral,
+                        vk::PipelineStageFlagBits2::eComputeShader, rw);
+    }
+    if (albedo) {
+        auto& image = texture_cache.GetImage(albedo);
+        if (IsAlbedoFormat(image.info.pixel_format) &&
+            (image.usage_flags & vk::ImageUsageFlagBits::eSampled)) {
+            VideoCore::ImageViewInfo ci;
+            ci.format = image.info.pixel_format;
+            if (const auto proxy = reduced ? scene_targets.SampleProxy(image, ci) : std::nullopt) {
+                albedo_view = proxy->view;
+                albedo_layout = proxy->layout;
+                albedo_size = {float(w), float(h)};
+            } else {
+                albedo_view = CachedView(image, image.info.pixel_format,
+                                         vk::ImageAspectFlagBits::eColor);
+                runtime.Transit(&image, vk::ImageLayout::eGeneral,
+                                vk::PipelineStageFlagBits2::eComputeShader,
+                                vk::AccessFlagBits2::eShaderRead);
+                albedo_size = {float(image.info.size.width), float(image.info.size.height)};
+            }
+        }
+    }
+    vk::ImageView normals_view{};
+    vk::ImageLayout normals_layout = vk::ImageLayout::eGeneral;
+    if (normals) {
+        auto& image = texture_cache.GetImage(normals);
+        if (IsNormalFormat(image.info.pixel_format) &&
+            (image.usage_flags & vk::ImageUsageFlagBits::eSampled) &&
+            (reduced ? image.info.size.width == color.info.size.width &&
+                           image.info.size.height == color.info.size.height
+                     : image.info.size.width == w && image.info.size.height == h)) {
+            VideoCore::ImageViewInfo ci;
+            ci.format = image.info.pixel_format;
+            if (const auto proxy = reduced ? scene_targets.SampleProxy(image, ci) : std::nullopt) {
+                normals_view = proxy->view;
+                normals_layout = proxy->layout;
+            } else if (!reduced) {
+                normals_view = CachedView(image, image.info.pixel_format,
+                                          vk::ImageAspectFlagBits::eColor);
+                runtime.Transit(&image, vk::ImageLayout::eGeneral,
+                                vk::PipelineStageFlagBits2::eComputeShader,
+                                vk::AccessFlagBits2::eShaderRead);
+            }
+        }
+    }
+    // BB_LIGHTING_DUMP: the G-buffer targets as they are (native scene size only).
+    const bool dump = dump_due && !reduced;
+    if (dump) {
+        for (const auto id : gbuffer) {
+            if (id && id != scene_color) {
+                runtime.Transit(&texture_cache.GetImage(id), vk::ImageLayout::eGeneral,
+                                vk::PipelineStageFlagBits2::eTransfer,
+                                vk::AccessFlagBits2::eTransferRead);
+            }
+        }
+    }
+    runtime.FlushBarriers();
+    if (!logged) {
+        std::printf("Screen lighting: %s, scene %ux%u, trace %ux%u, albedo %s, normals %s\n",
+                    high ? "high" : "low", w, h, tw, th, albedo_view ? "found" : "none (grey)",
+                    normals_view ? "the G-buffer's" : "from depth");
+        std::fflush(stdout);
+        logged = true;
+    }
+
+    const auto& settings = BbSettings::Get();
+    ++frame;
+    const PushConstants push{
+        .proj = proj,
+        .size = {float(w), float(h)},
+        .trace_size = {float(tw), float(th)},
+        .albedo_size = albedo_size,
+        .radius = Radius,
+        .max_radiance = MaxRadiance,
+        // Golden-ratio steps: each frame's directions fall between the last ones'.
+        .noise = temporal ? std::fmod(float(frame % 64) * 0.618034f, 1.0f) : 0.0f,
+        .ao_strength = std::clamp(settings.screen_lighting_ao.load(), 0.0f, 1.0f),
+        .gi_strength = std::clamp(settings.screen_lighting_gi.load(), 0.0f, 2.0f),
+        .directions = high ? 3 : 2,
+        .steps = high ? 10 : 6,
+        .view = view_mode,
+        .normals = normals_view ? 1 : 0,
+        .rays = 0,
+        .world = camera_motion.SceneInverseView(),
+    };
+    // The map's acceleration structure, once built: the trace's rays go against it too.
+    const vk::AccelerationStructureKHR scene_as =
+        rays && settings.ray_traced_ao ? rays->Scene() : vk::AccelerationStructureKHR{};
+    // No camera yet (all zero): no rays.
+    const bool has_world = push.world[0] != 0.0f || push.world[1] != 0.0f || push.world[2] != 0.0f;
+    PushConstants push_rt = push;
+    push_rt.rays = scene_as && has_world ? (high ? 6 : 3) : 0;
+    if (scene_as && !rays_logged) {
+        std::printf("Screen lighting: ray-traced occlusion on (%d rays a pixel)\n", push_rt.rays);
+        std::fflush(stdout);
+        rays_logged = true;
+    }
+    const vk::Image trace = vk::Image(trace_image);
+    const vk::ImageView trace_v = *trace_view;
+    // The apply pass samples the trace; without an albedo the trace stands in (unread).
+    const vk::ImageView albedo_v = albedo_view ? albedo_view : trace_v;
+    const vk::ImageLayout albedo_l = albedo_view ? albedo_layout : vk::ImageLayout::eGeneral;
+    const vk::ImageView normals_v = normals_view ? normals_view : trace_v;
+    const vk::ImageLayout normals_l = normals_view ? normals_layout : vk::ImageLayout::eGeneral;
+    const auto record =
+        [=, trace_pipe = scene_as ? *trace_rt_pipeline : *trace_pipeline,
+         trace_lay = scene_as ? *trace_rt_layout : *trace_layout,
+         apply_pipe = *apply_pipeline, apply_lay = *apply_layout](vk::CommandBuffer cmdbuf) {
+            const auto image_barrier = [&](vk::PipelineStageFlags2 src_stage,
+                                           vk::AccessFlags2 src_access, vk::ImageLayout old_layout,
+                                           vk::AccessFlags2 dst_access) {
+                const vk::ImageMemoryBarrier2 barrier{
+                    .srcStageMask = src_stage,
+                    .srcAccessMask = src_access,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                    .dstAccessMask = dst_access,
+                    .oldLayout = old_layout,
+                    .newLayout = vk::ImageLayout::eGeneral,
+                    .image = trace,
+                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                };
+                cmdbuf.pipelineBarrier2(
+                    {.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+            };
+            // The last frame's apply read it: wait for that before the trace overwrites it.
+            image_barrier(vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eNone,
+                          vk::ImageLayout::eUndefined, vk::AccessFlagBits2::eShaderWrite);
+            const vk::DescriptorImageInfo depth_info{.imageView = depth_view,
+                                                     .imageLayout = vk::ImageLayout::eGeneral};
+            const vk::DescriptorImageInfo color_info{.imageView = color_view,
+                                                     .imageLayout = vk::ImageLayout::eGeneral};
+            const vk::DescriptorImageInfo trace_info{.imageView = trace_v,
+                                                     .imageLayout = vk::ImageLayout::eGeneral};
+            const vk::DescriptorImageInfo albedo_info{.imageView = albedo_v,
+                                                      .imageLayout = albedo_l};
+            const vk::DescriptorImageInfo normals_info{.imageView = normals_v,
+                                                       .imageLayout = normals_l};
+            const vk::WriteDescriptorSetAccelerationStructureKHR scene_info{
+                .accelerationStructureCount = 1,
+                .pAccelerationStructures = &scene_as,
+            };
+            const std::array<vk::WriteDescriptorSet, 5> trace_writes = {{
+                {.dstBinding = 0,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eSampledImage,
+                 .pImageInfo = &depth_info},
+                {.dstBinding = 1,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eStorageImage,
+                 .pImageInfo = &color_info},
+                {.dstBinding = 2,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eStorageImage,
+                 .pImageInfo = &trace_info},
+                {.dstBinding = 3,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eSampledImage,
+                 .pImageInfo = &normals_info},
+                {.pNext = &scene_info,
+                 .dstBinding = 4,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eAccelerationStructureKHR},
+            }};
+            cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, trace_pipe);
+            cmdbuf.pushDescriptorSetKHR(
+                vk::PipelineBindPoint::eCompute, trace_lay, 0,
+                vk::ArrayProxy<const vk::WriteDescriptorSet>(scene_as ? 5u : 4u,
+                                                             trace_writes.data()));
+            cmdbuf.pushConstants(trace_lay, vk::ShaderStageFlagBits::eCompute, 0,
+                                 sizeof(push_rt), &push_rt);
+            cmdbuf.dispatch((u32(push.trace_size[0]) + 7) / 8, (u32(push.trace_size[1]) + 7) / 8, 1);
+            // The trace is read, and the scene color it read is written next.
+            image_barrier(vk::PipelineStageFlagBits2::eComputeShader,
+                          vk::AccessFlagBits2::eShaderWrite, vk::ImageLayout::eGeneral,
+                          vk::AccessFlagBits2::eShaderRead);
+            const vk::MemoryBarrier2 scene_read{
+                .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .srcAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderWrite,
+            };
+            cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &scene_read});
+            const std::array<vk::WriteDescriptorSet, 4> apply_writes = {{
+                {.dstBinding = 0,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eSampledImage,
+                 .pImageInfo = &depth_info},
+                {.dstBinding = 1,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eStorageImage,
+                 .pImageInfo = &color_info},
+                {.dstBinding = 2,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eSampledImage,
+                 .pImageInfo = &trace_info},
+                {.dstBinding = 3,
+                 .descriptorCount = 1,
+                 .descriptorType = vk::DescriptorType::eSampledImage,
+                 .pImageInfo = &albedo_info},
+            }};
+            cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, apply_pipe);
+            cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, apply_lay, 0,
+                                        apply_writes);
+            cmdbuf.pushConstants(apply_lay, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push),
+                                 &push);
+            cmdbuf.dispatch((u32(push.size[0]) + 7) / 8, (u32(push.size[1]) + 7) / 8, 1);
+            // The game's next draws and dispatches read and write the scene color.
+            const vk::MemoryBarrier2 after{
+                .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstAccessMask =
+                    vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+            };
+            cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
+        };
+    if (!dump) {
+        scheduler.RecordCrumb({.name = "screen lighting"}, record);
+        return;
+    }
+    dump_due = false;
+    const int index = dumps++;
+    const auto cmdbuf = scheduler.CommandBuffer();
+    const auto dump_image = [&](const VideoCore::Image& image, const std::string& name,
+                                vk::ImageAspectFlagBits aspect) {
+        const u32 bytes = BytesPerTexel(image.info.pixel_format);
+        if (!bytes) {
+            std::printf("Screen lighting dump: %s has %s, skipped\n", name.c_str(),
+                        vk::to_string(image.info.pixel_format).c_str());
+            return;
+        }
+        const std::string format = vk::to_string(image.info.pixel_format);
+        DumpImages(instance, scheduler, cmdbuf, index,
+                   {{image.GetImage(), image.info.size.width, image.info.size.height, bytes,
+                     name.c_str(), format.c_str(), aspect}});
+    };
+    for (u32 i = 0; i < gbuffer.size(); ++i) {
+        if (gbuffer[i] && gbuffer[i] != scene_color) {
+            dump_image(texture_cache.GetImage(gbuffer[i]), "gbuffer" + std::to_string(i),
+                       vk::ImageAspectFlagBits::eColor);
+        }
+    }
+    dump_image(depth, "depth", vk::ImageAspectFlagBits::eDepth);
+    dump_image(color, "scene_before", vk::ImageAspectFlagBits::eColor);
+    record(cmdbuf);
+    dump_image(color, "scene_after", vk::ImageAspectFlagBits::eColor);
+    DumpImages(instance, scheduler, cmdbuf, index,
+               {{trace, tw, th, 8, "trace", "R16G16B16A16Sfloat"}});
+    std::printf("Screen lighting dump %d: proj %.5f %.5f %.6f %.6f, %s\n", index, proj[0],
+                proj[1], proj[2], proj[3], albedo_view ? "albedo found" : "no albedo");
+    // The camera (view to world, 3x4 rows): the dump's depth placed in the world, offline.
+    const auto inv = camera_motion.SceneInverseView();
+    std::printf("Screen lighting dump %d: inverse view", index);
+    for (const float v : inv) {
+        std::printf(" %.6f", v);
+    }
+    std::printf("\n");
+    std::fflush(stdout);
+}
+
+} // namespace Vulkan

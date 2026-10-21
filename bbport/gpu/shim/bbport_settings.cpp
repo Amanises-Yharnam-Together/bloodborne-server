@@ -110,6 +110,18 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.bloodstains = i != 0;
     } else if (key == "map_3d") {
         v.map_3d = std::clamp(i, 0, Map3dCount - 1);
+    } else if (key == "screen_lighting") {
+        for (int q = 0; q < ScreenLightingCount; ++q) {
+            if (value == ScreenLightingNames[q]) {
+                v.screen_lighting = q;
+            }
+        }
+    } else if (key == "screen_lighting_ao") {
+        v.screen_lighting_ao = Clamp(f, 0.0f, 1.0f);
+    } else if (key == "screen_lighting_gi") {
+        v.screen_lighting_gi = Clamp(f, 0.0f, 2.0f);
+    } else if (key == "ray_traced_ao") {
+        v.ray_traced_ao = i != 0;
     } else if (key == "map_fog") {
         v.map_fog = i != 0;
     } else if (key == "compass_position") {
@@ -546,6 +558,11 @@ void Save() {
     put("compass_position",
         CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);
     put("map_3d", std::to_string(std::clamp(v.map_3d.load(), 0, Map3dCount - 1)));
+    put("screen_lighting",
+        ScreenLightingNames[std::clamp(v.screen_lighting.load(), 0, ScreenLightingCount - 1)]);
+    put("screen_lighting_ao", fixed(v.screen_lighting_ao, 2));
+    put("screen_lighting_gi", fixed(v.screen_lighting_gi, 2));
+    put("ray_traced_ao", flag(v.ray_traced_ao));
     put("map_fog", flag(v.map_fog));
     put("fps_limit", std::to_string(v.fps_limit.load()));
     put("dlss_model", DlssModelNames[DlssModelIndex(v.dlss_model)]);

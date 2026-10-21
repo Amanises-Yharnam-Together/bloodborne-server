@@ -339,6 +339,13 @@ public:
 
     /// bbport: FSR 4.1.1 through the fsr4vk provider DLL (Windows): standard Vulkan features only,
     /// requested at device creation when the DLL is installed (Fsr4Vk::FilesPresent).
+    /// bbport: ray queries and acceleration structures are on (bbport.ini ray_traced_ao at start).
+    bool IsRayQueryEnabled() const {
+        return ray_query;
+    }
+    u64 AccelerationScratchAlignment() const {
+        return scratch_alignment;
+    }
     bool IsFsr4VkSupported() const {
         return fsr4vk;
     }
@@ -653,6 +660,8 @@ private:
     bool shader_clock{};
     bool compute_shader_derivatives{};
     bool mixed_float_dot_product{}; // bbport: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
+    bool ray_query{};               // bbport: ray queries + acceleration structures enabled
+    u64 scratch_alignment = 256;    // bbport: their build scratch's offset alignment
     bool fsr4vk{};                  // bbport: the device features of the fsr4vk provider are enabled
     bool cooperative_matrix{};      // bbport: VK_KHR_cooperative_matrix (FSR 4.1.1 FP8 variant)
     bool shader_float8{};           // bbport: VK_EXT_shader_float8 with FP8 matrices (RDNA4)

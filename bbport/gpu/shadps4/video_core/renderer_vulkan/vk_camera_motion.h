@@ -58,6 +58,20 @@ public:
     [[nodiscard]] std::array<u32, 2> RenderSize() const noexcept {
         return render_size;
     }
+    /// bbport: the projection of the scene being drawn (x scale, y scale, z scale, z offset; the
+    /// G-buffer viewport's signs applied): this frame's G-buffer camera once seen, else the last
+    /// committed one; all zero before the first camera (vk_screen_lighting.h).
+    [[nodiscard]] std::array<float, 4> SceneProjection() const noexcept {
+        return pass_has_camera && pass_camera.valid ? pass_camera.proj
+               : current.valid                       ? current.proj
+                                                     : std::array<float, 4>{};
+    }
+    /// The same camera's view to world matrix (3x4 rows), all zero before the first camera.
+    [[nodiscard]] std::array<float, 12> SceneInverseView() const noexcept {
+        return pass_has_camera && pass_camera.valid ? pass_camera.inv_view
+               : current.valid                       ? current.inv_view
+                                                     : std::array<float, 12>{};
+    }
     /// Vertical field of view and near/far planes of the current camera.
     [[nodiscard]] float VerticalFov() const noexcept;
     [[nodiscard]] float Near() const noexcept;
