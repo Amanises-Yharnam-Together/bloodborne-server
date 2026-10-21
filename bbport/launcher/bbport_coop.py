@@ -40,6 +40,9 @@ DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account':
             # '1' once the player pressed Done in the launcher's co-op settings (they open by themselves until then).
             'confirmed': ''}
 HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
+HARDER_BIT, HARDER_MUCH = '1.5,1.25,1.5', '5,2,5'
+# What the game takes for each multiplier (ParseHarderEnemies in the emulator); all 1 is the normal game.
+HARDER_LOWEST, HARDER_HIGHEST = 1.0, 10.0
 
 
 # --- answers ----------------------------------------------------------------------------------
@@ -114,7 +117,27 @@ def valid_secret(value):
 
 
 def valid_harder(value):
-    return value == 'off' or bool(re.fullmatch(r'\d+(\.\d+)?,\d+(\.\d+)?,\d+(\.\d+)?', value or ''))
+    if value == 'off':
+        return True
+    if not re.fullmatch(r'\d+(\.\d+)?,\d+(\.\d+)?,\d+(\.\d+)?', value or ''):
+        return False
+    rates = [float(part) for part in value.split(',')]
+    return all(HARDER_LOWEST <= rate <= HARDER_HIGHEST for rate in rates) and rates != [1.0, 1.0, 1.0]
+
+
+def harder_value(hp, damage, poise):
+    """The setting for the player's own multipliers (Kaniel 2026-10-21: the presets were too specific),
+    each held to what the game takes; 'off' when they make the normal game."""
+    rates = []
+    for rate in (hp, damage, poise):
+        try:
+            rate = float(rate)
+        except (TypeError, ValueError):
+            rate = HARDER_LOWEST
+        rate = min(max(rate, HARDER_LOWEST), HARDER_HIGHEST) if rate == rate else HARDER_LOWEST
+        rates.append(f'{round(rate, 2):g}')
+    value = ','.join(rates)
+    return 'off' if value == '1,1,1' else value
 
 
 def missing(settings):

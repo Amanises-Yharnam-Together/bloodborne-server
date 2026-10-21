@@ -204,8 +204,14 @@ COOP_INSTALL = os.environ.get('BB_COOP_INSTALL') == '1' or (PORT_DIR / 'event-re
 # The co-op release's name (Kaniel 2026-10-20), as the setup has it (tools\release\setup.iss).
 COOP_NAME, COOP_SHORT_NAME = 'Yharnam Together: Bloodborne Seamless Co-op', 'Yharnam Together'
 HARDER_CHOICES = [('off', ('Off (the normal game)', 'Выключено (обычная игра)')),
+                  (bbport_coop.HARDER_BIT, ('A bit harder: enemy HP ×1.5, damage ×1.25, poise ×1.5',
+                                            'Чуть сложнее: HP врагов ×1.5, урон ×1.25, стойкость ×1.5')),
                   (bbport_coop.HARDER_ON, ('Harder: enemy HP ×3, damage ×1.5, poise ×3',
-                                           'Сложнее: HP врагов ×3, урон ×1.5, стойкость ×3'))]
+                                           'Сложнее: HP врагов ×3, урон ×1.5, стойкость ×3')),
+                  (bbport_coop.HARDER_MUCH, ('Much harder: enemy HP ×5, damage ×2, poise ×5',
+                                             'Намного сложнее: HP врагов ×5, урон ×2, стойкость ×5')),
+                  # Kaniel 2026-10-21: the presets were too specific; the player sets each multiplier.
+                  ('custom', ('Custom', 'Свои значения'))]
 
 
 def coop_release_version():
@@ -2799,6 +2805,11 @@ class Launcher:
         s.configure('TEntry', foreground=TEXT, insertcolor=TEXT, padding=(8, 6), bordercolor=LINE_HI, lightcolor=FIELD,
                     darkcolor=FIELD, selectbackground=ACCENT, selectforeground=TEXT)
         s.map('TEntry', bordercolor=[('focus', MUTED)], lightcolor=[('focus', FIELD)], darkcolor=[('focus', FIELD)])
+        s.configure('TSpinbox', foreground=TEXT, insertcolor=TEXT, padding=(8, 6), arrowcolor=MUTED, background=CARD,
+                    arrowsize=px(12), bordercolor=LINE_HI, lightcolor=FIELD, darkcolor=FIELD,
+                    selectbackground=ACCENT, selectforeground=TEXT)
+        s.map('TSpinbox', bordercolor=[('focus', MUTED)], arrowcolor=[('active', TEXT), ('pressed', TEXT)],
+              lightcolor=[('focus', FIELD)], darkcolor=[('focus', FIELD)])
         s.layout('Vertical.TScrollbar', [('Vertical.Scrollbar.trough', {'sticky': 'ns', 'children': [
             ('Vertical.Scrollbar.thumb', {'expand': '1', 'sticky': 'nswe'})]})])
         s.configure('Vertical.TScrollbar', background=LINE_HI, troughcolor=PANEL, bordercolor=PANEL, lightcolor=LINE_HI,
@@ -3771,8 +3782,25 @@ class Launcher:
         ttk.Entry(cell, textvariable=var('host_ip')).pack(fill='x')
         # No account name or password (phase 11): the player's id is made once and kept in coop.json,
         # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
-        self.coop_enemies = combo(self.cell(card, 3, 1, _('Enemies (the same for every player)',
-                                                          'Враги (у всех одинаково)')), 'harder', HARDER_CHOICES)
+        enemies = self.cell(card, 3, 1, _('Enemies (the same for every player)', 'Враги (у всех одинаково)'))
+        saved = self.coop.get('harder', 'off')
+        presets = [v for v, _t in HARDER_CHOICES if v != 'custom']
+        custom = saved not in presets and bbport_coop.valid_harder(saved)
+        if custom:
+            self.coop['harder'] = 'custom'  # the box shows Custom; the variable gets the rates back below
+        self.coop_enemies = combo(enemies, 'harder', HARDER_CHOICES)
+        self.build_coop_custom(enemies, saved if custom else bbport_coop.HARDER_ON)
+        if custom:
+            self.coop['harder'] = saved
+            self.coop_custom_changed()
+
+        def enemies_picked(_e):
+            if self.coop_enemies_choice() == 'custom':
+                self.coop_custom.pack(fill='x', pady=(px(8), 0))
+                self.coop_custom_changed()
+            else:
+                self.coop_custom.pack_forget()
+        self.coop_enemies.bind('<<ComboboxSelected>>', enemies_picked, add='+')
         holder = self.cell(card, 4, 0, '', span=2)
         # Players were lost at the VPN step (Kaniel 2026-10-21): the steps are one press away. Below the
         # fields, so Host IP and Enemies stay on one line.
@@ -3795,6 +3823,38 @@ class Launcher:
         self.coop_changed()
         if not self.coop_game_folder():
             self.coop_search(None, quiet=True)
+
+    def build_coop_custom(self, parent, start):
+        """The player's own multipliers under the Enemies box, shown for Custom: each 1 to 10, as the game
+        takes them (bbport_coop.harder_value)."""
+        tk, ttk, px = self.tk, self.ttk, self.px
+        frame = self.coop_custom = tk.Frame(parent, bg=CARD)
+        self.coop_custom_vars = []
+        names = [_('Enemy HP ×', 'HP врагов ×'), _('Damage ×', 'Урон ×'), _('Poise ×', 'Стойкость ×')]
+        for column, (name, rate) in enumerate(zip(names, start.split(','))):
+            frame.columnconfigure(column, weight=1, uniform='rates')
+            self.label(frame, name, 'small', MUTED).grid(row=0, column=column, sticky='w',
+                                                         padx=(0 if column == 0 else px(8), 0))
+            v = tk.StringVar(value=rate)
+            v.trace_add('write', lambda *_a: self.coop_custom_changed())
+            ttk.Spinbox(frame, textvariable=v, from_=bbport_coop.HARDER_LOWEST, to=bbport_coop.HARDER_HIGHEST,
+                        increment=0.25, width=6).grid(row=1, column=column, sticky='we',
+                                                      padx=(0 if column == 0 else px(8), 0), pady=(px(2), 0))
+            self.coop_custom_vars.append(v)
+        self.label(frame, _('Each from 1 to 10; 1 is the normal game.', 'Каждое от 1 до 10; 1 — обычная игра.'),
+                   'small', MUTED).grid(row=2, column=0, columnspan=3, sticky='w', pady=(px(4), 0))
+
+    def coop_enemies_choice(self):
+        index = self.coop_enemies.current()
+        return HARDER_CHOICES[index][0] if index >= 0 else ''  # -1: not chosen yet
+
+    def coop_custom_changed(self):
+        """Custom: the multipliers typed become the enemies setting."""
+        if self.coop_enemies_choice() != 'custom':
+            return
+        if not self.coop_custom.winfo_manager():
+            self.coop_custom.pack(fill='x', pady=(self.px(8), 0))
+        self.coop_vars['harder'].set(bbport_coop.harder_value(*(v.get() for v in self.coop_custom_vars)))
 
     def build_coop_help(self):
         """How the players reach the host, in the co-op card's place (Kaniel 2026-10-21: players got lost at
