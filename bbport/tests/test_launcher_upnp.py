@@ -95,8 +95,7 @@ class UpnpTests(unittest.TestCase):
         self.assertEqual(result['state'], 'open')
         self.assertEqual(result['public'], '203.0.113.7')
         self.assertEqual(result['local'], '127.0.0.1')
-        self.assertEqual(set(router.mappings), {('TCP', '31313'), ('TCP', '31315'), ('TCP', '20443'),
-                                                ('UDP', '31314')})
+        self.assertEqual(set(router.mappings), {('TCP', '31315'), ('TCP', '20443'), ('UDP', '31314')})
         self.assertEqual(set(router.mappings.values()), {'127.0.0.1'})
         added = [args for action, args in router.calls if action == 'AddPortMapping']
         self.assertTrue(all(a['NewInternalPort'] == a['NewExternalPort'] for a in added))
@@ -118,14 +117,53 @@ class UpnpTests(unittest.TestCase):
     def test_stop_takes_only_our_forwards_away(self):
         router, found = self.router()
         upnp.open_ports(found=found)
-        router.mappings[('TCP', '31313')] = '192.168.1.50'  # another PC's own forward
-        self.assertEqual(upnp.close_ports(found=found), 3)
-        self.assertEqual(router.mappings, {('TCP', '31313'): '192.168.1.50'})
+        router.mappings[('TCP', '31315')] = '192.168.1.50'  # another PC's own forward of the same port
+        self.assertEqual(upnp.close_ports(found=found), 2)
+        self.assertEqual(router.mappings, {('TCP', '31315'): '192.168.1.50'})
 
     def test_no_router_answers(self):
         with mock.patch.object(upnp, 'find_gateway', return_value=None):
             self.assertEqual(upnp.open_ports()['state'], 'none')
             self.assertEqual(upnp.close_ports(), 0)
+
+    def test_the_search_is_answered_by_a_router_on_the_adapter(self):
+        """Radmin VPN takes the default route: the search goes out of each LAN adapter by name and straight to
+        the router too (kaniel-pc 2026-10-21: no router answered a search sent the default way)."""
+        import socket
+        responder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        responder.bind(('127.0.0.1', 0))
+        self.addCleanup(responder.close)
+        seen = []
+
+        def answer():
+            responder.settimeout(3)
+            try:
+                while True:
+                    data, sender = responder.recvfrom(4096)
+                    seen.append(data)
+                    responder.sendto(b'HTTP/1.1 200 OK\r\nLOCATION: http://127.0.0.1:5000/desc.xml\r\n\r\n', sender)
+            except OSError:
+                pass
+        threading.Thread(target=answer, daemon=True).start()
+        with mock.patch.object(upnp, 'SSDP_ADDRESS', ('127.0.0.1', responder.getsockname()[1])):
+            found = upnp.discover(timeout=0.5, addresses=['127.0.0.1'])
+        self.assertEqual(found, ['http://127.0.0.1:5000/desc.xml'])
+        self.assertTrue(all(b'M-SEARCH' in data for data in seen))
+
+    def test_vpn_adapters_are_left_out_of_the_search(self):
+        with mock.patch.object(upnp.socket, 'gethostbyname_ex',
+                               return_value=('pc', [], ['26.239.1.2', '192.168.1.20', '100.101.7.9', '10.0.0.5'])):
+            self.assertEqual(upnp.lan_addresses(), ['192.168.1.20', '10.0.0.5'])
+
+    def test_the_routers_come_from_the_default_routes_but_the_vpns(self):
+        route_print = (
+            "IPv4 Route Table\n"
+            "Active Routes:\n"
+            "Network Destination        Netmask          Gateway       Interface  Metric\n"
+            "          0.0.0.0          0.0.0.0         26.0.0.1    26.239.1.2      1\n"
+            "          0.0.0.0          0.0.0.0      192.168.1.1  192.168.1.20     25\n"
+            "Persistent Routes:\n  None\n")
+        self.assertEqual(upnp.default_gateways(route_print), [('192.168.1.1', '192.168.1.20')])
 
     def test_public_addresses(self):
         self.assertTrue(upnp.is_public('203.0.113.7'))
