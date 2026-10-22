@@ -380,6 +380,34 @@ class PlayTests(unittest.TestCase):
         for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
             self.assertTrue(bbport_lang.table(language).get(coop.NO_BACKEND_TEXT), language)
 
+    def test_every_release_of_the_game_is_known(self):
+        # The game's own content-id table (01.09 eboot): Japan, US, EU and Asia releases, each with its
+        # Game of the Year edition. A Japanese player's CUSA03014 was not on the list (2026-10-22).
+        for title in ('CUSA00299', 'CUSA03014', 'CUSA00900', 'CUSA03179', 'CUSA00207', 'CUSA03173',
+                      'CUSA00208', 'CUSA01363', 'CUSA03023'):
+            self.assertIn(title, coop.TITLE_IDS)
+
+    def test_an_untested_game_gets_a_warning(self):
+        # Kaniel 2026-10-22: co-op is tested on the EU edition only; other editions and the Unlock Game
+        # Region patch should work since #355/#357, and the launcher says they were not tested properly.
+        self.assertIsNone(coop.untested_warning('CUSA03173', False))
+        text, args = coop.untested_warning('CUSA03179', False)
+        self.assertEqual(text.format(*args).count('CUSA03179'), 1)
+        self.assertIn('not tested', text)
+        text, args = coop.untested_warning('CUSA03173', True)
+        self.assertIn('Unlock Game Region', text)
+        self.assertEqual(args, ())
+        unlock = (('Bloodborne (1).xml/Unlock Game Region', Path('x.xml'), {'Name': 'Unlock Game Region'}),)
+        other = (('Bloodborne (1).xml/Exit Game', Path('x.xml'), {'Name': 'Exit Game'}),)
+        self.assertTrue(coop.region_unlocked(unlock + other))
+        self.assertFalse(coop.region_unlocked(other))
+        import bbport_lang
+        for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
+            for template in (coop.UNTESTED_EDITION_TEXT, coop.UNTESTED_REGION_TEXT):
+                translated = bbport_lang.table(language).get(template)
+                self.assertTrue(translated, f'{language}: {template}')
+                self.assertEqual(translated.count('{}'), template.count('{}'), language)
+
     def test_nothing_registers_the_account(self):
         # Phase 11: the host's server makes a player's account at its first sign-in.
         self.assertFalse(hasattr(coop, 'register'))
