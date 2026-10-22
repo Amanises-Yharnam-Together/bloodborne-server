@@ -277,6 +277,8 @@ u64 GetGlobalState();
 u64 GetMatchingState();
 u64 GetLocalPlayer();
 bool HasPlayerEffect(u64 player, s32 effect_id);
+// Takes `effect_id` off the player (the game's thread). False when it is not on.
+bool EndPlayerEffect(u64 player, s32 effect_id);
 u32 GetCurrentPackedMap();
 Place CurrentPlace();
 u32 PlayingMap();
@@ -585,7 +587,7 @@ std::optional<std::string> SessionMemberBoardName(u64 member,
 extern bool restore_search_pending;
 void RestoreSearchAfterTrip(bool in_session);
 void PlayGuestAsHost(bool in_session);
-void TurnOffMultiplayerWalls(bool in_session, u32 map);
+void TurnOffMultiplayerWalls(bool in_session);
 u64 FindLoadedParam(std::string_view type);
 void KeepGuestFullHp();
 void MakeEnemiesHarder();

@@ -490,6 +490,35 @@ TEST(BloodbornePartyTrip, PutsTheSearchEffectBackAfterTheTrip) {
     EXPECT_FALSE(ShouldRestoreSearchAfterTrip(false, false)) << "no party session";
 }
 
+// Player report 2026-10-22: the League's "Impurity" rune (more HP while cooperating) did nothing
+// in co-op. Its effect 6142 gets the bonus 180040 from common event 9035 only while the wearer is
+// a white phantom, which a party guest is only until its first trip and a host never is. Anyone in
+// a party session wearing the rune has the bonus; off again once not (only the one put on here).
+TEST(BloodbornePartyRunes, APartyMemberWearingImpurityHasItsHpBonus) {
+    EXPECT_EQ(ImpurityRuneEffect, 6142);
+    EXPECT_EQ(ImpurityHpEffect, 180040);
+    const std::vector<s32> wearing{6300, 40, 6142, 9006};
+    const std::vector<s32> with_bonus{6300, 6142, 180040};
+    const std::vector<s32> bonus_only{6300, 180040};
+    const std::vector<s32> none{6300, 40};
+    EXPECT_EQ(ImpurityBonusChange(true, wearing, false), EffectChange::Add) << "after a trip";
+    EXPECT_EQ(ImpurityBonusChange(true, wearing, true), EffectChange::Add) << "a load took it off";
+    EXPECT_EQ(ImpurityBonusChange(true, with_bonus, false), EffectChange::None) << "the game's";
+    EXPECT_EQ(ImpurityBonusChange(true, with_bonus, true), EffectChange::None);
+    EXPECT_EQ(ImpurityBonusChange(true, none, false), EffectChange::None) << "no rune";
+    EXPECT_EQ(ImpurityBonusChange(true, bonus_only, true), EffectChange::Remove) << "rune off";
+    EXPECT_EQ(ImpurityBonusChange(false, with_bonus, true), EffectChange::Remove) << "party left";
+    EXPECT_EQ(ImpurityBonusChange(false, with_bonus, false), EffectChange::None)
+        << "the game's own (a phantom outside our party)";
+    EXPECT_EQ(ImpurityBonusChange(false, wearing, false), EffectChange::None)
+        << "no guest in a session: the host, or alone";
+
+    EXPECT_TRUE(GetsImpurityBonus(true, true)) << "a guest in its session";
+    EXPECT_FALSE(GetsImpurityBonus(false, true)) << "a guest not joined yet";
+    EXPECT_FALSE(GetsImpurityBonus(false, false)) << "alone";
+    EXPECT_TRUE(GetsImpurityBonus(true, false)) << "the host, cooperated with (Kaniel)";
+}
+
 // Experiment (Kaniel, 2026-10-06): SHADPS4_BLOODBORNE_GUEST_AS_HOST=1 makes a party guest a live
 // player (character type 0) instead of a white phantom while it is in the session.
 TEST(BloodborneGuestAsHost, OnlyWhenSwitchedOnAndAWhitePhantomInAPartySession) {
@@ -504,19 +533,32 @@ TEST(BloodborneGuestAsHost, OnlyWhenSwitchedOnAndAWhitePhantomInAPartySession) {
 
 // The multiplayer walls (common event 7600: wall object and its fog SFX, shown while in
 // multiplayer) are what keeps a summoned guest inside an area. A party session turns them off.
-TEST(BloodborneMultiplayerWalls, ListsTheWallsOfTheMapThePlayerIsOn) {
-    const auto central_yharnam = MultiplayerWallsOn(0x18010000);
-    ASSERT_EQ(central_yharnam.size(), 3u);
-    EXPECT_EQ(central_yharnam[0].object, 2411999);
-    EXPECT_EQ(central_yharnam[0].sfx, 2413999);
-    EXPECT_EQ(MultiplayerWallsOn(0x18000000).size(), 5u); // m24_00
-    EXPECT_TRUE(MultiplayerWallsOn(0x15000000).empty()) << "the Hunter's Dream has none";
-    for (const u32 map : {0x16000000u, 0x17000000u, 0x18000000u, 0x18010000u, 0x18020000u,
-                          0x1B000000u, 0x1C000000u, 0x20000000u, 0x23000000u}) {
-        for (const MultiplayerWall& wall : MultiplayerWallsOn(map)) {
-            EXPECT_EQ(PackedMapOfWarpPoint(wall.object), map) << wall.object;
-            EXPECT_EQ(wall.sfx, wall.object + 2000);
-        }
+TEST(BloodborneMultiplayerWalls, ListsTheWallsOfEveryMap) {
+    const auto walls = MultiplayerWalls();
+    ASSERT_EQ(walls.size(), 18u);
+    const auto on = [&](u32 map) {
+        return std::ranges::count_if(walls, [&](const MultiplayerWall& wall) {
+            return PackedMapOfWarpPoint(wall.object) == map;
+        });
+    };
+    EXPECT_EQ(on(0x18010000), 3); // Central Yharnam
+    EXPECT_EQ(on(0x18000000), 5); // Cathedral Ward
+    EXPECT_EQ(on(0x15000000), 0) << "the Hunter's Dream has none";
+    for (const MultiplayerWall& wall : walls) {
+        EXPECT_EQ(wall.sfx, wall.object + 2000) << wall.object;
+    }
+}
+
+// Player report 2026-10-22: the Forbidden Woods' wall stood at the foot of the stairs from
+// Cathedral Ward. The player is still on Cathedral Ward there while the woods (m27) are loaded,
+// so the walls of every map go off, not only the current map's (a wall whose map is not loaded
+// is a miss in the game's entity lookup).
+TEST(BloodborneMultiplayerWalls, IncludesTheWallsOfNeighbouringMaps) {
+    const auto walls = MultiplayerWalls();
+    for (const s32 forbidden_woods : {2701999, 2701998}) {
+        EXPECT_TRUE(std::ranges::any_of(walls, [&](const MultiplayerWall& wall) {
+            return wall.object == forbidden_woods;
+        })) << forbidden_woods;
     }
 }
 

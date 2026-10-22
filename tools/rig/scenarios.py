@@ -173,6 +173,11 @@ TEAM_WORLD_FLAG = 12410999
 # The Blood Gem Workshop Tool's chest (its item lot's flag; neither rig character has opened it).
 WORKSHOP_TOOL_CHEST = 52411005
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
+# The "Impurity" rune (the League oath, GemeffectParam 2127001) puts 6142 on the player; common
+# event 9035 adds 180040 (max HP x1.02) to a white phantom wearing it, KeepImpurityBonus to
+# anyone in a party session (the host too).
+IMPURITY_RUNE = 6142
+IMPURITY_HP = 180040
 # How a game joins: the port's team opens and joins the host's session itself (phase 6, no bell
 # and no signs); shadPS4 rings the bells.
 HOST_JOINS = (r"(?:auto-rejoin started search effect=9000|"
@@ -274,6 +279,30 @@ SCENARIOS = {
             "host": [HOST_JOINS],
             "guest": [GUEST_JOINS],
         },
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
+    "impurity-rune": {
+        "about": "player report 2026-10-22: the League's \"Impurity\" rune (more HP while "
+                 "cooperating) did nothing in co-op: the host and a guest wearing it get its HP "
+                 "bonus, the guest also after a trip (no longer a phantom then)",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 10", "note-max-hp",
+                     f"add-effect {IMPURITY_RUNE}", "sync rune-on", "wait 5", "peek self 78",
+                     f"expect-effect {IMPURITY_HP} 1", "expect-max-hp self > noted",
+                     "sync guest-tripped", f"expect-effect {IMPURITY_HP} 1", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 10", "note-max-hp",
+                      f"add-effect {IMPURITY_RUNE}", "sync rune-on", "wait 5", "peek self 78",
+                      f"expect-effect {IMPURITY_HP} 1", "expect-max-hp self > noted",
+                      f"travel {HUNTERS_DREAM}", "wait 5", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait 5", f"add-effect {IMPURITY_RUNE}", "wait 5", "peek self 78",
+                      f"expect-effect {IMPURITY_HP} 1", "sync guest-tripped", "snapshot",
+                      "expect-session 2"],
+        },
+        "syncs": {"rune-on": {"chapter": "impurity-rune", "roles": ["host", "guest"]},
+                  "guest-tripped": {"chapter": "impurity-rune", "roles": ["host", "guest"]}},
+        "expect": {"host": [HOST_JOINS], "guest": [GUEST_JOINS]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
@@ -2802,6 +2831,26 @@ SCENARIOS = {
                                     r"Map: (drew|read) m24_01_00_00 view 1"]},
         "settings": {"BB_MAP_3D": "1"},  # the 3D map is opt-in (Insert, Display)
         "timeout": 240,
+    },
+    # Player report 2026-10-22 (v1.1.2): on Cathedral Ward (the host at about -138 -29.5 170) the
+    # Forbidden Woods' multiplayer wall (2701999, at -147 -33.8 178 in m27's MSB) stood on the
+    # stairs down to the woods: the player is still on the Ward there, and only the current map's
+    # walls were turned off. At that spot in a session the woods' walls are off (on 1.1.2 they
+    # stood: "object 2701999: enabled 1"). The ground there ends 10 m on, so no walk through.
+    "walls-woods-stairs": {
+        "about": "in a session, the host on Cathedral Ward at the stairs to the Forbidden Woods: "
+                 "m27's multiplayer walls are off as well as the Ward's",
+        "roles": {
+            "host": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                     "wait-session 2 300", "wait 10", "teleport -138.0 -29.5 170.0 0.84", "wait 5",
+                     "object 2701999 2701998 2401996 2401997", "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 25", "expect-session 2"],
+        },
+        "expect": {"host": [r"autoplay object 2701999: enabled 0 ",
+                            r"autoplay object 2701998: enabled 0 ",
+                            r"autoplay object 2401996: enabled 0 "]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
     },
     # Player report 2026-10-22 (v1.1.2): a fall off a Forbidden Woods cliff (into the void: a real
     # death) while the teammate stood on the map respawned at the lamp in place, and the player got

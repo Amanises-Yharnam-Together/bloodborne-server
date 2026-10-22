@@ -2725,6 +2725,19 @@ std::vector<s32> EffectsToRestoreAfterTrip(std::span<const s32> before,
     return missing;
 }
 
+bool GetsImpurityBonus(bool in_party_session, bool party_guest) {
+    return in_party_session && (party_guest || ImpurityBonusForHost);
+}
+
+EffectChange ImpurityBonusChange(bool gets_bonus, std::span<const s32> effects, bool added) {
+    const bool wears = std::ranges::find(effects, ImpurityRuneEffect) != effects.end();
+    const bool has = std::ranges::find(effects, ImpurityHpEffect) != effects.end();
+    if (gets_bonus && wears) {
+        return has ? EffectChange::None : EffectChange::Add;
+    }
+    return has && added ? EffectChange::Remove : EffectChange::None;
+}
+
 bool ShouldRestoreSearchAfterTrip(bool in_party_session, bool search_effect_active) {
     return in_party_session && !search_effect_active;
 }
@@ -2903,7 +2916,7 @@ bool GuestMakesItsOwnLampTrip(bool in_party_session, PartyRole role) {
     return in_party_session && role == PartyRole::Guest;
 }
 
-std::vector<MultiplayerWall> MultiplayerWallsOn(u32 packed_map) {
+std::vector<MultiplayerWall> MultiplayerWalls() {
     // InitializeEvent(_, 7600, object, sfx) in m22-m35's event files (01.09).
     static constexpr std::array<s32, 18> Walls{
         2201999, 2301999, 2401999, 2401998, 2401997, 2401996, 2401995, 2411999, 2411998,
@@ -2911,9 +2924,7 @@ std::vector<MultiplayerWall> MultiplayerWallsOn(u32 packed_map) {
     };
     std::vector<MultiplayerWall> walls;
     for (const s32 object : Walls) {
-        if (PackedMapOfWarpPoint(object) == packed_map) {
-            walls.push_back(MultiplayerWall{object, object + 2000});
-        }
+        walls.push_back(MultiplayerWall{object, object + 2000});
     }
     return walls;
 }
