@@ -69,9 +69,11 @@ std::vector<KillEchoes> echoes_to_post;
 
 namespace {
 
-// The multiplayer walls (MultiplayerWallsOn) turned off in a party session the way the event
+// The multiplayer walls (MultiplayerWalls) turned off in a party session the way the event
 // scripts' own Lua_InvalidMultiWall does: collision and drawing off, the fog SFX invalidated.
 // Event 7600 shows them again on its next multiplayer edge, so this runs about once a second.
+// Every map's walls: the entity lookup (0x013CABD0) searches the loaded blocks and skips an
+// id it does not find, so a wall of a map not loaded costs a search and nothing else.
 constexpr u64 SetColiEnableOffset = 0x0132DEF0;
 constexpr u64 SetDrawEnableOffset = 0x0132DEC0;
 constexpr u64 InvalidSfxOffset = 0x01330870;
@@ -80,7 +82,7 @@ constexpr u64 InvalidSfxOffset = 0x01330870;
 
 namespace Coop {
 
-void TurnOffMultiplayerWalls(bool in_session, u32 map) {
+void TurnOffMultiplayerWalls(bool in_session) {
     static std::chrono::steady_clock::time_point last{};
     const auto now = std::chrono::steady_clock::now();
     if (!in_session || now - last < std::chrono::seconds{1}) {
@@ -88,7 +90,7 @@ void TurnOffMultiplayerWalls(bool in_session, u32 map) {
     }
     last = now;
     using EntitySwitch = void PS4_SYSV_ABI (*)(u64 unused, s32 entity, bool on);
-    for (const MultiplayerWall& wall : MultiplayerWallsOn(map)) {
+    for (const MultiplayerWall& wall : MultiplayerWalls()) {
         reinterpret_cast<EntitySwitch>(image_base + SetColiEnableOffset)(0, wall.object, false);
         reinterpret_cast<EntitySwitch>(image_base + SetDrawEnableOffset)(0, wall.object, false);
         reinterpret_cast<EntitySwitch>(image_base + InvalidSfxOffset)(0, wall.sfx, true);
