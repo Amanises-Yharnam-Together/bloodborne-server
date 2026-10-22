@@ -171,6 +171,7 @@ START = f"ensure-map {CENTRAL_YHARNAM} {CENTRAL_YHARNAM_LAMP}"
 ENEMY_JUMPED = r"Bloodborne party: enemy [0-9a-f]+ jumped"
 # Phase 5b: a world flag of Central Yharnam's block no event uses (the rig's saves have it off).
 TEAM_WORLD_FLAG = 12410999
+BLOOD_MOON = 9802  # the time of day the maps' events pick (9800 evening, 9801 night)
 # The Blood Gem Workshop Tool's chest (its item lot's flag; neither rig character has opened it).
 WORKSHOP_TOOL_CHEST = 52411005
 LEVEL_SYNC = 9200  # the SpEffect that scales a guest down to the host's level
@@ -1482,6 +1483,27 @@ SCENARIOS = {
                       "wait 20", f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
         },
         "expect": {"guest": [r"party trip: arrived map=0x18010000"]},
+        "timeout": 300,
+    },
+    # Kaniel's playtest 2026-10-22: krolebord, alone in Old Yharnam before the host, saw its
+    # blood-moon hunters (m28 event 12800400 switches 2800740-2800744 on by flag 9802): his own
+    # save's time of day, not the team's. Here the guest's game has the blood moon, the team's
+    # world none; the host waits in the Dream and the guest's lamp trip loads Central Yharnam alone.
+    "team-time-of-day-trip": {
+        "about": "a guest whose own game has the blood moon takes the team's time of day (none) "
+                 "at a lamp trip alone; the host's stays as it was",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 20", f"travel {HUNTERS_DREAM}", "wait 30",
+                     "wait 30", "wait 20", f"expect-flag {BLOOD_MOON} 0", "done"],
+            "guest": [START, "wait-session 2 300", "wait 5", f"set-flag {BLOOD_MOON} 1",
+                      "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 20",
+                      f"expect-flag {BLOOD_MOON} 0", "done"],
+        },
+        # The arrival alone set it back on main too, after the map's events had picked by it: the
+        # trip's load itself (the session's changes put the blood moon back) must take the team's.
+        "expect": {"guest": [r"session's world changes as a trip loads the guest's own world"
+                             r"[\s\S]{0,400}team's time of day in this load \(-off\): -9802",
+                             r"party trip: arrived map=0x18010000"]},
         "timeout": 300,
     },
     # Release thread 2026-10-16 (dog): the host travelled to the Dream before it saw the guest's

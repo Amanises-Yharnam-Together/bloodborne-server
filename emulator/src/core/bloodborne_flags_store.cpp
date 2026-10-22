@@ -537,6 +537,7 @@ void SetGuestPickupsBeforeMapItems() {
                  "Bloodborne party: set {} of the session's world changes as a trip loads the "
                  "guest's own world",
                  SetGuestWorldChanges(true));
+        ApplyTeamTimeOfDayOnLoad();
         ClearLightRequestsThatLitNothing();
     }
     if (now - last < std::chrono::seconds{5}) {
@@ -568,6 +569,8 @@ void SetGuestPickupsBeforeMapItems() {
                      set);
         }
     }
+    // The team's time of day over the session's changes, before the map's events pick by it.
+    ApplyTeamTimeOfDayOnLoad();
 }
 
 FlagStore ReadFlagStore() {

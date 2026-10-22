@@ -1934,6 +1934,7 @@ void TickPartyTrip() {
         ApplyTeamWorldOnLoad(true);
         LOG_INFO(Debug, "Bloodborne party trip: set {} of the session's world changes on arrival",
                  SetGuestWorldChanges());
+        ApplyTeamTimeOfDayOnLoad();
     }
 }
 

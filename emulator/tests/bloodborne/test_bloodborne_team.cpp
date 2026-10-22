@@ -328,6 +328,27 @@ TEST(TeamWorld, AGuestTakesTheTeamsTimeOfDay) {
     EXPECT_TRUE(TimeOfDayToFollow(WorldFlags{}, [](s32) { return false; }).empty());
 }
 
+// Kaniel's playtest 2026-10-22: krolebord, alone in Old Yharnam before the host, saw its
+// blood-moon characters (m28 event 12800400 picks them by 9802) from his own save's time of day.
+// A guest's load takes the team world's time of day exactly, back as well as on.
+TEST(TeamWorld, AGuestsLoadTakesTheTeamsTimeOfDayExactly) {
+    WorldFlags team;
+    team.blocks = {9};
+    team.on = {9301, 9800};
+    const auto blood_moon = [](s32 flag) { return flag >= 9800 && flag <= 9802; };
+    EXPECT_EQ(TeamTimeOfDayAtLoad(team, 1000, blood_moon),
+              (std::vector<std::pair<s32, bool>>{{9801, false}, {9802, false}}));
+    EXPECT_EQ(TeamTimeOfDayAtLoad(team, 1000, [](s32) { return false; }),
+              (std::vector<std::pair<s32, bool>>{{9800, true}}));
+    team.on = {};
+    EXPECT_EQ(TeamTimeOfDayAtLoad(team, 1000, blood_moon),
+              (std::vector<std::pair<s32, bool>>{{9800, false}, {9801, false}, {9802, false}}));
+    EXPECT_TRUE(TeamTimeOfDayAtLoad(team, 1000, [](s32) { return false; }).empty());
+    // A team world without the time of day's block says nothing about it.
+    team.blocks = {12410};
+    EXPECT_TRUE(TeamTimeOfDayAtLoad(team, 1000, blood_moon).empty());
+}
+
 // Kaniel 2026-10-20: NPCs showed up for guests on maps without the host. A guest away from the host
 // takes the story steps the host's reports change (quest and NPC flags), and only those: its own
 // game's changes, the maps' flags, items, the time of day and the flags with rules of their own

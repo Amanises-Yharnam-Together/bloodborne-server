@@ -876,6 +876,9 @@ void ListLamps(std::span<const s32> lamps);
 void TickTeamWorld(s64 now_ms);
 // A team guest takes the team world's time of day (TimeOfDayToFollow) when it is not loading.
 void FollowTeamTimeOfDay(s64 now_ms);
+// At a team guest's load, after the session's changes: the team world's time of day exactly
+// (TeamTimeOfDayAtLoad).
+void ApplyTeamTimeOfDayOnLoad();
 // A team guest takes the story steps the host's world reports change (TeamStoryToFollow).
 void FollowTeamStory(s64 now_ms);
 // The lobby as the server last sent it, for the game's menu (none before its answer), and this
