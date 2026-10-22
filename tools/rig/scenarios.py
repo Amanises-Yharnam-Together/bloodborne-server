@@ -2852,6 +2852,37 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
+    # Player report 2026-10-22 (v1.1.2): a fall off a Forbidden Woods cliff (into the void: a real
+    # death) while the teammate stood on the map respawned at the lamp in place, and the player got
+    # up invisible to itself and to the teammate until a trip. Both at the woods' lamp (2702950,
+    # -190.1 -76.2 252.2); the guest steps off the ledge west of it where the player did (the
+    # trace: dead about 16 m down, still falling). The void fades a character out (+0x20C, 1.0
+    # while shown) and only a map load puts it back: once up again, the guest is faded in (on 1.1.2
+    # it stayed 0.0) and shown to the host.
+    "void-fall-respawn": {
+        "about": "in a session the guest steps off a Forbidden Woods cliff into the void while the "
+                 "host stands at the lamp; it wakes at the lamp shown to itself and to the host",
+        "roles": {
+            "host": [START, "godmode", f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1",
+                     "wait-session 2 300", "travel 2702950", "wait-members 2 120", "wait 10",
+                     "expect-others-shown 1",
+                     "wait-member-vital dead 60", "wait-member-vital up 60", "wait 15", "snapshot",
+                     "expect-others-shown 1", "expect-others-near 1 40",
+                     "expect-session 2"],
+            "guest": [START, f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "wait-session 2 300",
+                      "travel 2702950", "wait-members 2 120", "wait 10",
+                      "teleport -211.0 -76.5 250.4 1.5708", "wait 2", "stick 128 0 2500",
+                      "wait-vital dead 30", "wait-vital up 60", "wait 15", "snapshot",
+                      "peek self 20c", "expect-others-shown 1", "expect-others-near 1 40",
+                      "expect-session 2"],
+        },
+        "expect": {"guest": [r"party death: the death was a fall into the void",
+                             r"travelling there \(reset=false, void fall=true\)",
+                             r"autoplay peek: 0x10044000 \+0x20c = 0x3f800000"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "settings": PARTY_DEATH,
+        "timeout": 300,
+    },
     # Kaniel 2026-10-17: the map screen in a session: the other hunter at its spot on the
     # picture, ringed in the compass's light gray, and listed with its area.
     "map-team": {

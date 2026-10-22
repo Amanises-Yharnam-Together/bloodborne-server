@@ -1050,6 +1050,27 @@ TEST(BloodbornePartyDeath, AResetDeathReloadsAtTheLamp) {
     EXPECT_EQ(ChooseDeathRespawn(2412951, false, true, true), DeathRespawn::StayPut);
 }
 
+// Player report 2026-10-22 (v1.1.2): a fall off a Forbidden Woods cliff (a real death, the void)
+// while the teammate stood on the map was moved to the lamp in place, and the player got up
+// invisible to itself and to the teammate until its next lamp trip. Such a death makes the trip.
+TEST(BloodbornePartyDeath, AFallIntoTheVoidReloadsAtTheLamp) {
+    EXPECT_EQ(ChooseDeathRespawn(2702950, true, false, false, true), DeathRespawn::Travel);
+    EXPECT_EQ(ChooseDeathRespawn(2702950, true, false, false, false), DeathRespawn::MoveToPoint);
+    // The arrival after that trip puts the player at the lamp.
+    EXPECT_EQ(ChooseDeathRespawn(2702950, true, true, false, true), DeathRespawn::MoveToPoint);
+    EXPECT_EQ(ChooseDeathRespawn(-1, true, false, false, true), DeathRespawn::StayPut);
+}
+
+// Rig 2026-10-22, the player's cliff west of the Forbidden Woods' lamp: the void kills without the
+// lethal check, and the void bit is already clear when the death shows. What shows is the fade-out
+// the game starts (character +0x20C below 1.0 at the death, 0.0 once moved to the lamp).
+TEST(BloodbornePartyDeath, AFadingOutDeathIsAFallIntoTheVoid) {
+    EXPECT_TRUE(DeathWasAVoidFall(false, 0.93f));
+    EXPECT_TRUE(DeathWasAVoidFall(false, 0.0f));
+    EXPECT_TRUE(DeathWasAVoidFall(true, 1.0f));
+    EXPECT_FALSE(DeathWasAVoidFall(false, 1.0f)) << "a deep fall's own kill, no fade";
+}
+
 // Playtest 2026-10-13: a wipe sent the host to the Hunter's Dream (2102962) and the guest to its
 // own Central Yharnam lamp (2412959); another left them 113 m apart. Kaniel: a party death wakes
 // everyone where the host wakes, but a guest's special death (its first one: the Dream; a
