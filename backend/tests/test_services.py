@@ -252,6 +252,17 @@ class SsInfoTest(unittest.TestCase):
                      "/bb-eu/ss.info/", "/basic_utils/login"):
             self.assertFalse(server.is_ss_info_path(path), path)
 
+    def test_every_game_language_finds_its_entries(self):
+        # The game reads <msg2> and <BetaTestWebUrl2> by its language's <langN>, N from the eboot's
+        # table at 0x4736570 (0 to 21). The template had 14 of them; a game whose language had none
+        # (Unlock Game Region makes every language selectable) said it could not set the server
+        # status (player log 2026-10-22: ss.info 200, then no login).
+        xml = self.fetch_ss_info([])
+        for section in ("msg2", "BetaTestWebUrl2"):
+            body = re.search(r"<{0}>(.*?)</{0}>".format(section), xml, re.S).group(1)
+            for lang in range(22):
+                self.assertIsNotNone(self.tag(body, "lang{}".format(lang)), "{} lang{}".format(section, lang))
+
     def test_the_host_header_is_read_as_an_address_only(self):
         from importlib import util
         spec = util.spec_from_file_location("bb_dummy_server", SERVER)
