@@ -43,8 +43,9 @@ STEPS (everyone)
      with your team a few seconds later, no bells or signs. "Play alone" plays without a team.
      The first start takes longer (it builds its shader cache).
 
-The game always runs at 60 FPS in co-op: every player must send and take the same number of
-updates, or the others freeze and fly.
+Co-op runs at 60 FPS. Settings, Display & FPS has an experimental "Unlocked frame rate in
+co-op" switch: up to 120 FPS, with the game's updates still sent as often as at 60 (sent more
+often, they made the others freeze and fly).
 
 SAVES
   Your saves live in the "user\savedata" folder of the install. "Bring saves from another

@@ -955,6 +955,7 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_lamp_points.h
              src/core/bloodborne_party.cpp
              src/core/bloodborne_party.h
+             src/core/bloodborne_send_pace.h
              src/core/bloodborne_re.cpp
              src/core/bloodborne_re.h
              src/core/bloodborne_re_internal.h

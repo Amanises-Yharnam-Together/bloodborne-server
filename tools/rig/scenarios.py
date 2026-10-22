@@ -288,6 +288,24 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
+    "fps-pace": {
+        "about": "Kaniel 2026-10-22, the unlocked frame rate online: host and guest together for 40 "
+                 "s with the native packet trace (SHADPS4_BLOODBORNE_PACKET_TRACE=1), the host "
+                 "walking a little; tools/re/packet_summary.py then counts each game's packets "
+                 "(run it with BB_RIG_FPS=60, and uncap + BB_ONLINE_UNLOCKED_FPS=1)",
+        "roles": {
+            "host": [START, "wait-session 2 240", "wait 10", "sync counting", "stick 128 0 1500",
+                     "stick 128 255 1500", "wait 17", "wait 20", "sync counted", "snapshot",
+                     "expect-session 2"],
+            "guest": [START, "wait-session 2 240", "wait 10", "sync counting", "wait 20",
+                      "wait 20", "sync counted", "snapshot", "expect-session 2"],
+        },
+        "syncs": {"counting": {"chapter": "fps-pace", "roles": ["host", "guest"]},
+                  "counted": {"chapter": "fps-pace", "roles": ["host", "guest"]}},
+        "expect": {"host": [HOST_JOINS], "guest": [GUEST_JOINS]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     "impurity-rune": {
         "about": "player report 2026-10-22: the League's \"Impurity\" rune (more HP while "
                  "cooperating) did nothing in co-op: the host and a guest wearing it get its HP "
