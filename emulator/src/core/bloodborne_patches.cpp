@@ -9,7 +9,6 @@
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
-#include "core/bloodborne_send_pace.h"
 #include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
 
@@ -1298,105 +1297,6 @@ void InstallMoviePlayerDeleteDelay(u64 base, u64 image_size) {
     coop_features.On("movie player delete delay");
 }
 
-// The send pace (bloodborne_send_pace.h): with the opt-in unlocked frame rate online the game's
-// frame-counted packets go no more often than in the 60 FPS mode. Each hook runs on the game's
-// frame, before the game reads or tests its counter, and holds a send back by changing it.
-SendPace send_pace;
-std::mutex send_pace_mutex;
-
-bool SendPaceAllows(u64 object, std::chrono::microseconds interval) {
-    std::scoped_lock lock{send_pace_mutex};
-    return send_pace.Allow(object, SendPace::Clock::now(), interval);
-}
-
-// 0x01529496 (CS ChrSync's frame, r12 the sync object), before `mov ebx, [r12+0xC8]`.
-void PS4_SYSV_ABI PacePlayerState(u64, GuestRegisterSnapshot* registers) {
-    const u64 sync = registers->r12;
-    const auto loaded = TryRead<s32>(sync, 0xC8);
-    if (!loaded || *loaded > 1) {
-        return;
-    }
-    const s32 held = HeldCountdown(*loaded, SendPaceAllows(sync, PlayerStatePaceInterval));
-    if (held != *loaded) {
-        WriteValue(sync, 0xC8, held);
-    }
-}
-
-// 0x0152C3E9, `mov [rbx+0xF8], edx` after the decrement (edx the count left).
-void PS4_SYSV_ABI PaceSecondCounter(u64, GuestRegisterSnapshot* registers) {
-    const s32 left = static_cast<s32>(registers->rdx);
-    if (left > 0) {
-        return;
-    }
-    const s32 held =
-        HeldDecremented(left, SendPaceAllows(registers->rbx, SecondCounterPaceInterval));
-    registers->rdx = static_cast<u32>(held);
-}
-
-// 0x018EF279 (the enemy HP round, rbx the NWCS object), before `mov eax, [rbx+0x680]`.
-void PS4_SYSV_ABI PaceEnemyHpRound(u64, GuestRegisterSnapshot* registers) {
-    const u64 round = registers->rbx;
-    const auto loaded = TryRead<u32>(round, 0x680);
-    if (!loaded || !RoundSends(*loaded)) {
-        return;
-    }
-    const u32 held = HeldRound(*loaded, SendPaceAllows(round, EnemyHpPaceInterval));
-    if (held != *loaded) {
-        WriteValue(round, 0x680, held);
-    }
-}
-
-// 0x012EE540, the event sync's send (rdi the event's state): skipped when this event and slot
-// already sent its 60 for this second (each condition group on its own).
-bool PS4_SYSV_ABI PaceEventSync(u64, const GuestRegisterSnapshot* registers) {
-    const u64 event = registers->rdi;
-    const auto id = TryRead<u32>(event, 0x28);
-    const auto slot = TryRead<u16>(event, 0x2C);
-    const auto group = TryRead<u32>(event, 0x48);
-    if (!id || !slot || !group) {
-        return false;
-    }
-    std::scoped_lock lock{send_pace_mutex};
-    return !send_pace.AllowRate(EventSyncKey(*id, *slot, *group), SendPace::Clock::now(),
-                                EventSyncPerSecond);
-}
-
-void InstallSendPace(u64 base, u64 image_size) {
-    if (!party_controller || !EnvFlagEnabled("SHADPS4_BLOODBORNE_SEND_PACE")) {
-        return;
-    }
-    if (!CoopSitesMatch(base, image_size, "send pace",
-                        "an unlocked frame rate sends the game's state as often as it draws")) {
-        return;
-    }
-    const std::array<std::pair<const char*, GuestRegisterEditHook>, 3> hooks{{
-        {"player state send count", PacePlayerState},
-        {"second sync send count", PaceSecondCounter},
-        {"enemy HP round count", PaceEnemyHpRound},
-    }};
-    const auto install = [&](std::string_view name, auto hook) {
-        const auto site = std::ranges::find(CoopSites, name, &CoopSite::name);
-        const std::vector<u8> bytes = HexBytes(site->original);
-        if (InstallCoopHook(reinterpret_cast<void*>(base + site->offset), bytes, 0, hook)) {
-            return true;
-        }
-        LOG_ERROR(Debug, "Bloodborne send pace unavailable at {:#x} ({})", site->offset, name);
-        coop_features.Skipped("send pace", SiteFailure(base, image_size, site->offset));
-        return false;
-    };
-    for (const auto& [name, hook] : hooks) {
-        if (!install(name, hook)) {
-            return;
-        }
-    }
-    if (!install("event sync send", GuestFunctionOverride{PaceEventSync})) {
-        return;
-    }
-    coop_features.On("send pace");
-    LOG_INFO(Debug, "Bloodborne send pace: player state, sync, enemy HP and event sync packets at "
-                    "the 60 FPS mode's rates");
-}
-
 // A co-op guest hits the friendly NPCs as the host does (see the "guests hit NPCs" sites).
 void InstallGuestsHitNpcs(u64 base, u64 image_size) {
     if (!party_controller) {
@@ -1741,7 +1641,6 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallGuestsHitNpcs(base, image_size);
     InstallOwnPlayerNumbers(base, image_size);
     InstallMoviePlayerDeleteDelay(base, image_size);
-    InstallSendPace(base, image_size);
     InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);

@@ -52,14 +52,8 @@ public:
     }
     /// Frames per second the present thread lets through now; 0 = no limit (the game menu's
     /// FPS limit, else BB_FPS_LIMIT; the unlocked frame rate only).
-    /// BB_ONLINE_FPS_CAP: the opt-in unlocked frame rate online goes no higher (run.py).
-    int OnlineFrameCap() {
-        static const int value = BbSettings::OnlineFrameCap();
-        return value;
-    }
     u32 GetFrameLimit() {
-        return u32(BbSettings::EffectiveFrameLimit(BbSettings::Get().fps_limit, IsUncappedVblank(),
-                                                     OnlineFrameCap()));
+        return u32(BbSettings::EffectiveFrameLimit(BbSettings::Get().fps_limit, IsUncappedVblank()));
     }
     bool IsCopyGpuBuffers() { static const auto value = Flag("BB_COPY_GPU_BUFFERS", false); return value; }
     bool IsDirectMemoryAccessEnabled() { static const auto value = Flag("BB_DIRECT_MEMORY_ACCESS", false); return value; }

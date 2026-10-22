@@ -417,29 +417,16 @@ void ConfigureXessSupport(bool available, const char* problem) {
     }
 }
 
-int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank, int online_cap) {
-    if (!uncapped_vblank) {
-        return 0;
-    }
-    const int limit = std::max(fps_limit, 0);
-    if (online_cap <= 0) {
-        return limit;
-    }
-    return limit > 0 ? std::min(limit, online_cap) : online_cap;
+int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank) {
+    return uncapped_vblank ? std::max(fps_limit, 0) : 0;
 }
 
-int OnlineFrameCap() {
-    const char* cap = std::getenv("BB_ONLINE_FPS_CAP");
-    return cap != nullptr ? std::max(std::atoi(cap), 0) : 0;
-}
-
-bool FrameRateLocked(const char* online, const char* online_cap) {
-    const bool capped = online_cap != nullptr && std::atoi(online_cap) > 0;
-    return online != nullptr && std::string_view{online} == "1" && !capped;
+bool FrameRateLocked(const char* online) {
+    return online != nullptr && std::string_view{online} == "1";
 }
 
 bool FrameRateLocked() {
-    return FrameRateLocked(std::getenv("BB_ONLINE"), std::getenv("BB_ONLINE_FPS_CAP"));
+    return FrameRateLocked(std::getenv("BB_ONLINE"));
 }
 
 int FpsLimitIndex(int limit) {

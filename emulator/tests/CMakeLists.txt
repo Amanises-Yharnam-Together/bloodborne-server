@@ -396,7 +396,6 @@ add_executable(shadps4_bloodborne_test
     bloodborne/test_bloodborne_game_link.cpp
     bloodborne/test_bloodborne_server_world.cpp
     bloodborne/test_bloodborne_team.cpp
-    bloodborne/test_bloodborne_send_pace.cpp
     bloodborne/coop_trace_replay.cpp
 )
 target_include_directories(shadps4_bloodborne_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/../server

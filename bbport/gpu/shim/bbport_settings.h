@@ -278,18 +278,14 @@ std::optional<std::string> Line(const std::string& key);
 void SetLine(const std::string& key, std::optional<std::string> value);
 
 /// The cap the present thread applies: the menu's with the unlocked frame rate (vblank above
-/// 120 Hz), none with the game's own fixed 30/60 timestep. `online_cap` (BB_ONLINE_FPS_CAP, the
-/// opt-in unlocked frame rate online; 0 none) holds it to at most that, and no limit becomes it.
-int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank, int online_cap = 0);
-/// BB_ONLINE_FPS_CAP as a number, 0 when unset.
-int OnlineFrameCap();
+/// 120 Hz), none with the game's own fixed 30/60 timestep.
+int EffectiveFrameLimit(int fps_limit, bool uncapped_vblank);
 /// The FPS limit row's choice for a cap: the largest choice not above it.
 int FpsLimitIndex(int limit);
 /// Whether the frame rate is locked to the fixed 60 FPS mode: online (co-op) play, BB_ONLINE
 /// `online` "1" (run.py launches it at 60; a host above 60 made the guests see everyone freeze
-/// and fly), unless the opt-in unlocked frame rate online gave a cap (`online_cap`,
-/// BB_ONLINE_FPS_CAP). The menus' FPS limit rows are then disabled and no limit applies.
-bool FrameRateLocked(const char* online, const char* online_cap = nullptr);
+/// and fly). The menus' FPS limit rows are then disabled and no limit applies.
+bool FrameRateLocked(const char* online);
 bool FrameRateLocked();
 /// The DLSS model row's choice for a preset value, 0 (NVIDIA's default) if not offered.
 int DlssModelIndex(int preset);
