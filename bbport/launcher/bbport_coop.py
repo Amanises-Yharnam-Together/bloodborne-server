@@ -605,6 +605,13 @@ def import_saves(install, source):
 
 # --- playing ------------------------------------------------------------------------------------
 
+def unlocked_fps(fps_mode):
+    """Whether a launcher frame rate mode plays co-op unlocked (experimental, Kaniel 2026-10-22: the
+    choice itself, with a warning when picked, not a switch): Unlocked and 90; 60 and 30 keep the
+    game's fixed step."""
+    return fps_mode in ('uncap', '90')
+
+
 def game_environment(env, settings, install, root):
     """The game's environment for co-op, as 2 - PLAY set it, over the launcher's own."""
     install, root = Path(install), Path(root)
@@ -626,8 +633,8 @@ def game_environment(env, settings, install, root):
         env.pop(key, None)
     # Co-op is the fixed 60 FPS mode for everyone (a host above 60 made the guests see everyone
     # freeze and fly): no frame cap from the launcher. The opt-in unlocked frame rate keeps the
-    # launcher's mode and cap (settings 'unlocked_fps' '1', the launcher's coop_unlocked_fps switch,
-    # Kaniel 2026-10-22); run.py then caps it at 120 and paces the game's packets.
+    # launcher's mode and cap (settings 'unlocked_fps' '1': the launcher picked Unlocked or 90,
+    # unlocked_fps); run.py then caps it and paces the game's packets.
     env.pop('BB_ONLINE_UNLOCKED_FPS', None)
     if settings.get('unlocked_fps') == '1':
         env['BB_FPS'] = launcher_fps

@@ -330,13 +330,13 @@ def ini_float(key, value):
 APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'), 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'player_name': '', 'fullscreen': False, 'hdr': False, 'present_mode': 'Mailbox',
-                'fps_mode': 'uncap', 'frame_cap': '', 'draw_pipe': '', 'readbacks': '',
+                'fps_mode': '60' if COOP_INSTALL else 'uncap', 'frame_cap': '', 'draw_pipe': '', 'readbacks': '',
                 'frames_ahead': '', 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'extra_env': '', 'close_on_play': False,
                 'check_updates': True, 'animations': True, 'auto_update': False,
                 'addcont': '', 'pkg_dir': '', 'pkg_src': '', 'reshade': False, 'online': False, 'online_server': 'srv.shadps4.net:31313',
                 'online_webapi': '', 'online_npid': '', 'online_password': '',
-                'online_community': COMMUNITY_SERVER, 'coop_unlocked_fps': False,
+                'online_community': COMMUNITY_SERVER,
                 'beta_versions': is_prerelease(VERSION),  # a beta user keeps getting betas unless they say no
                 'experimental': False, 'object_motion_amd': False, 'monitor': '',  # monitor: a name from --displays; '' is the primary
                 'gamepad': '', 'gamepad_name': ''}  # gamepad: a GUID from --gamepads (BB_GAMEPAD); '' takes the first one
@@ -3533,7 +3533,7 @@ class Launcher:
                                                                                          padx=(px(8), 0))
             self.pkg_button(cell).pack(anchor='w', pady=(px(8), 0))
         for r, pairs in enumerate((((_('Output', 'Разрешение'), 'output_res', 'ini', OUTPUTS),
-                                    (_('Frame rate (co-op: 60 unless unlocked)', 'Частота кадров (кооператив: 60, если не снято)')
+                                    (_('Frame rate (60 recommended in co-op)', 'Частота кадров (в кооперативе лучше 60)')
                                      if COOP_INSTALL
                                      else _('Frame rate', 'Частота кадров'), 'fps_mode', 'app', FPS_MODES)),
                                    ((_('Upscaler', 'Апскейлер'), 'upscaler', 'ini', UPSCALERS),
@@ -3546,7 +3546,7 @@ class Launcher:
                        self.choice(holder, key, store, options, 16))
                 box.pack(fill='x')
                 if key == 'fps_mode':
-                    self.lock_frame_rate(box)
+                    self.coop_frame_rate(box)
         if reshade_ready():
             self.reshade_box(self.cell(quick, 5, 0, _('ReShade look', 'Стиль ReShade')), simple=True).pack(fill='x')
             holder = self.cell(quick, 5, 1, ' ')
@@ -3703,28 +3703,28 @@ class Launcher:
 
     # --- seamless co-op (the release: COOP_INSTALL) ---------------------------------------------
 
-    def lock_frame_rate(self, box):
-        """Co-op plays at the game's fixed 60 FPS (a host above 60 made the guests see everyone freeze
-        and fly, Kaniel 2026-10-13): the frame rate choices show it and cannot change, unless the
-        experimental unlocked frame rate in co-op is on (Kaniel 2026-10-22)."""
-        if COOP_INSTALL:
-            if not hasattr(self, 'frame_rate_boxes'):
-                self.frame_rate_boxes = []
-                self.var('coop_unlocked_fps', 'app').trace_add('write', lambda *_a: self.apply_frame_rate_lock(True))
-            self.frame_rate_boxes.append(box)
-            self.apply_frame_rate_lock(False)
+    def coop_frame_rate(self, box):
+        """Co-op plays at 60 FPS unless the player picks Unlocked or 90 FPS, which is experimental: picking
+        one warns (Kaniel 2026-10-22: a warning, not a switch, which was hard to find)."""
+        if COOP_INSTALL and not hasattr(self, 'coop_fps_shown'):
+            mode = self.var('fps_mode', 'app')
+            self.coop_fps_shown = mode.get()
+            mode.trace_add('write', lambda *_a: self.warn_coop_frame_rate())
         return box
 
-    def apply_frame_rate_lock(self, switched):
-        unlocked = self.var('coop_unlocked_fps', 'app').get()
-        mode = self.var('fps_mode', 'app')
-        if not unlocked:
-            mode.set('60')
-            self.var('frame_cap', 'app').set('')
-        elif switched and mode.get() == '60':
-            mode.set('uncap')
-        for box in self.frame_rate_boxes:
-            box.configure(state='readonly' if unlocked else 'disabled')
+    def warn_coop_frame_rate(self):
+        mode = self.var('fps_mode', 'app').get()
+        before, self.coop_fps_shown = self.coop_fps_shown, mode
+        if mode == before or not bbport_coop.unlocked_fps(mode):
+            return
+        self.root.after_idle(lambda: self.messagebox.showwarning(
+            _('Frame rate in co-op', 'Частота кадров в кооперативе'),
+            _('Above 60 FPS in co-op is still in testing. Unlocked goes up to 120 FPS and 90 FPS up to 90; '
+              'your game still sends its updates to the team as often as at 60.\n\n'
+              'If you or your team see enemies or players lag, set the frame rate back to 60 FPS.',
+              'Больше 60 FPS в кооперативе — пока в тестировании. «Без ограничения» — до 120 FPS, 90 FPS — '
+              'до 90; игра по-прежнему отправляет обновления команде так же часто, как при 60.\n\n'
+              'Если у вас или у команды лагают враги или игроки, верните 60 FPS.')))
 
     def build_coop_popup(self):
         """The co-op settings, over the whole window (Kaniel 2026-10-16): opened from the menu, and by
@@ -4344,7 +4344,7 @@ class Launcher:
         # Phase 11: a crash's dump and logs go to the host's server by themselves, alongside.
         threading.Thread(target=bbport_coop.send_reports, args=(PORT_DIR, dict(settings)),
                          daemon=True).start()
-        settings = dict(settings, unlocked_fps='1' if self.app.get('coop_unlocked_fps') else '')
+        settings = dict(settings, unlocked_fps='1' if bbport_coop.unlocked_fps(self.app.get('fps_mode')) else '')
         env = bbport_coop.game_environment(game_environment(self.app), settings, PORT_DIR, root)
         self.set_log('')
         if note:
@@ -4540,13 +4540,13 @@ class Launcher:
                                   _('Applied when the game starts.', 'Применяется при запуске игры.'))
         f = self.card(page, _('Frame rate', 'Частота кадров'))
         self.version_warning(f)
-        self.row(f, _('Frame rate', 'Режим'), self.lock_frame_rate(self.choice(f, 'fps_mode', 'app', FPS_MODES)),
+        self.row(f, _('Frame rate', 'Режим'), self.coop_frame_rate(self.choice(f, 'fps_mode', 'app', FPS_MODES)),
                  _("Community patches for game version 1.09. Unlocked makes the game use the real frame time. "
                    'Other game versions always run at 30 FPS (the patches would corrupt them).',
                    'Патчи сообщества для версии 1.09. «Без ограничения» — игра использует реальное время кадра. '
                    'Другие версии всегда работают в 30 FPS.'))
         holder = self.tk.Frame(f, bg=CARD)
-        self.lock_frame_rate(self.choice(holder, 'frame_cap', 'app', FRAME_CAPS, 30)).pack(anchor='w')
+        self.coop_frame_rate(self.choice(holder, 'frame_cap', 'app', FRAME_CAPS, 30)).pack(anchor='w')
         hint = self.label(holder, '', 'small', MUTED, wraplength=self.px(560), justify='left')
         hint.pack(anchor='w', pady=(self.px(6), 0))
         generation, cap = self.var('frame_generation', 'ini'), self.var('frame_cap', 'app')
@@ -4561,14 +4561,6 @@ class Launcher:
                    'physics and animations can glitch): higher caps are at your own risk.',
                    'Выше ~120 FPS ломается тайминг движения игры (бег и перекаты замедляются, возможны '
                    'сбои физики и анимаций): более высокие значения — на ваш риск.'))
-        if COOP_INSTALL:
-            self.check(f, 'coop_unlocked_fps', 'app',
-                       _('Unlocked frame rate in co-op (experimental)',
-                         'Без ограничения FPS в кооперативе (экспериментально)'),
-                       _('Plays co-op in the mode and cap above, up to 120 FPS; the game still sends '
-                         'its state as often as at 60. Off: everyone plays at 60 FPS.',
-                         'Кооператив в режиме и с ограничением выше, до 120 FPS; игра по-прежнему '
-                         'отправляет состояние так же часто, как при 60. Выкл: у всех 60 FPS.'))
         self.row(f, _('Frames ahead of the GPU', 'Кадров впереди GPU'), self.choice(f, 'frames_ahead', 'app', FRAMES_AHEAD),
                  _('1 keeps frame pacing even; more can raise FPS when the graphics card is the limit.',
                    '1 — ровная подача кадров; больше может поднять FPS, если упирается в видеокарту.'))
