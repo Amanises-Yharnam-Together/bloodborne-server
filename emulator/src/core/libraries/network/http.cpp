@@ -25,6 +25,7 @@
 #include "common/path_util.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
+#include "core/bloodborne_region_url.h"
 #include "core/debugger.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/error_codes.h"
@@ -1426,6 +1427,16 @@ int PS4_SYSV_ABI sceHttpCreateConnection(int tmplId, const char* serverName, con
     return conn_id;
 }
 
+// The empty ss.info address of the "Unlock Game Region" patch's region (bloodborne_region_url.h).
+static const char* GameUrl(const char* url) {
+    const std::string_view game_url = Core::Bloodborne::GameServerUrl(url);
+    if (game_url.data() != url) {
+        LOG_INFO(Lib_Http, "empty URL (the Unlock Game Region patch's region) taken as {}",
+                 game_url);
+    }
+    return game_url.data();
+}
+
 int PS4_SYSV_ABI sceHttpCreateConnectionWithURL(int tmplId, const char* url, bool enableKeepalive) {
     LOG_INFO(Lib_Http, "called tmplId={}, url={}, enableKeepalive={}", tmplId, url ? url : "(null)",
              enableKeepalive);
@@ -1444,6 +1455,7 @@ int PS4_SYSV_ABI sceHttpCreateConnectionWithURL(int tmplId, const char* url, boo
         LOG_ERROR(Lib_Http, "url is null");
         return ORBIS_HTTP_ERROR_INVALID_URL;
     }
+    url = GameUrl(url);
 
     u64 required = 0;
     int parse_ret = sceHttpUriParse(nullptr, url, nullptr, &required, 0);
@@ -1559,6 +1571,7 @@ int PS4_SYSV_ABI sceHttpCreateRequestWithURL(int connId, s32 method, const char*
         LOG_ERROR(Lib_Http, "url is null");
         return ORBIS_HTTP_ERROR_INVALID_URL;
     }
+    url = GameUrl(url);
 
     if (method > 8 || ((0x177u >> (static_cast<u32>(method) & 0x1f)) & 1u) == 0) {
         LOG_ERROR(Lib_Http, "method {} not accepted", method);
