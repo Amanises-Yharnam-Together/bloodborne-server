@@ -262,6 +262,15 @@ class PlayTests(unittest.TestCase):
         self.assertNotIn('BB_FPS_LIMIT', env)
         self.assertNotIn('BB_ONLINE_UNLOCKED_FPS', env)
 
+    def test_the_frame_rate_choice_unlocks_co_op(self):
+        # Kaniel 2026-10-22: no switch (unintuitive); the frame rate choice itself unlocks co-op,
+        # with a warning when it is picked. 60 and 30 keep the fixed step.
+        self.assertTrue(coop.unlocked_fps('uncap'))
+        self.assertTrue(coop.unlocked_fps('90'))
+        self.assertFalse(coop.unlocked_fps('60'))
+        self.assertFalse(coop.unlocked_fps('30'))
+        self.assertFalse(coop.unlocked_fps(''))
+
     def test_this_pc_hosts_when_the_host_ip_is_its_own(self):
         """No Player/Host switch (Kaniel 2026-10-16): this PC hosts when the host's IP is its own."""
         import socket

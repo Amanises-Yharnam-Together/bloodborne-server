@@ -315,7 +315,7 @@ Seamless co-op for Bloodborne on Bloodborne PC (the native Windows port).
 
 The full setup guide, with pictures: https://bloodborne.seamlesscoop.dev/docs/install
 
-Everyone in a team must use this same release. Co-op runs at 60 FPS unless you turn on the experimental unlocked frame rate (Settings, Display & FPS).
+Everyone in a team must use this same release. Co-op runs at 60 FPS; a higher frame rate (Unlocked or 90 FPS) is still in testing.
 
 Built from $commit. SHA-256 of the setup: ``$sha``
 "@
