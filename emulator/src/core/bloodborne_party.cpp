@@ -1204,11 +1204,11 @@ std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u1
 }
 
 DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip,
-                                bool reset) {
+                                bool reset, bool void_fall) {
     if (point <= 0) {
         return DeathRespawn::StayPut;
     }
-    if (reset && !arriving_from_trip) {
+    if ((reset || void_fall) && !arriving_from_trip) {
         return DeathRespawn::Travel;
     }
     if (in_loaded_block) {

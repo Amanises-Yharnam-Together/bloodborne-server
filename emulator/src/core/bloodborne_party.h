@@ -955,10 +955,12 @@ std::vector<s32> LampFlagsKeptAtRegistration(bool party_configured, s32 base, u1
 // Where a party death wakes the player (point: GlobalState +0x1528, which the events set on a
 // death: the first one to the Hunter's Dream, a kidnapping to the Gaol): moved there while the
 // point is in a loaded block, a trip there otherwise, except right after such a trip. A death
-// that resets the map (see DeathResetsMap) always makes the trip, so the map reloads.
+// that resets the map (see DeathResetsMap) always makes the trip, so the map reloads. So does a
+// fall into the void: moved to the lamp in place, the player got up invisible to itself and to
+// the others until its next trip (player report 2026-10-22, Forbidden Woods cliffs).
 enum class DeathRespawn { StayPut, MoveToPoint, Travel };
 DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_from_trip,
-                                bool reset);
+                                bool reset, bool void_fall = false);
 // Whether the trip of this death respawn checks, once arrived, for enemies the member's own save
 // left dead (see LeftDeadByItsSave): the trip of a death that resets the map.
 bool WipeTripRespawnsOnArrival(bool reset, DeathRespawn respawn);

@@ -285,6 +285,9 @@ std::atomic<bool> party_death_armed{};
 std::atomic<bool> party_death_down{};
 // Lethal hits the hook kept from killing the armed player: each change puts it down.
 std::atomic<u32> party_death_catches{};
+// A lethal check of the local player while it fell into the void (FallsIntoTheVoid): its respawn
+// makes a trip (see ChooseDeathRespawn). Taken by MoveToRespawnPoint.
+std::atomic<bool> party_death_void_fall{};
 // Kaniel 2026-10-16: another member stood (anywhere) at this member's last tick: its death's reset
 // is its own map's, not the party's wipe.
 std::atomic<bool> party_death_others_stand{};
@@ -356,6 +359,7 @@ namespace Coop {
 // A guest in a party session wakes at the host's point instead, unless its death was special (see
 // PartyDeathPoint): the party wakes together.
 void MoveToRespawnPoint(bool arriving_from_trip) {
+    const bool void_fall = party_death_void_fall.exchange(false) && !arriving_from_trip;
     const DeathReset call =
         arriving_from_trip ? DeathReset::None : party_death_reset.TakeAtRespawn();
     const bool reset = call != DeathReset::None;
@@ -393,7 +397,7 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
         point > 0 && reinterpret_cast<Resolve>(image_base + ResolveRespawnPointOffset)(
                          blocks, position.data(), rotation.data(), point);
     const DeathRespawn respawn =
-        ChooseDeathRespawn(point, in_loaded_block, arriving_from_trip, reset);
+        ChooseDeathRespawn(point, in_loaded_block, arriving_from_trip, reset, void_fall);
     if (WipeTripRespawnsOnArrival(reset, respawn)) {
         wipe_trip_respawn_pending.store(true); // see RespawnWhatTheSaveLeftDead
     }
@@ -410,8 +414,8 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
         guest_lamp_trip_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{200};
         LOG_INFO(Debug,
                  "Bloodborne revive: respawn point {} is on map {:#x}; travelling there "
-                 "(reset={})",
-                 point, PackedMapOfWarpPoint(point), reset);
+                 "(reset={}, void fall={})",
+                 point, PackedMapOfWarpPoint(point), reset, void_fall);
         return;
     case DeathRespawn::MoveToPoint:
         break;
@@ -918,6 +922,7 @@ void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
     }
     if (check == NoDeadCheck::Lethal && FallsIntoTheVoid(data)) {
         check = NoDeadCheck::Instant;
+        party_death_void_fall.store(true, std::memory_order_relaxed);
     }
     const bool answer = (registers->r14 & 0xFF) != 0;
     const bool down = party_death_down.load(std::memory_order_relaxed);
