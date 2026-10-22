@@ -388,25 +388,21 @@ class PlayTests(unittest.TestCase):
             self.assertIn(title, coop.TITLE_IDS)
 
     def test_an_untested_game_gets_a_warning(self):
-        # Kaniel 2026-10-22: co-op is tested on the EU edition only; other editions and the Unlock Game
-        # Region patch should work since #355/#357, and the launcher says they were not tested properly.
-        self.assertIsNone(coop.untested_warning('CUSA03173', False))
-        text, args = coop.untested_warning('CUSA03179', False)
+        # Kaniel 2026-10-22: co-op is tested on the EU edition only; other editions should work since #355
+        # and the launcher says they were not tested properly. The Unlock Game Region patch gets no
+        # warning: #357 fixed it (Xirato confirmed that patch was the cause).
+        self.assertIsNone(coop.untested_warning('CUSA03173'))
+        text, args = coop.untested_warning('CUSA03179')
         self.assertEqual(text.format(*args).count('CUSA03179'), 1)
         self.assertIn('not tested', text)
-        text, args = coop.untested_warning('CUSA03173', True)
-        self.assertIn('Unlock Game Region', text)
-        self.assertEqual(args, ())
-        unlock = (('Bloodborne (1).xml/Unlock Game Region', Path('x.xml'), {'Name': 'Unlock Game Region'}),)
-        other = (('Bloodborne (1).xml/Exit Game', Path('x.xml'), {'Name': 'Exit Game'}),)
-        self.assertTrue(coop.region_unlocked(unlock + other))
-        self.assertFalse(coop.region_unlocked(other))
+        self.assertFalse(hasattr(coop, 'UNTESTED_REGION_TEXT'))
+        self.assertFalse(hasattr(coop, 'region_unlocked'))
         import bbport_lang
         for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
-            for template in (coop.UNTESTED_EDITION_TEXT, coop.UNTESTED_REGION_TEXT):
-                translated = bbport_lang.table(language).get(template)
-                self.assertTrue(translated, f'{language}: {template}')
-                self.assertEqual(translated.count('{}'), template.count('{}'), language)
+            template = coop.UNTESTED_EDITION_TEXT
+            translated = bbport_lang.table(language).get(template)
+            self.assertTrue(translated, f'{language}: {template}')
+            self.assertEqual(translated.count('{}'), template.count('{}'), language)
 
     def test_nothing_registers_the_account(self):
         # Phase 11: the host's server makes a player's account at its first sign-in.
