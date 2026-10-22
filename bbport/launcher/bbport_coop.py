@@ -609,6 +609,7 @@ def game_environment(env, settings, install, root):
     """The game's environment for co-op, as 2 - PLAY set it, over the launcher's own."""
     install, root = Path(install), Path(root)
     env = dict(env)
+    launcher_fps = env.get('BB_FPS', 'uncap')
     host = settings['host_ip']
     env.update({
         'BB_DATA_DIR': str(install), 'BB_USER_DIR': str(install / 'user'),
@@ -624,8 +625,15 @@ def game_environment(env, settings, install, root):
     for key in ('SHADPS4_BLOODBORNE_PARTY', 'SHADPS4_BLOODBORNE_PARTY_ROLE'):
         env.pop(key, None)
     # Co-op is the fixed 60 FPS mode for everyone (a host above 60 made the guests see everyone
-    # freeze and fly): no frame cap from the launcher.
-    env.pop('BB_FPS_LIMIT', None)
+    # freeze and fly): no frame cap from the launcher. The opt-in unlocked frame rate keeps the
+    # launcher's mode and cap (settings 'unlocked_fps' '1', the launcher's coop_unlocked_fps switch,
+    # Kaniel 2026-10-22); run.py then caps it at 120 and paces the game's packets.
+    env.pop('BB_ONLINE_UNLOCKED_FPS', None)
+    if settings.get('unlocked_fps') == '1':
+        env['BB_FPS'] = launcher_fps
+        env['BB_ONLINE_UNLOCKED_FPS'] = '1'
+    else:
+        env.pop('BB_FPS_LIMIT', None)
     for key in ('SHADPS4_P2P_PORT', 'SHADPS4_BLOODBORNE_HARDER_ENEMIES', 'SHADPS4_BLOODBORNE_PARTY_DEATH',
                 'BB_COMMUNITY_SERVER'):
         env.pop(key, None)

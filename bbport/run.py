@@ -141,21 +141,39 @@ def game_view(env, game, out, data, icons):
     return Path(view.strip())
 
 
-def frame_mode(requested, fps_limit, online=False):
+def frame_mode(requested, fps_limit, online=False, online_unlocked=False):
     """The frame rate mode to launch with: the unlocked one when the game menu set an FPS limit
     (bbport.ini fps_limit; the fixed 60 FPS timestep cannot go above 60), else the one asked for.
     The 30 FPS mode stays as it is. Online play runs at the fixed 60 FPS: a host above 60
     (Kaniel 2026-10-13, uncapped at 100-200 FPS) made the guests see everyone freeze and fly and
-    their hits land late."""
+    their hits land late. The opt-in online_unlocked (BB_ONLINE_UNLOCKED_FPS) keeps the chosen
+    mode online, with the game's frame cap and send pace of online_frame_env."""
     if requested == '30':
         return requested
-    if online:
+    if online and not online_unlocked:
         return '60'
     try:
         limit = int(fps_limit or 0)
     except ValueError:
         limit = 0
     return 'uncap' if limit > 0 else requested
+
+
+# The unlocked frame rate online goes no higher: the game's movement timing breaks above it.
+ONLINE_FPS_CAP = 120
+
+
+def online_frame_env(fps, online, online_unlocked, pace=None):
+    """The game's variables for an unlocked frame rate online: its frame cap (BB_ONLINE_FPS_CAP)
+    and the send pace (SHADPS4_BLOODBORNE_SEND_PACE), which holds the game's frame-counted
+    packets to the 60 FPS mode's rates. The 60 FPS++ and 90 FPS++ patches scale two of those
+    counters, Uncap FPS++ none: an uncapped host sent its state several times as often.
+    `pace` '0' (BB_SEND_PACE) leaves the pace out, for comparisons."""
+    if not (online and online_unlocked and fps in ('uncap', '90')):
+        return {}
+    if pace == '0':
+        return {'BB_ONLINE_FPS_CAP': str(ONLINE_FPS_CAP)}
+    return {'BB_ONLINE_FPS_CAP': str(ONLINE_FPS_CAP), 'SHADPS4_BLOODBORNE_SEND_PACE': '1'}
 
 
 def ini_value(path, key):
@@ -306,9 +324,18 @@ def main():
                 env.pop(key, None)
         fps = env.get('BB_FPS', 'uncap') if patched else '30'
         asked = fps
-        fps = frame_mode(fps, ini_value(config, 'fps_limit'), online=env.get('BB_ONLINE') == '1')
-        if fps != asked and env.get('BB_ONLINE') == '1':
+        online = env.get('BB_ONLINE') == '1'
+        online_unlocked = env.get('BB_ONLINE_UNLOCKED_FPS') == '1'
+        fps = frame_mode(fps, ini_value(config, 'fps_limit'), online=online, online_unlocked=online_unlocked)
+        if fps != asked and online:
             print(f'Co-op: online play runs at 60 FPS (FPS mode {asked} is for playing offline)')
+        for key in ('BB_ONLINE_FPS_CAP', 'SHADPS4_BLOODBORNE_SEND_PACE'):
+            env.pop(key, None)
+        unlocked_env = online_frame_env(fps, online, online_unlocked, env.get('BB_SEND_PACE'))
+        env.update(unlocked_env)
+        if unlocked_env:
+            print(f'Co-op: unlocked frame rate online (experimental), up to {ONLINE_FPS_CAP} FPS, '
+                  'packets at the 60 FPS rates')
         env['BB_FPS_PRESET'] = fps  # for the co-op log's header line (bbcoop/coop.cpp)
         scaled_render = scaled_output = None
         if not env.get('BB_RENDER_RES'):
