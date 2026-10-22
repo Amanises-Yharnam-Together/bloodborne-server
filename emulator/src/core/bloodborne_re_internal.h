@@ -587,7 +587,7 @@ std::optional<std::string> SessionMemberBoardName(u64 member,
 extern bool restore_search_pending;
 void RestoreSearchAfterTrip(bool in_session);
 void PlayGuestAsHost(bool in_session);
-void TurnOffMultiplayerWalls(bool in_session, u32 map);
+void TurnOffMultiplayerWalls(bool in_session);
 u64 FindLoadedParam(std::string_view type);
 void KeepGuestFullHp();
 void MakeEnemiesHarder();

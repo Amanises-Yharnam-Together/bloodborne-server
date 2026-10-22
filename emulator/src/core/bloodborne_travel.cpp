@@ -1763,8 +1763,7 @@ void TickPlayersOnThisMap() {
     ResumeWhereTheGuestLeft(in_session);
     LogWatchedWrites();
     GiveDeferredBossItems();
-    // Raw: the walls of a map just walked into go at once, not after the border's steady time.
-    TurnOffMultiplayerWalls(in_session, GetCurrentPackedMap());
+    TurnOffMultiplayerWalls(in_session);
     PlayGuestAsHost(in_session);
     TickGuestLampTrip();
     // SHADPS4_BLOODBORNE_ESD_LOG=1: every member's talk answers, not only a guest's.

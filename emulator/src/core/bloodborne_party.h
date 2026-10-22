@@ -1900,12 +1900,13 @@ std::string EncodeEchoUpdate(std::string_view member, s64 since,
 std::optional<EchoBoardAnswer> ParseEchoBoard(std::string_view body);
 
 // The multiplayer walls (common event 7600, from the maps' event files): the wall object and the
-// fog SFX the event shows while the game is in multiplayer.
+// fog SFX the event shows while the game is in multiplayer. All maps' walls: a neighbouring map's
+// walls stand while the player is still on its own map (Cathedral Ward's stairs to the woods).
 struct MultiplayerWall {
     s32 object = 0;
     s32 sfx = 0;
 };
-std::vector<MultiplayerWall> MultiplayerWallsOn(u32 packed_map);
+std::vector<MultiplayerWall> MultiplayerWalls();
 
 // The summoned guest's special effect that cuts its max HP (SpEffectParam row 9006: max HP rate
 // 0.7 at +0x10). A party guest keeps its full HP.

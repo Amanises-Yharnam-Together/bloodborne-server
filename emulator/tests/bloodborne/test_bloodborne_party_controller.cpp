@@ -533,19 +533,32 @@ TEST(BloodborneGuestAsHost, OnlyWhenSwitchedOnAndAWhitePhantomInAPartySession) {
 
 // The multiplayer walls (common event 7600: wall object and its fog SFX, shown while in
 // multiplayer) are what keeps a summoned guest inside an area. A party session turns them off.
-TEST(BloodborneMultiplayerWalls, ListsTheWallsOfTheMapThePlayerIsOn) {
-    const auto central_yharnam = MultiplayerWallsOn(0x18010000);
-    ASSERT_EQ(central_yharnam.size(), 3u);
-    EXPECT_EQ(central_yharnam[0].object, 2411999);
-    EXPECT_EQ(central_yharnam[0].sfx, 2413999);
-    EXPECT_EQ(MultiplayerWallsOn(0x18000000).size(), 5u); // m24_00
-    EXPECT_TRUE(MultiplayerWallsOn(0x15000000).empty()) << "the Hunter's Dream has none";
-    for (const u32 map : {0x16000000u, 0x17000000u, 0x18000000u, 0x18010000u, 0x18020000u,
-                          0x1B000000u, 0x1C000000u, 0x20000000u, 0x23000000u}) {
-        for (const MultiplayerWall& wall : MultiplayerWallsOn(map)) {
-            EXPECT_EQ(PackedMapOfWarpPoint(wall.object), map) << wall.object;
-            EXPECT_EQ(wall.sfx, wall.object + 2000);
-        }
+TEST(BloodborneMultiplayerWalls, ListsTheWallsOfEveryMap) {
+    const auto walls = MultiplayerWalls();
+    ASSERT_EQ(walls.size(), 18u);
+    const auto on = [&](u32 map) {
+        return std::ranges::count_if(walls, [&](const MultiplayerWall& wall) {
+            return PackedMapOfWarpPoint(wall.object) == map;
+        });
+    };
+    EXPECT_EQ(on(0x18010000), 3); // Central Yharnam
+    EXPECT_EQ(on(0x18000000), 5); // Cathedral Ward
+    EXPECT_EQ(on(0x15000000), 0) << "the Hunter's Dream has none";
+    for (const MultiplayerWall& wall : walls) {
+        EXPECT_EQ(wall.sfx, wall.object + 2000) << wall.object;
+    }
+}
+
+// Player report 2026-10-22: the Forbidden Woods' wall stood at the foot of the stairs from
+// Cathedral Ward. The player is still on Cathedral Ward there while the woods (m27) are loaded,
+// so the walls of every map go off, not only the current map's (a wall whose map is not loaded
+// is a miss in the game's entity lookup).
+TEST(BloodborneMultiplayerWalls, IncludesTheWallsOfNeighbouringMaps) {
+    const auto walls = MultiplayerWalls();
+    for (const s32 forbidden_woods : {2701999, 2701998}) {
+        EXPECT_TRUE(std::ranges::any_of(walls, [&](const MultiplayerWall& wall) {
+            return wall.object == forbidden_woods;
+        })) << forbidden_woods;
     }
 }
 

@@ -2832,6 +2832,26 @@ SCENARIOS = {
         "settings": {"BB_MAP_3D": "1"},  # the 3D map is opt-in (Insert, Display)
         "timeout": 240,
     },
+    # Player report 2026-10-22 (v1.1.2): on Cathedral Ward (the host at about -138 -29.5 170) the
+    # Forbidden Woods' multiplayer wall (2701999, at -147 -33.8 178 in m27's MSB) stood on the
+    # stairs down to the woods: the player is still on the Ward there, and only the current map's
+    # walls were turned off. At that spot in a session the woods' walls are off (on 1.1.2 they
+    # stood: "object 2701999: enabled 1"). The ground there ends 10 m on, so no walk through.
+    "walls-woods-stairs": {
+        "about": "in a session, the host on Cathedral Ward at the stairs to the Forbidden Woods: "
+                 "m27's multiplayer walls are off as well as the Ward's",
+        "roles": {
+            "host": [START, f"ensure-map {CATHEDRAL_WARD} {CATHEDRAL_WARD_LAMP}", "godmode",
+                     "wait-session 2 300", "wait 10", "teleport -138.0 -29.5 170.0 0.84", "wait 5",
+                     "object 2701999 2701998 2401996 2401997", "snapshot", "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 25", "expect-session 2"],
+        },
+        "expect": {"host": [r"autoplay object 2701999: enabled 0 ",
+                            r"autoplay object 2701998: enabled 0 ",
+                            r"autoplay object 2401996: enabled 0 "]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     # Kaniel 2026-10-17: the map screen in a session: the other hunter at its spot on the
     # picture, ringed in the compass's light gray, and listed with its area.
     "map-team": {
