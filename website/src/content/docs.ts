@@ -246,7 +246,7 @@ const install: DocPage = {
       blocks: [
         {
           type: "p",
-          text: "**Settings** holds the port's own options. **General** has the ones most players change: output resolution, upscaler and preset, frame generation, languages and window mode. The tabs above it go further: graphics, display and FPS, controls, mods and the log. Co-op runs at a fixed 60 FPS: the game sends its updates once per frame, and every player has to send at the same pace.",
+          text: "**Settings** holds the port's own options. **General** has the ones most players change: output resolution, upscaler and preset, frame generation, languages and window mode. The tabs above it go further: graphics, display and FPS, controls, mods and the log. Co-op runs at 60 FPS by default: the game sends some of its updates once per frame. **Display & FPS** has an experimental **Unlocked frame rate in co-op** switch that allows up to 120 FPS while keeping those updates at the 60 FPS pace.",
         },
         {
           type: "image",
