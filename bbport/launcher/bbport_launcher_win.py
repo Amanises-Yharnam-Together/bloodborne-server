@@ -1099,7 +1099,7 @@ def game_environment(s, frame_generation=None):
 # PlayStation 4 .pkg files. A package is classified from its header and its param.sfo (the way
 # the bloodborne-kit's prepare.ps1 does) and extracted with PkgTool (maxton/LibOrbisPkg, LGPL-3.0).
 
-BB_TITLE_IDS = ('CUSA03173', 'CUSA00900', 'CUSA00207', 'CUSA01363', 'CUSA03023')  # every Bloodborne release
+BB_TITLE_IDS = bbport_coop.TITLE_IDS  # every Bloodborne release
 PKG_MAGIC = b'\x7fCNT'
 PKG_ENTRY_PARAM_SFO = 0x1000  # a plain entry of the package, outside the extracted files
 PKG_SPACE_FACTOR = 1.1
@@ -5137,6 +5137,10 @@ class Launcher:
                     _('✗ No eboot.bin in the game folder (Game & effects)', '✗ В папке игры нет eboot.bin («Игра и эффекты»)'))
         elif info[1] == PATCH_VERSION:
             game = _('✓ Game version {}: every patch available', '✓ Версия игры {}: доступны все патчи').format(info[1])
+            untested = bbport_coop.untested_warning(info[0], self.region_unlocked()) if COOP_INSTALL else None
+            if untested:
+                text, args = untested
+                game = '⚠ ' + _(text).format(*args)
         else:
             game = _('⚠ Game version {}: runs at 30 FPS without the community patches (they are for 1.09)',
                      '⚠ Версия игры {}: 30 FPS без патчей сообщества (они для 1.09)').format(info[1])
@@ -5164,6 +5168,15 @@ class Launcher:
             self.play_button.configure(state='normal' if info else 'disabled')
             self.status.configure(text=self.summary() if info else _('Choose the game folder first.',
                                                                      'Сначала выберите папку игры.'), fg=MUTED)
+
+    def region_unlocked(self):
+        """Whether the selected external patches hold Unlock Game Region (co-op works with it, untested)."""
+        try:
+            from patches import external_patches, external_selection
+            found = external_patches(Path(self.var('patches_dir', 'app').get() or DATA_DIR / 'patches'), PATCH_VERSION)
+            return bbport_coop.region_unlocked(external_selection(found, DATA_DIR / 'patches.json'))
+        except (ImportError, OSError, ValueError):
+            return False
 
     def summary(self):
         fps = dict(FPS_MODES).get(self.var('fps_mode', 'app').get(), ('?',))

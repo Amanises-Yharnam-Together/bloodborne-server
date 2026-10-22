@@ -85,6 +85,8 @@ MORE_KEYS = [
     'Poise ×',
     'Each from 1 to 10; 1 is the normal game.',
     "Running, but the game's port 20443 doesn't answer: press Stop server, then Start server",
+    'Co-op is tested on the EU edition (CUSA03173) only: {} should work, but it was not tested properly. If something goes wrong, send your user\\log folder.',
+    'The Unlock Game Region patch is on: co-op should work with it, but it was not tested properly. If something goes wrong, send your user\\log folder.',
 ]
 
 MORE = {
@@ -171,6 +173,8 @@ MORE = {
         'Стойкость ×',
         'Каждое от 1 до 10; 1 — обычная игра.',
         'Работает, но онлайн-службы игры (порт 20443) не отвечают: нажмите «Остановить сервер», затем «Запустить сервер»',
+        'Кооператив проверен только на европейском издании (CUSA03173): {} должно работать, но толком не проверено. Если что-то пойдёт не так, пришлите папку user\\log.',
+        'Включён патч Unlock Game Region: кооператив должен работать с ним, но это толком не проверено. Если что-то пойдёт не так, пришлите папку user\\log.',
     ],
     'ar': [
         'اللعب التعاوني عبر الإنترنت',
@@ -255,6 +259,8 @@ MORE = {
         'الثبات ×',
         'كل قيمة من 1 إلى 10؛ القيمة 1 هي اللعبة العادية.',
         'يعمل، لكن خدمات اللعبة عبر الإنترنت (المنفذ 20443) لا تستجيب: اضغط Stop server ثم Start server',
+        'تم اختبار اللعب التعاوني على النسخة الأوروبية (CUSA03173) فقط: يُفترض أن تعمل {} لكنها لم تُختبر جيدًا. إذا حدثت مشكلة، أرسل مجلد user\\log.',
+        'تصحيح Unlock Game Region مفعّل: يُفترض أن يعمل اللعب التعاوني معه لكنه لم يُختبر جيدًا. إذا حدثت مشكلة، أرسل مجلد user\\log.',
     ],
     'es': [
         'Cooperativo en línea',
@@ -339,6 +345,8 @@ MORE = {
         'Equilibrio ×',
         'Cada uno de 1 a 10; 1 es el juego normal.',
         'En marcha, pero los servicios en línea del juego (puerto 20443) no responden: pulsa Stop server y luego Start server',
+        'El cooperativo solo se ha probado con la edición europea (CUSA03173): {} debería funcionar, pero no se ha probado bien. Si algo falla, envía tu carpeta user\\log.',
+        'El parche Unlock Game Region está activado: el cooperativo debería funcionar con él, pero no se ha probado bien. Si algo falla, envía tu carpeta user\\log.',
     ],
     'pt': [
         'Cooperativo online',
@@ -423,6 +431,8 @@ MORE = {
         'Equilíbrio ×',
         'Cada um de 1 a 10; 1 é o jogo normal.',
         'Em execução, mas os serviços online do jogo (porta 20443) não respondem: clique em Stop server e depois em Start server',
+        'O co-op só foi testado na edição europeia (CUSA03173): {} deve funcionar, mas não foi bem testado. Se algo der errado, envie sua pasta user\\log.',
+        'O patch Unlock Game Region está ativado: o co-op deve funcionar com ele, mas não foi bem testado. Se algo der errado, envie sua pasta user\\log.',
     ],
     'fr': [
         'Coopération en ligne',
@@ -507,6 +517,8 @@ MORE = {
         'Équilibre ×',
         'Chacun de 1 à 10 ; 1 correspond au jeu normal.',
         'En marche, mais les services en ligne du jeu (port 20443) ne répondent pas : appuyez sur Stop server, puis sur Start server',
+        "La coop n'est testée que sur l'édition européenne (CUSA03173) : {} devrait fonctionner, mais n'a pas été bien testée. En cas de problème, envoyez votre dossier user\\log.",
+        "Le patch Unlock Game Region est activé : la coop devrait fonctionner avec, mais ce n'a pas été bien testé. En cas de problème, envoyez votre dossier user\\log.",
     ],
     'de': [
         'Online-Koop',
@@ -591,6 +603,8 @@ MORE = {
         'Haltung ×',
         'Jeweils 1 bis 10; 1 ist das normale Spiel.',
         'Läuft, aber die Online-Dienste des Spiels (Port 20443) antworten nicht: Stop server drücken, dann Start server',
+        'Koop ist nur mit der EU-Edition (CUSA03173) getestet: {} sollte funktionieren, wurde aber nicht richtig getestet. Wenn etwas schiefgeht, schick deinen Ordner user\\log.',
+        'Der Patch Unlock Game Region ist an: Koop sollte damit funktionieren, wurde aber nicht richtig getestet. Wenn etwas schiefgeht, schick deinen Ordner user\\log.',
     ],
     'it': [
         'Cooperativa online',
@@ -675,6 +689,8 @@ MORE = {
         'Equilibrio ×',
         'Ognuno da 1 a 10; 1 è il gioco normale.',
         'In esecuzione, ma i servizi online del gioco (porta 20443) non rispondono: premi Stop server, poi Start server',
+        "La co-op è testata solo sull'edizione europea (CUSA03173): {} dovrebbe funzionare, ma non è stata testata bene. Se qualcosa va storto, invia la cartella user\\log.",
+        'La patch Unlock Game Region è attiva: la co-op dovrebbe funzionare, ma non è stata testata bene. Se qualcosa va storto, invia la cartella user\\log.',
     ],
     'pl': [
         'Kooperacja online',
@@ -759,6 +775,8 @@ MORE = {
         'Równowaga ×',
         'Każda od 1 do 10; 1 to zwykła gra.',
         'Działa, ale usługi online gry (port 20443) nie odpowiadają: naciśnij Stop server, a potem Start server',
+        'Co-op był testowany tylko na wydaniu europejskim (CUSA03173): {} powinno działać, ale nie zostało dobrze przetestowane. Jeśli coś pójdzie nie tak, wyślij folder user\\log.',
+        'Łatka Unlock Game Region jest włączona: co-op powinien z nią działać, ale nie został dobrze przetestowany. Jeśli coś pójdzie nie tak, wyślij folder user\\log.',
     ],
     'tr': [
         'Çevrim içi ortak oyun',
@@ -843,6 +861,8 @@ MORE = {
         'Denge ×',
         'Her biri 1 ile 10 arası; 1 normal oyundur.',
         'Çalışıyor, ancak oyunun çevrim içi hizmetleri (port 20443) yanıt vermiyor: Stop server, ardından Start server düğmesine basın',
+        'Ortak oyun yalnızca Avrupa sürümünde (CUSA03173) test edildi: {} çalışmalı, ancak düzgün test edilmedi. Bir sorun olursa user\\log klasörünü gönderin.',
+        'Unlock Game Region yaması açık: ortak oyun onunla çalışmalı, ancak düzgün test edilmedi. Bir sorun olursa user\\log klasörünü gönderin.',
     ],
     'zh': [
         '在线合作',
@@ -927,6 +947,8 @@ MORE = {
         '韧性 ×',
         '每项 1 到 10；1 即普通游戏。',
         '正在运行，但游戏的在线服务（端口 20443）没有响应：请先按 Stop server，再按 Start server',
+        '合作模式只在欧版（CUSA03173）上测试过：{} 应该可以运行，但没有经过充分测试。如果出现问题，请发送你的 user\\log 文件夹。',
+        '已开启 Unlock Game Region 补丁：合作模式应该可以配合它运行，但没有经过充分测试。如果出现问题，请发送你的 user\\log 文件夹。',
     ],
     'ja': [
         'オンライン協力プレイ',
@@ -1011,6 +1033,8 @@ MORE = {
         '強靭度 ×',
         'それぞれ 1〜10。1 は通常のゲームです。',
         '実行中ですが、ゲームのオンラインサービス（ポート 20443）が応答しません: Stop server を押してから Start server を押してください',
+        '協力プレイは欧州版（CUSA03173）でのみテストされています: {} でも動作するはずですが、十分にテストされていません。問題があれば user\\log フォルダーを送ってください。',
+        'Unlock Game Region パッチが有効です: 協力プレイは動作するはずですが、十分にテストされていません。問題があれば user\\log フォルダーを送ってください。',
     ],
     'ko': [
         '온라인 협동',
@@ -1095,5 +1119,7 @@ MORE = {
         '강인도 ×',
         '각각 1~10; 1은 일반 게임입니다.',
         '실행 중이지만 게임의 온라인 서비스(포트 20443)가 응답하지 않습니다: Stop server를 누른 다음 Start server를 누르세요',
+        '협동 플레이는 유럽판(CUSA03173)에서만 테스트되었습니다: {}도 작동해야 하지만 제대로 테스트되지 않았습니다. 문제가 생기면 user\\log 폴더를 보내 주세요.',
+        'Unlock Game Region 패치가 켜져 있습니다: 협동 플레이가 작동해야 하지만 제대로 테스트되지 않았습니다. 문제가 생기면 user\\log 폴더를 보내 주세요.',
     ],
 }

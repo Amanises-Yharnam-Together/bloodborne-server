@@ -25,8 +25,17 @@ import time
 import urllib.request
 from pathlib import Path
 
-TITLE_IDS = ('CUSA03173', 'CUSA00900', 'CUSA00207', 'CUSA01363', 'CUSA03023')  # every Bloodborne release
+# Every Bloodborne release, as the 01.09 eboot's own content-id table lists them: Japan, US, EU and Asia, each
+# with its Game of the Year edition.
+TITLE_IDS = ('CUSA03173', 'CUSA00207', 'CUSA00208', 'CUSA00900', 'CUSA03179', 'CUSA01363', 'CUSA03023',
+             'CUSA00299', 'CUSA03014')
 TESTED_TITLE = 'CUSA03173'
+# Kaniel 2026-10-22: the launcher says when a game was not tested with co-op (#355 and #357 should make
+# the others work as hosts).
+UNTESTED_EDITION_TEXT = ('Co-op is tested on the EU edition (CUSA03173) only: {} should work, but it was not '
+                         'tested properly. If something goes wrong, send your user\\log folder.')
+UNTESTED_REGION_TEXT = ('The Unlock Game Region patch is on: co-op should work with it, but it was not tested '
+                        'properly. If something goes wrong, send your user\\log folder.')
 GAME_VERSION = '01.09'
 SHADNET_PORT, WEBAPI_PORT, MATCHING_PORT, BACKEND_PORT = 31313, 31315, 31314, 20443
 GAME_SERVER = 'https://ss4.scej-network.jp:20443'
@@ -247,6 +256,21 @@ def game_version(folder):
     """(title id, app version) of a game folder, or None."""
     sfo = read_sfo(Path(folder) / 'sce_sys' / 'param.sfo')
     return (str(sfo.get('TITLE_ID', '')), str(sfo.get('APP_VER', ''))) if sfo else None
+
+
+def untested_warning(title, region_unlocked):
+    """(text, format args) of the warning for a game co-op was not tested on, None for the tested one."""
+    if title and title != TESTED_TITLE:
+        return UNTESTED_EDITION_TEXT, (title,)
+    if region_unlocked:
+        return UNTESTED_REGION_TEXT, ()
+    return None
+
+
+def region_unlocked(selected):
+    """Whether the selected external patches ([(key, file, metadata)], scripts/patches.py) hold the Unlock
+    Game Region patch: it forces a region whose ss.info address is empty (emulator, bloodborne_region_url.h)."""
+    return any(meta.get('Name') == 'Unlock Game Region' for _key, _path, meta in selected)
 
 
 def is_game_folder(folder):
