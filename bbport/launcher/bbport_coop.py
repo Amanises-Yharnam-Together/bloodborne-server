@@ -730,6 +730,28 @@ def servers_running():
     return port_open(SHADNET_PORT)
 
 
+# The server line when shadnet runs but nothing answers the game's port: the host's game then says it
+# failed to acquire the Bloodborne server information (players 2026-10-22, under a green "Running").
+NO_BACKEND_TEXT = "Running, but the game's port 20443 doesn't answer: press Stop server, then Start server"
+
+
+def server_state():
+    """'running'; 'no_backend' when shadnet runs but nothing answers the game's port (BACKEND_PORT,
+    where the game gets ss.info); 'stopped'."""
+    if not servers_running():
+        return 'stopped'
+    return 'running' if port_open(BACKEND_PORT) else 'no_backend'
+
+
+def server_environment(host_ip, env=None):
+    """shadnet's environment: the host's address for ss.info, and its log on stderr. Without a console
+    (the launcher starts it detached) Qt sends the log to the debugger, and user\\log\\shadnet.txt
+    stayed empty on every PC (2026-10-22). Info and up only: the debug lines are one per request."""
+    env = dict(os.environ if env is None else env)
+    env.update(SHADNET_BACKEND_ADDRESS=host_ip, QT_FORCE_STDERR_LOGGING='1', QT_LOGGING_RULES='*.debug=false')
+    return env
+
+
 def server_command(install):
     """shadnet under its watchdog (phase 11): started again after a crash or a hang."""
     return [str(Path(install) / 'server' / 'shadnet.exe'), '--watchdog']
@@ -745,8 +767,12 @@ def start_servers(install, host_ip, wait_s=10.0):
     log.mkdir(parents=True, exist_ok=True)
     said = []
     if not servers_running():
-        env = dict(os.environ, SHADNET_BACKEND_ADDRESS=host_ip)
-        with open(log / 'shadnet.txt', 'a', encoding='utf-8') as out:
+        env = server_environment(host_ip)
+        try:
+            shutil.copy2(log / 'shadnet.txt', log / 'shadnet.prev.txt')
+        except OSError:
+            pass  # no log yet
+        with open(log / 'shadnet.txt', 'w', encoding='utf-8') as out:
             subprocess.Popen(server_command(install), cwd=server, env=env, stdout=out, stderr=subprocess.STDOUT,
                              stdin=subprocess.DEVNULL, creationflags=NO_WINDOW | DETACHED)
         said.append('Started the co-op server.')

@@ -356,16 +356,22 @@ class CoopSettingsTests(unittest.TestCase):
         self.settle()
         self.app.coop['host_ip'] = '26.1.2.3'
         with mock.patch.object(bbport_coop, 'is_this_pc', return_value=True):
-            with mock.patch.object(bbport_coop, 'servers_running', return_value=True):
+            with mock.patch.object(bbport_coop, 'server_state', return_value='running'):
                 self.app.coop_check_server()
                 self.settle()
             self.assertEqual(self.app.coop_server_line.cget('text'), 'Running')
-            with mock.patch.object(bbport_coop, 'servers_running', return_value=False):
+            # 2026-10-22: the server ran while nothing answered the game's port 20443, and the host's
+            # game failed to acquire the server information under a green "Running".
+            with mock.patch.object(bbport_coop, 'server_state', return_value='no_backend'):
+                self.app.coop_check_server()
+                self.settle()
+            self.assertEqual(self.app.coop_server_line.cget('text'), bbport_coop.NO_BACKEND_TEXT)
+            with mock.patch.object(bbport_coop, 'server_state', return_value='stopped'):
                 self.app.coop_check_server()
                 self.settle()
             self.assertEqual(self.app.coop_server_line.cget('text'), 'Not running: press Start server to host')
         with mock.patch.object(bbport_coop, 'is_this_pc', return_value=False), \
-                mock.patch.object(bbport_coop, 'servers_running', return_value=False):
+                mock.patch.object(bbport_coop, 'server_state', return_value='stopped'):
             self.app.coop_check_server()
             self.settle()
         self.assertEqual(self.app.coop_server_line.cget('text'), '', "a guest's server is the host's")

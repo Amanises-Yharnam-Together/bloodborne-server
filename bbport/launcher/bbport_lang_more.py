@@ -84,6 +84,7 @@ MORE_KEYS = [
     'Damage ×',
     'Poise ×',
     'Each from 1 to 10; 1 is the normal game.',
+    "Running, but the game's port 20443 doesn't answer: press Stop server, then Start server",
 ]
 
 MORE = {
@@ -169,6 +170,7 @@ MORE = {
         'Урон ×',
         'Стойкость ×',
         'Каждое от 1 до 10; 1 — обычная игра.',
+        'Работает, но онлайн-службы игры (порт 20443) не отвечают: нажмите «Остановить сервер», затем «Запустить сервер»',
     ],
     'ar': [
         'اللعب التعاوني عبر الإنترنت',
@@ -252,6 +254,7 @@ MORE = {
         'الضرر ×',
         'الثبات ×',
         'كل قيمة من 1 إلى 10؛ القيمة 1 هي اللعبة العادية.',
+        'يعمل، لكن خدمات اللعبة عبر الإنترنت (المنفذ 20443) لا تستجيب: اضغط Stop server ثم Start server',
     ],
     'es': [
         'Cooperativo en línea',
@@ -335,6 +338,7 @@ MORE = {
         'Daño ×',
         'Equilibrio ×',
         'Cada uno de 1 a 10; 1 es el juego normal.',
+        'En marcha, pero los servicios en línea del juego (puerto 20443) no responden: pulsa Stop server y luego Start server',
     ],
     'pt': [
         'Cooperativo online',
@@ -418,6 +422,7 @@ MORE = {
         'Dano ×',
         'Equilíbrio ×',
         'Cada um de 1 a 10; 1 é o jogo normal.',
+        'Em execução, mas os serviços online do jogo (porta 20443) não respondem: clique em Stop server e depois em Start server',
     ],
     'fr': [
         'Coopération en ligne',
@@ -501,6 +506,7 @@ MORE = {
         'Dégâts ×',
         'Équilibre ×',
         'Chacun de 1 à 10 ; 1 correspond au jeu normal.',
+        'En marche, mais les services en ligne du jeu (port 20443) ne répondent pas : appuyez sur Stop server, puis sur Start server',
     ],
     'de': [
         'Online-Koop',
@@ -584,6 +590,7 @@ MORE = {
         'Schaden ×',
         'Haltung ×',
         'Jeweils 1 bis 10; 1 ist das normale Spiel.',
+        'Läuft, aber die Online-Dienste des Spiels (Port 20443) antworten nicht: Stop server drücken, dann Start server',
     ],
     'it': [
         'Cooperativa online',
@@ -667,6 +674,7 @@ MORE = {
         'Danni ×',
         'Equilibrio ×',
         'Ognuno da 1 a 10; 1 è il gioco normale.',
+        'In esecuzione, ma i servizi online del gioco (porta 20443) non rispondono: premi Stop server, poi Start server',
     ],
     'pl': [
         'Kooperacja online',
@@ -750,6 +758,7 @@ MORE = {
         'Obrażenia ×',
         'Równowaga ×',
         'Każda od 1 do 10; 1 to zwykła gra.',
+        'Działa, ale usługi online gry (port 20443) nie odpowiadają: naciśnij Stop server, a potem Start server',
     ],
     'tr': [
         'Çevrim içi ortak oyun',
@@ -833,6 +842,7 @@ MORE = {
         'Hasar ×',
         'Denge ×',
         'Her biri 1 ile 10 arası; 1 normal oyundur.',
+        'Çalışıyor, ancak oyunun çevrim içi hizmetleri (port 20443) yanıt vermiyor: Stop server, ardından Start server düğmesine basın',
     ],
     'zh': [
         '在线合作',
@@ -916,6 +926,7 @@ MORE = {
         '伤害 ×',
         '韧性 ×',
         '每项 1 到 10；1 即普通游戏。',
+        '正在运行，但游戏的在线服务（端口 20443）没有响应：请先按 Stop server，再按 Start server',
     ],
     'ja': [
         'オンライン協力プレイ',
@@ -999,6 +1010,7 @@ MORE = {
         'ダメージ ×',
         '強靭度 ×',
         'それぞれ 1〜10。1 は通常のゲームです。',
+        '実行中ですが、ゲームのオンラインサービス（ポート 20443）が応答しません: Stop server を押してから Start server を押してください',
     ],
     'ko': [
         '온라인 협동',
@@ -1082,5 +1094,6 @@ MORE = {
         '피해 ×',
         '강인도 ×',
         '각각 1~10; 1은 일반 게임입니다.',
+        '실행 중이지만 게임의 온라인 서비스(포트 20443)가 응답하지 않습니다: Stop server를 누른 다음 Start server를 누르세요',
     ],
 }

@@ -4198,9 +4198,12 @@ class Launcher:
                 said = bbport_coop.start_servers(PORT_DIR, host_ip)
             finally:
                 self.server_starting = False
-            running = bbport_coop.servers_running()
-            text = _('Running', 'Работает') if running else _('Not running', 'Не работает')
-            self.ui_calls.put(lambda: self.coop_server_line.configure(text=text, fg=OK if running else BAD))
+            state = bbport_coop.server_state()
+            running = state != 'stopped'
+            text, color = {'running': (_('Running', 'Работает'), OK),
+                           'no_backend': (_(bbport_coop.NO_BACKEND_TEXT), CAUTION)}.get(
+                state, (_('Not running', 'Не работает'), BAD))
+            self.ui_calls.put(lambda: self.coop_server_line.configure(text=text, fg=color))
             said = [_(line) for line in said]
             if running and bbport_coop.wants_router(host_ip):
                 said.append(self.coop_open_router())
@@ -4268,9 +4271,11 @@ class Launcher:
 
     def coop_check_server(self):
         try:
-            running = bbport_coop.servers_running()
-            if running:
+            state = bbport_coop.server_state()
+            if state == 'running':
                 text, color = _('Running', 'Работает'), OK
+            elif state == 'no_backend':
+                text, color = _(bbport_coop.NO_BACKEND_TEXT), CAUTION
             elif bbport_coop.is_this_pc(self.coop.get('host_ip', '')):
                 text, color = _('Not running: press Start server to host',
                                 'Не работает: чтобы стать хостом, нажмите «Запустить сервер»'), CAUTION
