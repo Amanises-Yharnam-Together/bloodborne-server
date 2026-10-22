@@ -57,6 +57,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"join anywhere", true},
     {"quiet summon banners", false},
     {"movie player delete delay", false},
+    {"send pace", false},
     {"boss death tracer", false},
     {"native packet trace", false},
     {"channel table", false},
@@ -250,6 +251,17 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // one the game had freed (New Game, Kaniel 2026-10-13, eboot+0x1F591B0).
     {"movie player free delay", "movie player delete delay", CoopSiteKind::Patch, 0x01F60837,
      "B9 05 00 00 00", "B9 3C 00 00 00"},
+
+    // The send pace of the unlocked frame rate online (bloodborne_send_pace.h): where the game
+    // loads or decrements its frame-counted send counters (CS ChrSync player state +0xC8, its
+    // second counter +0xF8, the enemy HP round +0x680), and the event sync's send.
+    {"player state send count", "send pace", CoopSiteKind::Hook, 0x01529496,
+     "41 8B 9C 24 C8 00 00 00"},
+    {"second sync send count", "send pace", CoopSiteKind::Hook, 0x0152C3E9, "89 93 F8 00 00 00"},
+    {"enemy HP round count", "send pace", CoopSiteKind::Hook, 0x018EF279, "8B 83 80 06 00 00"},
+    // The host's event sync (channel 0x31): an event whose condition holds sends it every frame.
+    {"event sync send", "send pace", CoopSiteKind::Hook, 0x012EE540,
+     "55 48 89 E5 41 57 41 56 41 55"},
 
     // The hooks below are described where they are installed (bloodborne_*.cpp).
     {"death flag", "boss death tracer", CoopSiteKind::Hook, 0x018BF941, "80 8B E3 01 00 00 01"},
