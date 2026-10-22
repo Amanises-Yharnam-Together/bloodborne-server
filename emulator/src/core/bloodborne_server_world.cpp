@@ -2091,6 +2091,34 @@ void FollowTeamTimeOfDay(s64 now_ms) {
     }
 }
 
+// Kaniel's playtest 2026-10-22: a guest's load takes the team world's time of day exactly, after
+// the session's changes went in (its own game's time of day can be among them: the rig's
+// team-time-of-day-trip), so the map's events pick the team's characters. The load's hooks only.
+void ApplyTeamTimeOfDayOnLoad() {
+    static u32 flags_per_block = 0;
+    if (flags_per_block == 0) {
+        flags_per_block = ReadFlagStore().flags_per_block;
+    }
+    std::vector<std::pair<s32, bool>> changes;
+    {
+        std::scoped_lock lock{team_mutex};
+        if (!team_switch || team_host || !team_world_taken || !team_world ||
+            !team_world->exists()) {
+            return;
+        }
+        changes = TeamTimeOfDayAtLoad(WorldFlagsOf(*team_world), flags_per_block, EventFlagOn);
+    }
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    std::string which;
+    for (const auto& [flag, on] : changes) {
+        reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, on);
+        which += fmt::format(" {}{}", on ? "" : "-", flag);
+    }
+    if (!which.empty()) {
+        LOG_INFO(Debug, "Co-op team world: the team's time of day in this load (-off):{}", which);
+    }
+}
+
 // Kaniel 2026-10-20: NPCs showed up for guests on maps without the host. The host's story steps
 // (TeamStoryToFollow) reached a guest only at its next trip's load; now as each report of the
 // host's world comes, read between loads only, every 2 s.

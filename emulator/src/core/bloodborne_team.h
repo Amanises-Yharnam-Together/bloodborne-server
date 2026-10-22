@@ -215,6 +215,12 @@ WorldFlags WorldFlagsOf(const bbcoop::TeamWorld& world);
 // takes it, and its next load shows it. Never one back.
 inline constexpr std::array<s32, 3> TimeOfDayFlags{9800, 9801, 9802};
 std::vector<s32> TimeOfDayToFollow(const WorldFlags& team, const std::function<bool(s32)>& on);
+// At a guest's load, the time of day flags that differ from the team's world, as (flag, on), back
+// as well as on: the maps' events pick their characters by it as they load (Kaniel's playtest
+// 2026-10-22: krolebord, alone in Old Yharnam, saw his own save's blood-moon characters). None
+// when the team's world does not cover their block.
+std::vector<std::pair<s32, bool>> TeamTimeOfDayAtLoad(const WorldFlags& team, u32 flags_per_block,
+                                                      const std::function<bool(s32)>& on);
 // The story the host moved on since `before` (quest steps, NPCs: Host flags outside the maps'
 // 12xxxxxx-13xxxxxx and the item flags) in the blocks both team worlds cover, as (flag, on): a
 // guest away from the host takes them as the host's reports bring them (Kaniel 2026-10-20: NPCs
