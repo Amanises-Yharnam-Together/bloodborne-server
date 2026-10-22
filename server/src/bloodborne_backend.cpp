@@ -21,11 +21,11 @@
 #include <QUuid>
 #include <QVariant>
 
+#include "ss_info_path.h"
+
 namespace Bloodborne::Backend {
 
 namespace {
-
-const QString SsInfoPath = QStringLiteral("/bb-eu/ss.info");
 
 // The game sends these when it means "any area" (first ghost query at boot).
 bool IsWildcardArea(qint64 area) {
@@ -1454,7 +1454,7 @@ Json BloodborneBackend::Counts() const {
 
 BackendReply BloodborneBackend::Handle(const BackendRequest& request) {
     if (request.method == "GET") {
-        if (request.path == SsInfoPath) {
+        if (IsSsInfoPath(request.path.toStdString())) {
             const SsInfo info = BuildSsInfo(m_options.ssInfoTemplate, request.servicesUrl,
                                             request.summonUrl, m_options.summonPoll);
             qDebug().noquote() << "backend: ss.info ->" << info.body.size() << "bytes";
