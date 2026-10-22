@@ -240,6 +240,8 @@ def trip_back(role: str, players: int, back: str) -> list[str]:
 BACK_TO_WARD = [f"travel {CENTRAL_YHARNAM_LAMP}", "wait-members 3 300"]
 
 PARTY3 = ("host", "guest", "guest2")
+# 75 s in a party of three (no fixed wait over 30 s), then all three still there and shown.
+STAY_75 = ["wait 25", "wait 25", "wait 25", "expect-session 3", "expect-others-shown 2"]
 PARTY2 = ("host", "guest")
 
 # Borders between two maps the rig crosses on foot (Kaniel 2026-10-12: the hardest bugs come where
@@ -1384,6 +1386,17 @@ SUITES = {
                     # flag block guard.
                     forbid={"host": [r"StopRequest from the game"]},
                     allow=CRASH_CLEANUP),
+            # Kaniel's playtest 2026-10-22 (v1.1.5): back after its crash, the host played a minute
+            # in the guest's session, then left and joined again five times (a reload each), and
+            # came in unseen and unable to move; the guest hosting tore its world down.
+            chapter("leader-stays3", "the old host stays in that session for 75 s: nobody leaves "
+                                     "or reloads, all three see each other and the host walks",
+                    {"host": [*STAY_75, "expect-walks 3 15", "sync ls3-done", "expect-session 3"],
+                     **{guest: [*STAY_75, "sync ls3-done", "expect-session 3"]
+                        for guest in ("guest", "guest2")}},
+                    forbid={role: SESSION_HOLDS + [r"Co-op lifecycle: (leave|join)",
+                                                   r"world teardown"]
+                            for role in PARTY3}),
         ],
     },
 }

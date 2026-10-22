@@ -699,13 +699,25 @@ def send_reports(install, settings, timeout=30):
     return len(sent)
 
 
+KEPT_RUN_LOGS = 5  # runs whose shad_log and console stay in user\log\older
+
+
 def rotate_logs(install):
-    """shad_log.txt and console.txt become the .prev ones, as 2 - PLAY kept them."""
+    """shad_log.txt and console.txt become the .prev ones, as 2 - PLAY kept them, and a copy of each
+    goes to older\\<when the run ended>-<name>.txt for the last KEPT_RUN_LOGS runs (Kaniel's
+    playtest 2026-10-22: the host's log of a stuck rejoin was gone two starts later)."""
     log = Path(install) / 'user' / 'log'
     log.mkdir(parents=True, exist_ok=True)
+    older = log / 'older'
     for name in ('shad_log', 'console'):
-        if (log / f'{name}.txt').is_file():
-            shutil.copy2(log / f'{name}.txt', log / f'{name}.prev.txt')
+        current = log / f'{name}.txt'
+        if current.is_file():
+            shutil.copy2(current, log / f'{name}.prev.txt')
+            ended = time.strftime('%Y%m%d-%H%M%S', time.localtime(current.stat().st_mtime))
+            older.mkdir(exist_ok=True)
+            shutil.copy2(current, older / f'{ended}-{name}.txt')
+            for stale in sorted(older.glob(f'*-{name}.txt'))[:-KEPT_RUN_LOGS]:
+                stale.unlink(missing_ok=True)
     return log / 'console.txt'
 
 
