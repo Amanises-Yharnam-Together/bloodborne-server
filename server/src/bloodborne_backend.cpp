@@ -40,12 +40,15 @@ constexpr qint64 DefaultShellVersion = 2;
 // Chalice glyph alphabet: digits 2-9 and lowercase minus l/o, as in the community's glyphs.
 constexpr char GlyphAlphabet[] = "23456789abcdefghijkmnpqrstuvwxyz";
 
-const QStringList SummonPollTags = {QStringLiteral("SummonDataCreateInterval2"),
-                                    QStringLiteral("SummonDataGetListInterval2")};
+// ss.info has every element once per region number (the game reads its own: US 1, EU 2, JP and the
+// Unlock Game Region patch 3, Asia 4), so these names get each number appended.
+const QStringList SummonPollTags = {QStringLiteral("SummonDataCreateInterval"),
+                                    QStringLiteral("SummonDataGetListInterval")};
 // After a co-op session ends the host waits out these guard timers (retail 60 s) before it takes
 // a new sign, which stalls every rejoin after a death. Same value as the poll interval.
-const QStringList CoopGuardTags = {QStringLiteral("SummonDataGetListGuardTimer2"),
-                                   QStringLiteral("SummonDataGetListCoopGuardTimerClampTime2")};
+const QStringList CoopGuardTags = {QStringLiteral("SummonDataGetListGuardTimer"),
+                                   QStringLiteral("SummonDataGetListCoopGuardTimerClampTime")};
+constexpr int RegionNumbers[] = {1, 2, 3, 4};
 
 qint64 NowEpoch() {
     return QDateTime::currentSecsSinceEpoch();
@@ -231,10 +234,13 @@ SsInfo BuildSsInfo(const QByteArray& templ, const QString& servicesUrl, const QS
     }
     xml.replace(QStringLiteral("{SERVICES}"), servicesUrl);
     xml.replace(QStringLiteral("{SUMMON}"), summonUrl);
-    for (const QString& tag : SummonPollTags + CoopGuardTags) {
-        const QString name = QRegularExpression::escape(tag);
-        const QRegularExpression pattern(QStringLiteral("<%1>[^<]*</%1>").arg(name));
-        xml.replace(pattern, QStringLiteral("<%1>%2</%1>").arg(tag).arg(summonPoll));
+    for (const QString& base : SummonPollTags + CoopGuardTags) {
+        for (const int number : RegionNumbers) {
+            const QString tag = base + QString::number(number);
+            const QString name = QRegularExpression::escape(tag);
+            const QRegularExpression pattern(QStringLiteral("<%1>[^<]*</%1>").arg(name));
+            xml.replace(pattern, QStringLiteral("<%1>%2</%1>").arg(tag).arg(summonPoll));
+        }
     }
     if (xml.contains(QStringLiteral("thehuntersdream"))) {
         return {{}, QStringLiteral("the ss.info template still references thehuntersdream.com")};

@@ -188,10 +188,15 @@ def id_list(items, key):
 
 # How often (seconds) the game re-posts its summon sign and polls for signs. Retail sends 30/35,
 # which makes every seamless (re)join wait a minute or more; a private server can afford 5.
-SUMMON_POLL_TAGS = ("SummonDataCreateInterval2", "SummonDataGetListInterval2")
+# Every element comes once per region number (REGION_NUMBERS), the game reads its own.
+REGION_NUMBERS = (1, 2, 3, 4)
+SUMMON_POLL_TAGS = tuple("{}{}".format(tag, number) for tag in ("SummonDataCreateInterval", "SummonDataGetListInterval")
+                         for number in REGION_NUMBERS)
 # After a co-op session ends the host waits out these guard timers (retail 60 s) before it takes
 # a new sign, which stalls every rejoin after a death. Same value as the poll interval.
-COOP_GUARD_TAGS = ("SummonDataGetListGuardTimer2", "SummonDataGetListCoopGuardTimerClampTime2")
+COOP_GUARD_TAGS = tuple("{}{}".format(tag, number)
+                        for tag in ("SummonDataGetListGuardTimer", "SummonDataGetListCoopGuardTimerClampTime")
+                        for number in REGION_NUMBERS)
 
 
 def build_ss_info(template_path, services_url, summon_url, summon_poll=5):

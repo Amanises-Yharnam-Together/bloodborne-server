@@ -262,6 +262,25 @@ class SsInfoTest(unittest.TestCase):
             body = re.search(r"<{0}>(.*?)</{0}>".format(section), xml, re.S).group(1)
             for lang in range(22):
                 self.assertIsNotNone(self.tag(body, "lang{}".format(lang)), "{} lang{}".format(section, lang))
+    def test_every_regions_game_finds_its_sections(self):
+        # The game reads ss.info elements named with its region's number (eboot: 0x1489330 puts
+        # table 0x4736550[region] at +0x9e8; JP 3, US 1, EU 2, Asia 4, EU 2, the Unlock Game Region
+        # patch's region 3). The template only had the EU "2" ones, so a US game got ss.info and
+        # then said it failed to resolve the server status (player log 2026-10-22).
+        xml = self.fetch_ss_info([])
+        names = sorted(set(re.findall(r"^<([A-Za-z_]+)2>", xml, re.M)) - {"lang"})  # <langN> sit inside others
+        self.assertIn("gameurl", names)
+        for number in (1, 3, 4):
+            for name in names:
+                self.assertEqual(xml.count("<{}{}>".format(name, number)), 1, "{}{}".format(name, number))
+            gameurl = re.search(r"<gameurl{0}>(.*?)</gameurl{0}>".format(number), xml, re.S).group(1)
+            self.assertIn("<api_Login>http://", gameurl)
+            for tag in ("SummonDataCreateInterval", "SummonDataGetListInterval", "SummonDataGetListGuardTimer",
+                        "SummonDataGetListCoopGuardTimerClampTime"):
+                self.assertEqual(self.tag(xml, "{}{}".format(tag, number)), "5", "{}{}".format(tag, number))
+        xml = self.fetch_ss_info(["--summon-poll", "12"])
+        for number in (1, 2, 3, 4):
+            self.assertEqual(self.tag(xml, "SummonDataGetListInterval{}".format(number)), "12")
 
     def test_the_host_header_is_read_as_an_address_only(self):
         from importlib import util
