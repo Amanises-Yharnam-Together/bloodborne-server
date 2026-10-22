@@ -285,8 +285,9 @@ std::atomic<bool> party_death_armed{};
 std::atomic<bool> party_death_down{};
 // Lethal hits the hook kept from killing the armed player: each change puts it down.
 std::atomic<u32> party_death_catches{};
-// A lethal check of the local player while it fell into the void (FallsIntoTheVoid): its respawn
-// makes a trip (see ChooseDeathRespawn). Taken by MoveToRespawnPoint.
+// The local player fell into the void (a lethal check while FallsIntoTheVoid, or a real death in
+// the void, see TickStanding): its respawn makes a trip (see ChooseDeathRespawn). Taken by
+// MoveToRespawnPoint.
 std::atomic<bool> party_death_void_fall{};
 // Kaniel 2026-10-16: another member stood (anywhere) at this member's last tick: its death's reset
 // is its own map's, not the party's wipe.
@@ -879,14 +880,21 @@ bool PS4_SYSV_ABI SkipDownedHitReaction(u64, const GuestRegisterSnapshot* regist
     return SkipsHitReaction(true, ReadValue<u64>(registers->rdi, 0x08), GetLocalPlayer());
 }
 
+// A character's fade (float, 1.0 while shown): a fall into the void fades it out to 0.0, which only
+// a map load puts back (rig 2026-10-22).
+constexpr u64 CharacterFadeOffset = 0x20C;
+
 // The fall damage step (0x01A35C33) takes a fall into the void as a fixed lethal height while
 // [[character +0x58] +0x38] +0x48 bit 1 is set. Such a fall stays a real death: nobody could
 // reach the player down there.
-bool FallsIntoTheVoid(u64 data) {
-    const u64 character = ReadValue<u64>(data, 0x08);
+bool CharacterInTheVoid(u64 character) {
     const u64 control = character >= 0x10000 ? ReadValue<u64>(character, 0x58) : 0;
     const u64 state = control >= 0x10000 ? ReadValue<u64>(control, 0x38) : 0;
     return state >= 0x10000 && (ReadValue<u8>(state, 0x48) & 2) != 0;
+}
+
+bool FallsIntoTheVoid(u64 data) {
+    return CharacterInTheVoid(ReadValue<u64>(data, 0x08));
 }
 
 // Diagnostics: IsNoDead's other callers that ask about the local player, once each.
@@ -1247,6 +1255,15 @@ void TickStanding(PartyDeathRun& run, const DeathTick& tick) {
         const bool reset = DiesWithReset(tick.in_session && DeathResetsMap(false, tick.armed));
         LOG_INFO(Debug, "Bloodborne party death: died for real on map {:#x} (reset={})", tick.map,
                  reset);
+        // A fall into the void kills the player without the lethal check (rig 2026-10-22: the
+        // Forbidden Woods' cliff west of the lamp; the void bit is clear by then) and fades it out
+        // for good unless the map reloads: its respawn makes the trip (ChooseDeathRespawn).
+        const float fade = ReadValue<float>(tick.player, CharacterFadeOffset);
+        if (DeathWasAVoidFall(CharacterInTheVoid(tick.player), fade)) {
+            party_death_void_fall.store(true, std::memory_order_relaxed);
+            LOG_INFO(Debug, "Bloodborne party death: the death was a fall into the void (fade {})",
+                     fade);
+        }
         return;
     }
     const u32 attacks = party_attack_presses.load();

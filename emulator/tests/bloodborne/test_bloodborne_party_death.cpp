@@ -1061,6 +1061,16 @@ TEST(BloodbornePartyDeath, AFallIntoTheVoidReloadsAtTheLamp) {
     EXPECT_EQ(ChooseDeathRespawn(-1, true, false, false, true), DeathRespawn::StayPut);
 }
 
+// Rig 2026-10-22, the player's cliff west of the Forbidden Woods' lamp: the void kills without the
+// lethal check, and the void bit is already clear when the death shows. What shows is the fade-out
+// the game starts (character +0x20C below 1.0 at the death, 0.0 once moved to the lamp).
+TEST(BloodbornePartyDeath, AFadingOutDeathIsAFallIntoTheVoid) {
+    EXPECT_TRUE(DeathWasAVoidFall(false, 0.93f));
+    EXPECT_TRUE(DeathWasAVoidFall(false, 0.0f));
+    EXPECT_TRUE(DeathWasAVoidFall(true, 1.0f));
+    EXPECT_FALSE(DeathWasAVoidFall(false, 1.0f)) << "a deep fall's own kill, no fade";
+}
+
 // Playtest 2026-10-13: a wipe sent the host to the Hunter's Dream (2102962) and the guest to its
 // own Central Yharnam lamp (2412959); another left them 113 m apart. Kaniel: a party death wakes
 // everyone where the host wakes, but a guest's special death (its first one: the Dream; a

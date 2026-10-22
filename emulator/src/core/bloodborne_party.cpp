@@ -1221,6 +1221,10 @@ bool WipeTripRespawnsOnArrival(bool reset, DeathRespawn respawn) {
     return reset && respawn == DeathRespawn::Travel;
 }
 
+bool DeathWasAVoidFall(bool void_bit, float fade) {
+    return void_bit || fade < 1.0f;
+}
+
 s32 PartyRespawnPoint(bool guest, s32 own_point, std::optional<s32> own_point_alive,
                       std::optional<s32> host_point) {
     if (!guest || !host_point || *host_point <= 0 || !own_point_alive) {

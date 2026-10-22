@@ -964,6 +964,10 @@ DeathRespawn ChooseDeathRespawn(s32 point, bool in_loaded_block, bool arriving_f
 // Whether the trip of this death respawn checks, once arrived, for enemies the member's own save
 // left dead (see LeftDeadByItsSave): the trip of a death that resets the map.
 bool WipeTripRespawnsOnArrival(bool reset, DeathRespawn respawn);
+// Whether a real death was a fall into the void: the void bit (see FallsIntoTheVoid) still set,
+// or the fade-out the game starts for it (character +0x20C, 1.0 while shown) begun. Moved to the
+// lamp in place, such a player stays faded out (invisible) until its map reloads.
+bool DeathWasAVoidFall(bool void_bit, float fade);
 // The point a party death wakes this member at (Kaniel 2026-10-13, after a playtest wipe woke the
 // host in the Hunter's Dream and the guest at its own Central Yharnam lamp): a guest wakes where
 // the host does (host_point: the host's GlobalState +0x1528, from the world log), so the party
