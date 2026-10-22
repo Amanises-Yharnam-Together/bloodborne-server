@@ -110,6 +110,17 @@ int main() {
     assert(!BbSettings::FrameRateLocked("0"));
     assert(!BbSettings::FrameRateLocked(""));
     assert(!BbSettings::FrameRateLocked(nullptr));
+    // Kaniel 2026-10-22: the opt-in unlocked frame rate online (BB_ONLINE_FPS_CAP from run.py)
+    // frees the rows; the cap then holds every limit to it, and no limit becomes the cap.
+    assert(!BbSettings::FrameRateLocked("1", "120"));
+    assert(BbSettings::FrameRateLocked("1", ""));
+    assert(BbSettings::FrameRateLocked("1", nullptr));
+    assert(BbSettings::FrameRateLocked("1", "0"));
+    assert(BbSettings::EffectiveFrameLimit(0, true, 120) == 120);
+    assert(BbSettings::EffectiveFrameLimit(240, true, 120) == 120);
+    assert(BbSettings::EffectiveFrameLimit(90, true, 120) == 90);
+    assert(BbSettings::EffectiveFrameLimit(240, false, 120) == 0);
+    assert(BbSettings::EffectiveFrameLimit(240, true, 0) == 240);
     std::puts("PASS: FPS limit and DLSS model settings");
 
     // Kaniel 2026-10-17: the teammate compass, on at the top by default; the Insert menu turns it
