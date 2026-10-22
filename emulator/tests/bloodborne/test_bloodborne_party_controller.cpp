@@ -2082,6 +2082,15 @@ TEST(BloodborneSharedKills, ATakeoverIsNoKill) {
 // host's world (226 flags changed at once, a load that keeps the map's objects), where Father
 // Gascoigne was dead and the guest's copy alive a moment before. A character settles for
 // EnemyOwnerChangeSettles after such a load, and after its takeover or hand-back.
+// Kaniel's test 2026-10-23: the hag a lone guest killed 9 s after its trip, its alone state just
+// changed (settling), was never a kill.
+TEST(BloodborneSharedKills, OwnKillCountsWhileSettling) {
+    EXPECT_FALSE(SettlingHidesDeath(true, true)) << "this player's own hit killed it";
+    EXPECT_TRUE(SettlingHidesDeath(true, false)) << "another's";
+    EXPECT_TRUE(SettlingHidesDeath(true, std::nullopt)) << "the world put it down";
+    EXPECT_FALSE(SettlingHidesDeath(false, std::nullopt));
+}
+
 TEST(BloodborneSharedKills, ACharacterSettlesAfterALoadOrATakeover) {
     constexpr s64 Settle =
         std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();

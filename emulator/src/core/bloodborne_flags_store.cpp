@@ -647,6 +647,8 @@ namespace {
 std::mutex guest_world_mutex;
 std::optional<std::map<s32, bool>> guest_world;
 int guest_world_slot = -1;
+// When this game kept each change (KeptChangeYieldsToTeam); none for the file's.
+std::map<s32, s64> guest_world_kept_ms;
 
 std::filesystem::path GuestWorldFile() {
     return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
@@ -679,6 +681,12 @@ void KeepWorldChanges(const FlagChanges& changes) {
     auto& world = GuestWorldChanges();
     const size_t before = world.size();
     RecordWorldChanges(world, changes);
+    const s64 now_ms = SteadyMilliseconds();
+    for (const auto& flags : {changes.set, changes.cleared}) {
+        for (const s32 flag : flags) {
+            guest_world_kept_ms[flag] = now_ms;
+        }
+    }
     SaveGuestWorldChanges();
     LOG_INFO(Debug, "Bloodborne party: guest's world keeps {} changes ({} new)", world.size(),
              world.size() - before);
@@ -694,7 +702,30 @@ size_t SetGuestWorldChanges(bool keep) {
     auto& world = GuestWorldChanges();
     using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
     size_t set = 0;
+    // A team guest's story steps the team's world has had time to carry are the team's: its world
+    // went in first (ApplyTeamWorldOnLoad), these never go over it.
+    const std::vector<u32> team_blocks = TeamWorldBlocksForGuest();
+    static u32 flags_per_block = 0;
+    if (!team_blocks.empty() && flags_per_block == 0) {
+        flags_per_block = ReadFlagStore().flags_per_block;
+    }
+    const s64 now_ms = SteadyMilliseconds();
+    std::string yielded;
+    size_t yielded_count = 0;
     for (auto it = world.begin(); it != world.end();) {
+        const auto kept = guest_world_kept_ms.find(it->first);
+        if (!team_blocks.empty() && KeptChangeYieldsToTeam(it->first,
+                                                           kept != guest_world_kept_ms.end()
+                                                               ? std::optional<s64>{kept->second}
+                                                               : std::nullopt,
+                                                           now_ms, team_blocks, flags_per_block)) {
+            if (yielded.size() < 300) {
+                yielded += fmt::format(" {}{}", it->second ? "" : "-", it->first);
+            }
+            ++yielded_count;
+            it = keep ? std::next(it) : world.erase(it);
+            continue;
+        }
         reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, it->first,
                                                                              it->second);
         if (EventFlagOn(it->first) == it->second) {
@@ -705,6 +736,12 @@ size_t SetGuestWorldChanges(bool keep) {
         }
     }
     SaveGuestWorldChanges();
+    if (yielded_count > 0) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: {} of the session's story steps left to the team's world "
+                 "(-off):{}",
+                 yielded_count, yielded);
+    }
     return set;
 }
 
