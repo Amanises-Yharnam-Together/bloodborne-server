@@ -338,6 +338,48 @@ class PlayTests(unittest.TestCase):
                  (10, 'shadnet.exe', 'shadnet.exe --watchdog')]
         self.assertEqual([pid for pid, _name, _command in coop.stop_order(found)], [10, 11, 12])
 
+    def test_the_server_log_reaches_shadnet_txt(self):
+        # Players' "Failed to acquire Bloodborne server information" (2026-10-22): user\\log\\shadnet.txt
+        # was empty on every PC. Qt sends its log to the debugger when the process has no console
+        # (the launcher starts shadnet detached), unless QT_FORCE_STDERR_LOGGING is set.
+        env = coop.server_environment('26.1.2.3', {'PATH': 'C:/Windows'})
+        self.assertEqual(env['QT_FORCE_STDERR_LOGGING'], '1')
+        self.assertEqual(env['SHADNET_BACKEND_ADDRESS'], '26.1.2.3')
+        self.assertEqual(env['PATH'], 'C:/Windows', 'the rest of the environment stays')
+        self.assertEqual(env['QT_LOGGING_RULES'], '*.debug=false', 'no per-request debug lines')
+        # Each start writes a fresh log; the one before stays as shadnet.prev.txt.
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            log = install / 'user' / 'log'
+            log.mkdir(parents=True)
+            (log / 'shadnet.txt').write_text('last start', encoding='utf-8')
+            with mock.patch.object(coop, 'servers_running', return_value=False), \
+                    mock.patch.object(coop, 'port_open', return_value=True), \
+                    mock.patch.object(coop.subprocess, 'Popen') as popen:
+                coop.start_servers(install, '26.1.2.3', wait_s=0)
+            self.assertEqual(popen.call_args.kwargs['env']['QT_FORCE_STDERR_LOGGING'], '1')
+            self.assertEqual((log / 'shadnet.prev.txt').read_text(encoding='utf-8'), 'last start')
+            self.assertEqual((log / 'shadnet.txt').read_text(encoding='utf-8'), '')
+
+    def test_the_server_state_knows_when_the_games_port_is_silent(self):
+        # "Running" asked only port 31313, so it showed while nothing answered the game's port 20443
+        # and the host's game could not get ss.info (2026-10-22).
+        def answering(*ports):
+            return lambda port, *args, **kwargs: port in ports
+        with mock.patch.object(coop, 'port_open', answering(coop.SHADNET_PORT, coop.BACKEND_PORT)):
+            self.assertEqual(coop.server_state(), 'running')
+        with mock.patch.object(coop, 'port_open', answering(coop.SHADNET_PORT)):
+            self.assertEqual(coop.server_state(), 'no_backend')
+        with mock.patch.object(coop, 'port_open', answering(coop.BACKEND_PORT)):
+            self.assertEqual(coop.server_state(), 'stopped')
+        with mock.patch.object(coop, 'port_open', answering()):
+            self.assertEqual(coop.server_state(), 'stopped')
+
+    def test_the_silent_port_warning_is_translated_everywhere(self):
+        import bbport_lang
+        for language in ('ru', 'ar', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr', 'zh', 'ja', 'ko'):
+            self.assertTrue(bbport_lang.table(language).get(coop.NO_BACKEND_TEXT), language)
+
     def test_nothing_registers_the_account(self):
         # Phase 11: the host's server makes a player's account at its first sign-in.
         self.assertFalse(hasattr(coop, 'register'))

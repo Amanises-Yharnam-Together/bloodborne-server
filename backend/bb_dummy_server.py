@@ -3,7 +3,8 @@
 
 Replaces thehuntersdream.com entirely. Serves everything on one port:
 
-  GET  /bb-eu/ss.info   the online-config document the game gates on. Rebuilt
+  GET  /bb-eu/ss.info   the online-config document the game gates on (each region asks
+                        its own path: /bb-us/ss.info, ...; all get the same). Rebuilt
                         from ss_info_template.xml with every service URL
                         pointed at this machine instead of the community server.
   POST /<service>       every game service.
@@ -51,6 +52,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 SS_INFO_PATH = "/bb-eu/ss.info"
+# Each region's game asks its own path (/bb-us/ss.info from a US game, 2026-10-22); every one gets
+# the same document.
+SS_INFO_PATTERN = re.compile(r"/bb-[a-z]{2,8}/ss\.info")
+
+
+def is_ss_info_path(path):
+    """Whether a request path is a region's ss.info ("/bb-eu/ss.info", "/bb-us/ss.info", ...)."""
+    return bool(SS_INFO_PATTERN.fullmatch(path or ""))
 
 # The game sends these when it means "any area" (first ghost query at boot).
 WILDCARD_AREA = {-1, 4294967295}
@@ -909,7 +918,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == SS_INFO_PATH:
+        if is_ss_info_path(path):
             address = address_from_host(self.headers.get("Host")) or self.server.address
             ss_info = self.server.ss_info_for(address)
             self.log_message("ss.info for %s -> %d bytes", address, len(ss_info))

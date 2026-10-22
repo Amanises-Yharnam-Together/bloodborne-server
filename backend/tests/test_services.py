@@ -176,7 +176,7 @@ class SsInfoTest(unittest.TestCase):
     """ss.info drives how often the game polls for summons; retail's 30-35 s makes every
     (re)join take a minute or more, which defeats seamless auto-rejoin."""
 
-    def fetch_ss_info(self, extra_args, address="127.0.0.1", host=None):
+    def fetch_ss_info(self, extra_args, address="127.0.0.1", host=None, path="/bb-eu/ss.info"):
         port = free_port()
         self.port = port
         proc = subprocess.Popen(
@@ -186,7 +186,7 @@ class SsInfoTest(unittest.TestCase):
             deadline = time.time() + 10
             while True:
                 try:
-                    request = urllib.request.Request("http://127.0.0.1:{}/bb-eu/ss.info".format(port))
+                    request = urllib.request.Request("http://127.0.0.1:{}{}".format(port, path))
                     if host is not None:
                         request.add_header("Host", host)
                     with urllib.request.urlopen(request, timeout=1) as r:
@@ -232,6 +232,25 @@ class SsInfoTest(unittest.TestCase):
         xml = self.fetch_ss_info([], address="192.168.4.25", host="ss4.scej-network.jp:20443")
         self.assertIn("http://192.168.4.25:31315", xml)
         self.assertNotIn("http://ss4.scej-network.jp", xml)
+
+    def test_every_regions_game_gets_ss_info(self):
+        # Players 2026-10-22: a US game (CUSA03179) asks /bb-us/ss.info and got 404 from a server that
+        # knew only the EU path, so the host's game said it failed to acquire the server information.
+        def fetch(path):  # each fetch has its own server port
+            return self.fetch_ss_info([], path=path).replace(":{}<".format(self.port), ":PORT<")
+        eu = fetch("/bb-eu/ss.info")
+        self.assertIn(":PORT<", eu)
+        for region in ("us", "jp", "asia"):
+            self.assertEqual(fetch("/bb-{}/ss.info".format(region)), eu, region)
+        from importlib import util
+        spec = util.spec_from_file_location("bb_dummy_server", SERVER)
+        server = util.module_from_spec(spec)
+        spec.loader.exec_module(server)
+        for path in ("/bb-eu/ss.info", "/bb-us/ss.info", "/bb-jp/ss.info", "/bb-asia/ss.info"):
+            self.assertTrue(server.is_ss_info_path(path), path)
+        for path in ("/ss.info", "/bb-/ss.info", "/bb-us/ss.infox", "/bb-us/x/ss.info", "/bb-US1/ss.info",
+                     "/bb-eu/ss.info/", "/basic_utils/login"):
+            self.assertFalse(server.is_ss_info_path(path), path)
 
     def test_the_host_header_is_read_as_an_address_only(self):
         from importlib import util

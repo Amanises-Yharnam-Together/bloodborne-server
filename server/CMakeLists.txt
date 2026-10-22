@@ -205,6 +205,12 @@ if(BUILD_TESTING)
     target_include_directories(test_request_address PRIVATE src)
     add_test(NAME request_address COMMAND test_request_address)
 
+    add_executable(test_ss_info_path EXCLUDE_FROM_ALL
+        tests/test_ss_info_path.cpp
+    )
+    target_include_directories(test_ss_info_path PRIVATE src)
+    add_test(NAME ss_info_path COMMAND test_ss_info_path)
+
     add_executable(test_server_link EXCLUDE_FROM_ALL
         tests/test_server_link.cpp
         src/server_link.cpp
