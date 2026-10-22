@@ -248,20 +248,6 @@ class PlayTests(unittest.TestCase):
         self.assertNotIn('SHADPS4_BLOODBORNE_HARDER_ENEMIES', env)
         self.assertEqual(env['SHADPS4_P2P_PORT'], '51700')
 
-    def test_unlocked_frame_rate_is_opt_in(self):
-        # Kaniel 2026-10-22: an opt-in unlocked frame rate in co-op. On, the launcher's mode and cap
-        # stay and run.py hears of it (it caps at 120 and paces the game's packets); off, 60.
-        install = Path('C:/Co-op')
-        settings = dict(coop.DEFAULTS, host_ip='26.1.2.3', account='Lisara', password='pw')
-        launcher = {'BB_FPS': 'uncap', 'BB_FPS_LIMIT': '144'}
-        env = coop.game_environment(launcher, dict(settings, unlocked_fps='1'), install, install)
-        self.assertEqual((env['BB_FPS'], env['BB_FPS_LIMIT']), ('uncap', '144'))
-        self.assertEqual(env['BB_ONLINE_UNLOCKED_FPS'], '1')
-        env = coop.game_environment({'BB_ONLINE_UNLOCKED_FPS': '1', **launcher}, settings, install, install)
-        self.assertEqual(env['BB_FPS'], '60')
-        self.assertNotIn('BB_FPS_LIMIT', env)
-        self.assertNotIn('BB_ONLINE_UNLOCKED_FPS', env)
-
     def test_this_pc_hosts_when_the_host_ip_is_its_own(self):
         """No Player/Host switch (Kaniel 2026-10-16): this PC hosts when the host's IP is its own."""
         import socket
