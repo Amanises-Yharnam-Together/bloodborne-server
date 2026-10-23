@@ -280,10 +280,37 @@ static void set_host_name(const char *name) {
 #define exit_setjmp(t) setjmp((t)->exit_jump)
 #define exit_longjmp(t) longjmp((t)->exit_jump,1)
 #endif
+/* Guest priorities run 256 (highest) to 767; the game's threads are 700 except FMOD's mixer and
+ * output threads (256-265). Host threads all ran at normal priority, so on 4-6 core CPUs the
+ * draw workers and game threads delayed FMOD's output thread: underruns heard as crackling (its
+ * worst gap per 5 s 36 ms against a 5.3 ms period on four CPU threads, 6 ms at
+ * THREAD_PRIORITY_HIGHEST; Supermedo 08df6af). BB_THREAD_PRIORITY=0 keeps every thread at
+ * normal priority. */
+int runtime_thread_host_priority(int guest_prio, const char *env) {
+#ifdef _WIN32
+    const int enabled=!env || env[0]!='0';
+    return enabled && guest_prio<400 ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_NORMAL;
+#else
+    (void)guest_prio; (void)env;
+    return 0;
+#endif
+}
+static void set_host_priority(int guest_prio) {
+#ifdef _WIN32
+    static const char *env;
+    static int read;
+    if (!read) { env=getenv("BB_THREAD_PRIORITY"); read=1; }
+    const int prio=runtime_thread_host_priority(guest_prio,env);
+    if (prio!=THREAD_PRIORITY_NORMAL) SetThreadPriority(GetCurrentThread(),prio);
+#else
+    (void)guest_prio;
+#endif
+}
 static void *host_start(void *p) {
     GuestThread *t=p;
     attach(t);
     set_host_name(t->name);
+    set_host_priority(t->attr.prio);
     if (!exit_setjmp(t)) t->result=t->entry(t->argument);
     runtime_thread_keys_cleanup();
     pthread_mutex_lock(&lock); t->finished=1; ++exited; pthread_mutex_unlock(&lock);

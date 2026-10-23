@@ -87,6 +87,9 @@ int64_t runtime_file_stat(const char *path, void *guest_stat);
 int64_t runtime_file_fstat(int fd, void *guest_stat);
 int64_t runtime_file_getdents(int fd, char *buffer, uint64_t size, int64_t *base);
 void runtime_thread_keys_cleanup(void);
+/* Windows: the host priority a guest thread of this guest priority runs at (env: the value of
+ * BB_THREAD_PRIORITY). Elsewhere 0. */
+int runtime_thread_host_priority(int guest_prio, const char *env);
 /* Guest-visible errno values are FreeBSD's. */
 int32_t runtime_guest_errno(int host_errno);
 void *runtime_low_map(size_t size, int prot);
