@@ -556,11 +556,15 @@ void StreamTick(s64 now_ms) {
             }
             outbox.clear();
         } else if (invader_link.load()) {
-            for (const bbcoop::Envelope& envelope : outbox) {
-                if (envelope.has_map() || envelope.has_vitals()) {
-                    stream->Send(EncodeEnvelope(envelope), now_ms);
+            // Only the newest of each: a game in no team queued them unsent until now.
+            const auto newest = [&](auto has) {
+                const auto found = std::find_if(outbox.rbegin(), outbox.rend(), has);
+                if (found != outbox.rend()) {
+                    stream->Send(EncodeEnvelope(*found), now_ms);
                 }
-            }
+            };
+            newest([](const bbcoop::Envelope& envelope) { return envelope.has_map(); });
+            newest([](const bbcoop::Envelope& envelope) { return envelope.has_vitals(); });
             outbox.clear();
         }
         out = stream->Flush(now_ms);
@@ -2349,8 +2353,14 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
 bool RunTeamMenuVerb(const AutoplayCommand& command, bool begun, double elapsed,
                      std::string& failure) {
     // menu-invite <online id> [timeout], menu-kick <online id> [timeout], menu-join [timeout],
-    // menu-leave [timeout].
-    const size_t timeout_arg = command.verb == "menu-invite" || command.verb == "menu-kick" ? 1 : 0;
+    // menu-leave [timeout]. Invasions: menu-invade [timeout] (in the target's world),
+    // menu-invade-leave [timeout] (home), menu-allow-invaders <0|1> [timeout] (the leader's
+    // toggle), wait-invader <0|1> [timeout] (an invader in this team's world or not).
+    const size_t timeout_arg = command.verb == "menu-invite" || command.verb == "menu-kick" ||
+                                       command.verb == "menu-allow-invaders" ||
+                                       command.verb == "wait-invader"
+                                   ? 1
+                                   : 0;
     const double timeout =
         command.args.size() > timeout_arg ? std::atof(command.args[timeout_arg].c_str()) : 180.0;
     std::optional<bbcoop::LobbyState> lobby;
@@ -2403,6 +2413,27 @@ bool RunTeamMenuVerb(const AutoplayCommand& command, bool begun, double elapsed,
             asked_at = elapsed;
             TeamLobbyRequest(bbcoop::TeamRequest::LEAVE, {});
         }
+    } else if (command.verb == "menu-invade" || command.verb == "menu-invade-leave") {
+        const bool leave = command.verb == "menu-invade-leave";
+        bool active = false;
+        {
+            std::scoped_lock lock{team_mutex};
+            active = invader_trip.Active();
+            done = leave ? !active : invader_trip.Current() == InvaderTrip::Phase::Visiting;
+        }
+        if (!done && ask && active == leave) {
+            asked_at = elapsed;
+            InvasionRequest(leave);
+        }
+    } else if (command.verb == "menu-allow-invaders" && !command.args.empty()) {
+        const bool allow = command.args[0] != "0";
+        done = TeamAllowsInvaders() == allow;
+        if (!done && lobby && lobby->has_team() && ask) {
+            asked_at = elapsed;
+            TeamAllowInvaders(allow);
+        }
+    } else if (command.verb == "wait-invader" && !command.args.empty()) {
+        done = InvaderInWorld().empty() == (command.args[0] == "0");
     } else {
         failure = "unknown team menu verb";
         return false;
@@ -2628,6 +2659,7 @@ void TickInvasion() {
     static s64 going_home_ms = -1; // InvaderGoHome ran
     static s64 revive_due_ms = -1; // dead: going home once revived (or at this time)
     static bool home_tells_server = false;
+    static bool late_cancel_sent = false; // its death: the server never said the end
     const s64 now_ms = SteadyMilliseconds();
     {
         std::scoped_lock lock{team_mutex};
@@ -2768,16 +2800,29 @@ void TickInvasion() {
                 0, LocalPlayerEntity, InvaderCharacterType);
         }
     }
+    // Its death ends the invasion on the server (its vitals): if no end came after a while (the
+    // vitals lost), it says it left.
+    if (phase == InvaderTrip::Phase::GoingHome && going_home_ms >= 0 && !home_tells_server &&
+        !late_cancel_sent && reason == bbcoop::InvasionEnd::NONE &&
+        now_ms - going_home_ms > 10'000) {
+        late_cancel_sent = true;
+        SendInvadeRequest(true);
+        LOG_INFO(Debug, "Co-op invasion: no end from the server after the death; told it");
+    }
     // Home: out of the session and settled after the trip (or the trip never came): its own world
     // back, and the trip is over.
     if (phase == InvaderTrip::Phase::GoingHome && going_home_ms >= 0 && !frame.in_session &&
         ((frame.settled && now_ms - going_home_ms >= 5'000) || now_ms - going_home_ms > 120'000) &&
         RestoreInvasionHome(false)) {
+        if (!home_tells_server && !late_cancel_sent && reason == bbcoop::InvasionEnd::NONE) {
+            SendInvadeRequest(true); // home before the server's end came (see above)
+        }
         std::scoped_lock lock{team_mutex};
         invader_trip.Home();
         invader_away.store(invader_trip.AwayFromHome());
         home_kept = false;
         going_home_ms = -1;
+        late_cancel_sent = false;
         LOG_INFO(Debug, "Co-op invasion: home");
     }
 }
