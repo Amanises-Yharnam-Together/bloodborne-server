@@ -1286,6 +1286,43 @@ std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
     return shared;
 }
 
+std::vector<std::pair<s32, bool>> LoneGuestFlagsToShare(const FlagChanges& changes, u32 map) {
+    const s32 first = MapFlagBase(map);
+    const auto takes = [first](s32 flag) {
+        return flag >= first && flag < first + MapFlagCount && TakesHostMapFlag(flag) &&
+               RuleFor(flag).owner == FlagOwner::Host;
+    };
+    std::vector<std::pair<s32, bool>> shared;
+    for (const s32 flag : changes.set) {
+        if (takes(flag)) {
+            shared.emplace_back(flag, true);
+        }
+    }
+    for (const s32 flag : changes.cleared) {
+        if (takes(flag)) {
+            shared.emplace_back(flag, false);
+        }
+    }
+    std::ranges::sort(shared);
+    return shared;
+}
+
+std::vector<std::pair<s32, bool>> LoneGuestShares::Take(const FlagChanges& changes, u32 map,
+                                                        s64 since_load_ms) {
+    std::set<s32>& known = load_flags[map];
+    auto shared = LoneGuestFlagsToShare(changes, map);
+    if (since_load_ms < LoadFlagsMs) {
+        for (const auto& [flag, on] : shared) {
+            known.insert(flag);
+        }
+        return {};
+    }
+    std::erase_if(shared, [&known](const std::pair<s32, bool>& change) {
+        return known.contains(change.first);
+    });
+    return shared;
+}
+
 namespace {
 constexpr s32 CurrentAltar = 92900000;
 constexpr s32 AltarFlags = 6000;
@@ -2368,6 +2405,10 @@ bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner
         std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();
     return now_ms - world_changed_ms < settle ||
            (owner_changed_ms && now_ms - *owner_changed_ms < settle);
+}
+
+bool SettlingHidesDeath(bool settling, std::optional<bool> last_hit_mine) {
+    return settling && last_hit_mine != true;
 }
 
 bool SeenDead(u8 death_flags, s32 hp, std::optional<s64> zero_hit_ms, s64 now_ms) {
@@ -4004,6 +4045,14 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
         return std::nullopt;
     }
     return OwnedEnemyWord;
+}
+
+bool LoneGuestSwitchesOff(bool lone_guest, bool hidden, bool disabled, s32 wanted, s32 applied) {
+    return lone_guest && hidden && !disabled && wanted == 0 && applied > 0;
+}
+
+bool LoneGuestSwitchesBackOn(bool lone_guest, bool hidden) {
+    return !lone_guest || !hidden;
 }
 
 std::optional<u16> HostFollowerWord(EnemyRole role, bool hosting, u16 word) {
@@ -6160,6 +6209,18 @@ std::optional<Bloodstain> BloodstainOf(bool has_mark, u32 map, const LampPositio
         return std::nullopt;
     }
     return Bloodstain{.map = map, .at = at, .echoes = echoes};
+}
+
+std::optional<Bloodstain> BloodstainOfRecord(bool has_mark, std::span<const u8> record) {
+    if (record.size() < BloodstainRecordSize) {
+        return std::nullopt;
+    }
+    const auto read = [record]<typename T>(size_t offset, T value) {
+        std::memcpy(&value, record.data() + offset, sizeof(value));
+        return value;
+    };
+    return BloodstainOf(has_mark, read(0x3C, u32{}),
+                        {read(0x00, 0.0f), read(0x04, 0.0f), read(0x08, 0.0f)}, read(0x38, s32{}));
 }
 
 PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view self, u32 map,

@@ -160,6 +160,8 @@ CLINIC = "0x10014000"  # 573 HP, by Iosefka's door 32 m from the first lamp, 10 
 # the hide byte +0x28) seconds after every load, so he stood by the lamp until then (Kaniel's
 # and Lisara's playtest 2026-10-15). The first lamp is 110 m away.
 GILBERT = "0x1001400c"
+CLINIC_DOG = "0x10014009"  # entity 2410019, by the clinic; the rig's characters have it hidden
+GILBERT_HERE = 1246  # his step "at the window" (m24_01 event 12410760 shows him only with it)
 GILBERT_SEEN = r"watched 0x1001400c drawn"
 OTHER_MAP_FLAG = 12700999  # no door's (DoorFlags are shared with the party)
 OLD_YHARNAM_GATE = 12800201  # the object act flag of Old Yharnam's gate (m28 event 12800480)
@@ -1522,6 +1524,127 @@ SCENARIOS = {
         "expect": {"guest": [r"session's world changes as a trip loads the guest's own world"
                              r"[\s\S]{0,400}team's time of day in this load \(-off\): -9802",
                              r"party trip: arrived map=0x18010000"]},
+        "timeout": 300,
+    },
+    # Kaniel 2026-10-22: a guest alone on a map saw NPCs the host's world hides (Cathedral Ward:
+    # once the host came, only the right ones). Each trip's load put the guest's own game's story
+    # steps of the session over the team's world while the map placed its characters; the arrival
+    # set the team's back only after. Gilbert stands at his window only with 1246 (m24_01 event
+    # 12410760; with none of 1240-1246, as the rig's characters have, he is hidden): the guest's
+    # game takes that step, the host's world has none; the guest's lamp trip alone loads Central
+    # Yharnam with the team's step.
+    "team-story-trip": {
+        "about": "a story step only the guest's game took (Gilbert at his window) yields to the "
+                 "team's world at its lamp trip alone",
+        "roles": {
+            "host": [START, "wait-session 2 300", f"expect-flag {GILBERT_HERE} 0", "wait 20",
+                     f"travel {HUNTERS_DREAM}", "wait 30", "wait 30", "wait 30",
+                     f"expect-flag {GILBERT_HERE} 0", "done"],
+            "guest": [START, "wait-session 2 300", "wait 5", f"set-flag {GILBERT_HERE} 1",
+                      "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 28",
+                      f"expect-flag {GILBERT_HERE} 0", "done"],
+        },
+        # On main the arrival set 1246 back too, after the trip's load had put it in for the map's
+        # events (rig 2026-10-22: "set 5 of the session's world changes as a trip loads", 1246
+        # among them): the load itself must leave it to the team's world.
+        "expect": {"guest": [r"story steps left to the team's world \(-off\):[^\n]* 1246",
+                             r"party trip: arrived map=0x18010000"]},
+        "timeout": 300,
+    },
+    # Kaniel's test 2026-10-23: in the clinic the dog (0x10014009, entity 2410019) is not there;
+    # both go to the Dream, the guest comes back alone and sees it; the host comes back and it is
+    # gone again. As the map loads it starts loading ([control +0x14] wanted, +0x10 applied 4),
+    # then the story hides it (+0x28); the host's game lets it go (0/0), the lone guest's kept it
+    # (wanted 0, applied 4) and drew it. The lone guest switches it off (LoneGuestSwitchesOff).
+    "dog-alone": {
+        "about": "the clinic's dog, hidden by the story, stays unseen for a guest that comes back "
+                 "alone from the Dream",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 50", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 20", "census 60",
+                     "done"],
+            "guest": [START, "wait-session 2 300", "wait 15", f"travel {HUNTERS_DREAM}",
+                      "wait 15", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 12", "census 60",
+                      f"expect-disabled {CLINIC_DOG} 1", "wait 20", "census 60", "done"],
+        },
+        "expect": {"guest": [r"party trip: arrived map=0x18010000"]},
+        "timeout": 300,
+    },
+    # Kaniel's test 2026-10-23: a guest alone in Cathedral Ward killed the hag and opened its door;
+    # the host who came later found her alive and the door shut. A lone guest's game runs its map's
+    # story; its changes to the map's flags go to the team (LoneGuestFlagsToShare). Here the host
+    # is in the Dream, the guest alone in Central Yharnam sets TEAM_WORLD_FLAG (its map's, unused)
+    # 10 s after its lamp trip there (the hag died 9 s after the load; the first fix waited for
+    # the guest's alone state to settle and dropped it); the host comes back to it on. The map's
+    # load flags stay the guest's (LoneGuestShares).
+    "lone-guest-progress": {
+        "about": "a map flag a guest alone on its map set is on for the host that comes back",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}", "wait 30",
+                     "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                     f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest": [START, "wait-session 2 300", "wait 20", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait 5", f"set-flag {TEAM_WORLD_FLAG} 1", "wait 30", "wait 20",
+                      f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+        },
+        "expect": {"guest": [r"lone guest's map steps go to the team \(-off\): 12410999\n"]},
+        # Not the map's load flags (Gascoigne's per-visit 12414802...).
+        "forbid": {"guest": [r"go to the team \(-off\):[^\n]* 124148"]},
+        "timeout": 300,
+    },
+    # The same with three: the host and the second guest in the Dream while the first guest, alone
+    # in Central Yharnam, sets the flag; both come back to it on.
+    # Kaniel's test 2026-10-23: the hag a lone guest killed 9 s after its trip to Cathedral Ward was
+    # alive for the host who came later. Its alone state had just changed (settling: deaths then
+    # are no kills) and the kill was never posted. Here the guest, alone in Central Yharnam right
+    # after a lamp trip, kills the enemy by the lamp with its own hits and stays; the host comes
+    # back from the Dream and finds it killed (by the host it stands: it dies there, HP 0). The rig
+    # does not hit the settle window every time: on the build before the fix it passed too.
+    "lone-guest-kill": {
+        "about": "an enemy a guest killed right after its lone trip stays killed for the host "
+                 "that comes back while the guest is still there",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}", "wait 30",
+                     "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15", "census 40",
+                     f"expect-hp {ENEMY} == 0", "done"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 20",
+                      f"travel {CENTRAL_YHARNAM_LAMP}", f"teleport {GUEST_ALONE_SPOT}",
+                      f"attack {ENEMY} 30", "census 40", "wait 30", "wait 30", "done"],
+        },
+        "expect": {"guest": [r"kill board gets 1 kills, 0 back \(visit 0x1801[0-9a-f]+\): "
+                             r"0x1001400b"]},
+        "timeout": 300,
+    },
+    "lone-guest-progress3": {
+        "about": "a map flag a guest alone on its map set is on for the host and the other guest "
+                 "that come back",
+        "roles": {
+            "host": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}", "wait 30",
+                     "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                     f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest": [START, "wait-session 3 300", "wait 35", f"set-flag {TEAM_WORLD_FLAG} 1",
+                      "wait 30", "wait 30", f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest2": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                       "wait 30", "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                       f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+        },
+        "timeout": 300,
+    },
+    # The other way with three: the host alone in Central Yharnam sets the flag while both guests
+    # are in the Dream; both come back to it on (the team's world, TakesTeamWorldBlock).
+    "host-progress3": {
+        "about": "a map flag the host set while both guests were in the Dream is on for both when "
+                 "they come back",
+        "roles": {
+            "host": [START, "wait-session 3 300", "wait 35", f"set-flag {TEAM_WORLD_FLAG} 1",
+                     "wait 30", "wait 30", f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                      "wait 30", "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                      f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest2": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                       "wait 30", "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                       f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+        },
         "timeout": 300,
     },
     # Release thread 2026-10-16 (dog): the host travelled to the Dream before it saw the guest's

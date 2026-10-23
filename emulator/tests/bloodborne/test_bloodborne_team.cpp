@@ -382,6 +382,27 @@ TEST(TeamWorld, AGuestKeepsItsOwnGestureFlags) {
     EXPECT_EQ(TeamStoryToFollow(after, before), (std::vector<std::pair<s32, bool>>{{6748, false}}));
 }
 
+// Kaniel's playtest 2026-10-22: a guest alone on a map saw NPCs the team's world has gone past (or
+// not reached). Each trip's load put its own game's story steps of the session over the team's
+// world while the map placed its characters; the arrival set the team's back only after. A kept
+// story step yields to the team's world once a report of it had time to carry it.
+TEST(TeamWorld, AKeptStoryStepYieldsToTheTeamsWorld) {
+    const std::vector<u32> blocks = {1, 7, 9, 1240};
+    constexpr s64 Now = 100'000;
+    EXPECT_TRUE(KeptChangeYieldsToTeam(7240, Now - 30'000, Now, blocks, 1000));
+    EXPECT_TRUE(KeptChangeYieldsToTeam(1205, std::nullopt, Now, blocks, 1000))
+        << "kept before this game started: older than any report";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(7240, Now - 5'000, Now, blocks, 1000))
+        << "newer than the reports: the host's may not have it yet";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(12404003, std::nullopt, Now, blocks, 1000))
+        << "a map's flag (bosses, doors): not a story step";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(52800170, std::nullopt, Now, blocks, 1000))
+        << "a pickup is the character's own";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(3500, std::nullopt, Now, blocks, 1000))
+        << "a block the team's world does not cover";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(1205, std::nullopt, Now, blocks, 0));
+}
+
 // Kaniel's playtest 2026-10-20: Lisara's game took the host's "light the Witch's Abode lamp"
 // request (72200201) as a story step, and her own lamp never lit. A lamp's light request is each
 // player's own; the lit lamp reaches the party by its active flags and the lamp lists.

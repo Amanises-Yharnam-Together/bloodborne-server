@@ -529,6 +529,16 @@ std::vector<std::pair<s32, bool>> TeamStoryToFollow(const WorldFlags& before,
     return follow;
 }
 
+bool KeptChangeYieldsToTeam(s32 flag, std::optional<s64> kept_ms, s64 now_ms,
+                            std::span<const u32> team_blocks, u32 flags_per_block) {
+    if (flags_per_block == 0 || flag < 0 || !IsTeamStoryFlag(flag)) {
+        return false;
+    }
+    const u32 block = static_cast<u32>(flag) / flags_per_block;
+    return std::find(team_blocks.begin(), team_blocks.end(), block) != team_blocks.end() &&
+           (!kept_ms || now_ms - *kept_ms >= KeptChangeReportMs);
+}
+
 TeamJoin::Action TeamJoin::Tick(const Frame& frame) {
     if (!frame.host) {
         if (frame.matching_state == MatchingStateSummonedGuest && frame.session_members <= 1) {
