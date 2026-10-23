@@ -113,6 +113,24 @@ constexpr vk::Format TrySurfaceFormat(AmdGpu::DataFormat data_format,
     return surface_format_table[GetSurfaceFormatTableIndex(data_format, num_format)];
 }
 
+/// bbport: the pair names a format, or is the invalid format (SurfaceFormat's eUndefined
+/// without the assertion). Data format 15, a value the hardware reserves, does not.
+constexpr bool IsKnownSurfaceFormat(AmdGpu::DataFormat data_format,
+                                    AmdGpu::NumberFormat num_format) noexcept {
+    return data_format == AmdGpu::DataFormat::FormatInvalid ||
+           TrySurfaceFormat(data_format, num_format) != vk::Format::eUndefined;
+}
+
+/// bbport: a vertex stream's format for a pipeline's vertex input. Without dynamic vertex input
+/// the V#s come from guest memory the game may be rewriting (a player's RX 580 stopped at
+/// "Unknown data_format=15 and num_format=7"): an unknown pair takes a format every driver
+/// supports for vertex buffers instead of stopping the game.
+constexpr vk::Format VertexInputFormat(AmdGpu::DataFormat data_format,
+                                       AmdGpu::NumberFormat num_format) noexcept {
+    return IsKnownSurfaceFormat(data_format, num_format) ? TrySurfaceFormat(data_format, num_format)
+                                                         : vk::Format::eR32G32B32A32Sfloat;
+}
+
 static inline bool IsFormatDepthCompatible(vk::Format fmt) {
     switch (fmt) {
     // 32-bit float compatible
