@@ -15,6 +15,7 @@ SQLite files and protobuf world folders.
 | `shadnet.service` | systemd unit (Restart=always, limits, hardening) + backup timer in comments | `systemd-analyze verify` only |
 | `schema.sql` | Draft Postgres schema: accounts, sessions, bans, worlds, membership, snapshots, audit | Loads on PostgreSQL 16 (checked). Nothing uses it yet. |
 | `env.example` | Settings the compose file reads | n/a |
+| `admin.sh` | The operator's commands (below) to the running server, in its container or on the host | `sh -n`; the commands themselves are covered by `test_admin` |
 
 ## Data layout (`SHADNET_HOME` = `/data` or `/var/lib/shadnet`)
 
@@ -28,7 +29,10 @@ bloodborne_worlds/
   <world>/world.pb       snapshot; world.pb.1-3 older snapshots
   <world>/journal.pb     append-only, fsynced records since the snapshot
   <world>/trades.pb  team_world.pb  backups/world-YYYYMMDD.pb (7 days)
-  forgotten/             worlds taken off the list (never deleted)
+  forgotten/             worlds taken off the list (never deleted): forgotten or retired;
+                         each keeps its line in kept_world.pb (admin.sh restore)
+admin.sock               the operator's commands (HostedAdminSocket; owner-only)
+banned.txt               bans: the operator's lines and admin.sh ban's
 restore-aside/           what restore.sh moved out of the way
 ```
 
@@ -48,6 +52,38 @@ on 127.0.0.1 (`TcpLocalOnly=true`: the games' calls come through the link). Keep
 5432 and 6379 closed. **Nothing is encrypted yet** (see docs/HOSTED_SERVER.md, "Before a public
 launch"): player secrets and tokens cross the Internet in clear, and the HTTP ports do not check
 who calls them.
+
+## Operator commands
+
+A hosted server listens for the operator's commands on a UNIX-domain socket in its data folder
+(`HostedAdminSocket`, default `admin.sock`; empty turns it off). Only the server's own user (and
+root) can open it; it is never a network port, so there is no token to leak. `admin.sh` sends one
+command and prints the JSON answer (`docker compose exec shadnet /opt/shadnet/shadnet --admin ...`
+underneath; `SHADNET_BIN`/`SHADNET_HOME` for a systemd install).
+
+| Command | What it does |
+| --- | --- |
+| `players` | Linked games: id, address, build, team, world, map, ms since last heard |
+| `kick <id\|address>` | Unlinks it now. Its game links again by itself (unless banned) |
+| `ban <id\|address> [90s\|30m\|12h\|7d] [note]` | Written to `banned.txt` (`<who> until=<unix s> # note`), in force at once, and kicks it. No duration: for ever. Survives restarts; an ended ban is ignored and dropped at the next write |
+| `unban <id\|address>` | Its lines out of `banned.txt` (the operator's hand-written ones too; comments kept) |
+| `bans` | `banned.txt`'s entries, with their ends |
+| `worlds` | Listed worlds (id, name, members, last played, created, folder, bytes on disk, games in it) and the folders in `forgotten/` |
+| `restore <folder>` | A folder from `forgotten/` back on the list, to its players, as played now. Worlds put aside before this build come back with a new id and no players (hosted: nobody sees them) |
+| `retire` | Retirement (below) now |
+| `stats` | Players, worlds listed and in memory, the link thread's busy share (last 10 s), hellos refused, datagrams dropped, accounts refused, strike bans |
+
+```bash
+./admin.sh players
+./admin.sh ban 203.0.113.7 7d flooding hellos
+./admin.sh worlds | jq '.aside[].folder'
+./admin.sh restore 6f2a...c1-20270115-031500
+```
+
+`HostedRetireDays=N` (default 0: off) puts aside, once a day (the first a minute after the start),
+every world nobody started for N days that no team has picked and no game is in: the same move as
+a forgotten world's (on the worlds' writer thread, logged, never deleted). `restore` brings one
+back.
 
 ## Backups
 

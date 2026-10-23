@@ -2557,10 +2557,38 @@ int HostedFriendsJoinByTheTeamsCode() {
   return 0;
 }
 
+// The operator's player list (admin.h): where each linked game is, by its
+// link: its lobby name, its team, the world it plays and its map.
+int APlayersPlaceIsKnownByItsLink() {
+  Service service{{}};
+  Game a{1000, "aa", 11};
+  a.claims_host = true;
+  qint64 now = 1'000'000;
+  CHECK(!service.PlaceOf(a.endpoint));
+  a.LobbyHello(false, now);
+  Pump(service, {&a}, now);
+  a.Team(bbcoop::TeamRequest::CREATE, now);
+  a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+  a.Team(bbcoop::TeamRequest::START, now);
+  Pump(service, {&a}, now);
+  const bbcoop::TeamStart go = a.starts.at(0);
+  a.Hello(now, QByteArray::fromStdString(go.party()));
+  a.Map(24, now);
+  Pump(service, {&a}, now);
+  const auto place = service.PlaceOf(a.endpoint);
+  CHECK(place && place->lobby == "aa");
+  CHECK(!place->team.empty() && place->world == go.world());
+  CHECK(place->map == 24);
+  service.Forget(a.endpoint);
+  CHECK(!service.PlaceOf(a.endpoint));
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
       {"HostedPartiesAreTheirTeamsOnly", HostedPartiesAreTheirTeamsOnly},
+      {"APlayersPlaceIsKnownByItsLink", APlayersPlaceIsKnownByItsLink},
       {"AMessagePastTheLimitDropsTheStream",
        AMessagePastTheLimitDropsTheStream},
       {"AMemberThatNeverAcksIsDropped", AMemberThatNeverAcksIsDropped},

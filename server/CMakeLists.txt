@@ -106,6 +106,8 @@ set(SOURCES
     src/link_server.cpp
     src/admission.h
     src/admission.cpp
+    src/admin.h
+    src/admin.cpp
     src/http_gate.h
     src/http_gate.cpp
     # The games' one link to the server (co-op phase 2)
@@ -300,6 +302,24 @@ if(BUILD_TESTING)
     target_include_directories(test_admission PRIVATE src)
     target_link_libraries(test_admission PRIVATE Qt6::Core Qt6::Network)
     add_test(NAME admission COMMAND test_admission)
+
+    add_executable(test_admin EXCLUDE_FROM_ALL
+        tests/test_admin.cpp
+        src/admin.cpp
+        src/admission.cpp
+        src/bloodborne_world.cpp
+        src/bloodborne_party_boards.cpp
+        src/server_link.cpp
+        ${COOP_SOURCES}
+    )
+    target_include_directories(test_admin PRIVATE
+        src
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_admin PRIVATE Qt6::Core Qt6::Network libprotobuf)
+    add_test(NAME admin COMMAND test_admin)
 
     add_executable(test_http_gate EXCLUDE_FROM_ALL tests/test_http_gate.cpp src/http_gate.cpp)
     target_include_directories(test_http_gate PRIVATE src)

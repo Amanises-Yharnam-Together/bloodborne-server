@@ -910,6 +910,40 @@ static int AFriendIsInvitedByName() {
   return 0;
 }
 
+// A hosted player keeps its newest worlds_per_player worlds: a new one drops
+// it from its oldest (one nobody else keeps goes), so CREATE/START/LEAVE again
+// and again does not grow the list without end.
+static int AHostedPlayersWorldsAreCapped() {
+  TeamLobby lobby = NewLobby();
+  lobby.SetHosted(32, 3);
+  for (const char *m : {"a", "b"}) {
+    lobby.Arrive(m, m, false);
+  }
+  const std::string shared = PlayAWorld(lobby, "a", "b");
+  lobby.Request("a", Request(Action::LEAVE));
+  lobby.Request("b", Request(Action::LEAVE));
+  size_t forgotten = 0;
+  for (int round = 0; round < 10; ++round) {
+    lobby.Request("a", Request(Action::CREATE));
+    lobby.Request("a", Request(Action::READY, {}, {}, 0));
+    const TeamLobby::Outcome go = lobby.Request("a", Request(Action::START));
+    CHECK(go.notice.empty());
+    CHECK(go.forgotten.size() == go.forgotten_lines.size());
+    forgotten += go.forgotten.size();
+    lobby.Request("a", Request(Action::LEAVE));
+  }
+  size_t mine = 0;
+  for (const bbcoop::TeamWorldInfo &world : lobby.Worlds()) {
+    mine += std::ranges::count(world.members(), "a");
+  }
+  CHECK(mine == 3);
+  CHECK(forgotten == 7); // a's own worlds past its 3; the shared one is b's
+  CHECK(lobby.Worlds().size() == 4);
+  CHECK(lobby.StateFor("b").worlds_size() == 1);
+  CHECK(lobby.StateFor("b").worlds(0).id() == shared);
+  return 0;
+}
+
 int main() {
   int failed = 0;
   failed |= PlayersAreSeenByTheirCharactersName();
@@ -933,6 +967,7 @@ int main() {
   failed |= APickBeforeATeamGoesIntoTheTeam();
   failed |= HostedWorldsAreTheirPlayersOnly();
   failed |= HostedServersKeepEveryPlayersWorlds();
+  failed |= AHostedPlayersWorldsAreCapped();
   failed |= AHostedLobbyListsFewOthers();
   failed |= AFriendJoinsByTheTeamsCode();
   failed |= TeamCodesAreUnique();

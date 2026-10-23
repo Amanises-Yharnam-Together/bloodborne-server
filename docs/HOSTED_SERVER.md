@@ -14,16 +14,18 @@ Off by default: a host's own server behaves as before. On (`shadnet.cfg`):
 | Passwords checked on a thread pool, not the link's thread; a wrong one is not hashed again for 30 s; at most 512 checks queued | `link_server.cpp` `SignIn` | each new id cost ~3 password hashes (100k rounds) on the thread that relays every game: 30 new players froze pings for 1.7 s |
 | Hellos an address (4/s, burst 20), games an address (8), new accounts an address an hour (5) | `admission.h` | bots making accounts; one PC flooding hellos |
 | Each link's datagrams (1500/s) and bytes (400 KB/s); past them dropped, 5 seconds past them in a minute bans the address for 15 min | `admission.h` | a game sends ~60-200 datagrams and ~10 KB a second |
-| `banned.txt`: one address or player id a line, read every 30 s | `link_server.cpp` | the operator's bans |
+| `banned.txt`: one address or player id a line (`until=<unix s>` ends one), read every 30 s; a linked game it bans is unlinked then, not only at its next hello | `link_server.cpp`, `admin.h` `KickBanned` | the operator's bans |
 | `HostedBuild`: the build every game must say | `server_link.cpp` | otherwise the first game to link decides it |
 | Lobby and party names must be the player's own id (hex, as the games say them) | `bloodborne_world.cpp` `OwnName` | anyone could act in the lobby, or say hello into a party, as another player |
 | A party hello must be for the world the player's team plays | `bloodborne_world.cpp` `OnHello` | any player could join any world by its key |
-| A world is its players' (`TeamWorldInfo.members`): listed to them only, forgotten only by them (each for itself) | `team_lobby.cpp` | every world was listed to everyone; anyone could forget anyone's; 16 worlds server-wide |
+| A world is its players' (`TeamWorldInfo.members`): listed to them only, forgotten only by them (each for itself); a player in more than `HostedWorldsPerPlayer` leaves its oldest at a Start (one nobody keeps is put aside) | `team_lobby.cpp` | every world was listed to everyone; anyone could forget anyone's; 16 worlds server-wide; Create/Start/Leave again and again grew the list without end |
 | The HTTP ports (20443 the game's services, 31315 summons and WebAPI) answer only addresses with a signed-in link, and only as a player linked from there (the backend's `UserId` or `PlatformAccountId`, the summon's `UserId`, the bearer token's account); 403 otherwise. GETs (ss.info, status) act as nobody and stay open | `http_gate.h` | the player id came from the request: anyone reaching the ports could act as any player |
 | Crash reports (`/bb/report`) off unless `HostedReports` (then 8 MB each); the stats page off unless `HostedStats` | `webapi_server.cpp`, `server.cpp` | a report costs a password hash; the stats page lists player ids |
 | The lobby goes out at most every 250 ms, only to players whose own state changed, listing their team, invites and 32 others | `team_lobby.cpp` `StateFor`, `bloodborne_world.cpp` `SendLobby` | every lobby change sent every player the whole server's list: O(n^2), 216 Mbit/s at 120 players |
 | A trade only between members of one started team | `bloodborne_world.cpp` `TakeTrade` | trades go by member name; a stranger in a party could be offered goods or answer for another |
 | Party worlds in memory: at most `HostedPartyWorlds` (2048) | `bloodborne_world.h` `Limits` | every team's world on one machine |
+| The operator's commands on a UNIX-domain socket only the server's user opens (`HostedAdminSocket`, never a network port; `server/hosting/admin.sh`): list players, kick, ban/unban by id or address with an optional end (written to `banned.txt`, so restarts keep them), list worlds (members, last played, bytes on disk) and those put aside, restore one, stats (players, worlds, link thread load, refusals) | `admin.h`, `link_server.cpp` | only `banned.txt` and a restart before; a forgotten world could only come back by hand |
+| Worlds nobody started for `HostedRetireDays` days (0, the default: never) are put aside once a day, as a forgotten world's folder (writer thread, logged, never deleted); a world put aside keeps its line beside it (`kept_world.pb`), so `restore` gives it back to its players | `bloodborne_world.cpp` `Service::Retire` | every world ever played stays on disk and on its players' lists |
 
 Two fixes are on for everyone: a TCP packet size under its header no longer loops the session for
 ever (`client_session.cpp`), and a datagram from one game no longer walks every member's stream
@@ -73,7 +75,7 @@ past the packet, from any client before signing in. Four minutes of each target 
 Settings: `Hosted`, `HostedBuild`, `HostedBanList`, `HostedLinksPerAddress`,
 `HostedHellosPerSecond`, `HostedNewAccountsPerHour`, `HostedDatagramsPerSecond`,
 `HostedBytesPerSecond`, `HostedLobbyPlayers`, `HostedLobbyIntervalMs`, `HostedWorldsPerPlayer`,
-`HostedPartyWorlds`, `HostedStats`, `HostedReports`,
+`HostedPartyWorlds`, `HostedStats`, `HostedReports`, `HostedAdminSocket`, `HostedRetireDays`,
 `HttpLinkedOnly`.
 
 The games need no change for any of this (the emulator already says its id in hex as its names;
@@ -157,7 +159,6 @@ world.pb, `sqlite3 .backup`, restic to S3/B2/Storage Box), with a restore drill 
 Server only:
 - Make the account limit hold against botnets: a proof-of-work in the hello, or sign-up through
   the launcher with a server-signed token.
-- Retire worlds nobody played for months (disk).
 
 Game and launcher:
 - A cookie handshake and an HMAC on every datagram (secrets cross the internet in clear today, and
