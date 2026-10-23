@@ -6191,6 +6191,18 @@ std::optional<Bloodstain> BloodstainOf(bool has_mark, u32 map, const LampPositio
     return Bloodstain{.map = map, .at = at, .echoes = echoes};
 }
 
+std::optional<Bloodstain> BloodstainOfRecord(bool has_mark, std::span<const u8> record) {
+    if (record.size() < BloodstainRecordSize) {
+        return std::nullopt;
+    }
+    const auto read = [record]<typename T>(size_t offset, T value) {
+        std::memcpy(&value, record.data() + offset, sizeof(value));
+        return value;
+    };
+    return BloodstainOf(has_mark, read(0x3C, u32{}),
+                        {read(0x00, 0.0f), read(0x04, 0.0f), read(0x08, 0.0f)}, read(0x38, s32{}));
+}
+
 PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view self, u32 map,
                            const std::optional<LampPosition>& me) {
     PartyPanel panel;

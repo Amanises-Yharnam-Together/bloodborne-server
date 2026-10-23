@@ -3327,9 +3327,16 @@ struct Bloodstain {
     bool operator==(const Bloodstain&) const = default;
 };
 // This player's bloodstain from the game's record (GameDataMan +0x28 its mark; the record at
-// [GameDataMan +0x30]: +0x3C its map, +0x18 its position, +0x38 its echoes). The mark stays up
+// [GameDataMan +0x30]: +0x3C its map, +0x00 its position, +0x38 its echoes). The mark stays up
 // on an empty record (map -1, echoes -1), and a stain without echoes holds nothing: none then.
 std::optional<Bloodstain> BloodstainOf(bool has_mark, u32 map, const LampPosition& at, s32 echoes);
+// The same from the record's bytes (`record`, from its start; nothing from a shorter read). Player
+// report 2026-10-23: the record keeps two places, as UpDateBloodMark (0x013D2910) writes them:
+// +0x00 where the stain lies (the player's last safe ground, [player +0x400] +0x30, which the
+// stain's marker copies when the game shows it, 0x01868A50) and +0x18 where the player died (the
+// foot of a cliff it fell from). The stain is at the first.
+constexpr size_t BloodstainRecordSize = 0x40;
+std::optional<Bloodstain> BloodstainOfRecord(bool has_mark, std::span<const u8> record);
 struct MemberVitals {
     std::string member;
     u32 map = 0;

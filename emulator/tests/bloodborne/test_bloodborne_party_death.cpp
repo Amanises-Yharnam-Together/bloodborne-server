@@ -6,6 +6,7 @@
 // wiped. The rules here are plain functions; the hooks that use them are in the emulator.
 
 #include <array>
+#include <cstring>
 #include <map>
 #include <optional>
 #include <string>
@@ -1256,6 +1257,29 @@ TEST(BloodbornePartyDeath, OwnBloodstainFromTheGamesRecord) {
     EXPECT_FALSE(BloodstainOf(true, 0xFFFFFFFF, {}, -1)) << "an empty record";
     EXPECT_FALSE(BloodstainOf(true, CentralYharnam, at, 0));
     EXPECT_FALSE(BloodstainOf(true, 0, at, 10)) << "no map";
+}
+
+// Player report 2026-10-23: the compass's bloodstain sat a bit off from the echoes. The record
+// (UpDateBloodMark 0x013D2910) keeps two places: +0x00 where the stain lies (the player's last
+// safe ground, [player +0x400] +0x30; the stain's marker copies it, 0x01868A50) and +0x18 where
+// the player died (a fall's foot of the cliff). The stain is the first.
+TEST(BloodbornePartyDeath, OwnBloodstainLiesWhereTheGameDropsTheEchoes) {
+    std::array<u8, BloodstainRecordSize> record{};
+    const auto put = [&record](size_t offset, auto value) {
+        std::memcpy(record.data() + offset, &value, sizeof(value));
+    };
+    const LampPosition dropped{-512.47f, -271.24f, 382.51f};
+    const LampPosition died{-530.1f, -290.8f, 395.0f};
+    for (size_t i = 0; i < 3; ++i) {
+        put(0x00 + i * 4, dropped[i]);
+        put(0x18 + i * 4, died[i]);
+    }
+    put(0x38, s32{480});
+    put(0x3C, CentralYharnam);
+    EXPECT_EQ(BloodstainOfRecord(true, record),
+              (Bloodstain{.map = CentralYharnam, .at = dropped, .echoes = 480}));
+    EXPECT_FALSE(BloodstainOfRecord(false, record)) << "picked up";
+    EXPECT_FALSE(BloodstainOfRecord(true, std::span{record}.first(0x3C))) << "a short read";
 }
 
 // The port's party panel lists the other members playing party death in the board's order, by
