@@ -696,6 +696,36 @@ void Hub::TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result
     }
 }
 
+QList<Hub::LinkRow> Hub::Links() const {
+    QList<LinkRow> rows;
+    rows.reserve(members.size());
+    for (const Link& link : members) {
+        rows.append({link.endpoint, link.online_id, link.build, link.last_heard_ms});
+    }
+    return rows;
+}
+
+Hub::Result Hub::Kick(const QByteArray& online_id, quint32 ipv4, qint64 now_ms) {
+    Result result;
+    QList<quint64> kicked;
+    for (const Link& link : std::as_const(members)) {
+        if ((!online_id.isEmpty() && link.online_id == online_id) ||
+            (ipv4 != 0 && link.endpoint.ipv4 == ipv4)) {
+            kicked.append(link.endpoint.Key());
+        }
+    }
+    for (const quint64 key : kicked) {
+        const Link link = members.value(key);
+        Unlink(key);
+        result.log.append(QStringLiteral("server link: %1 kicked by the operator, %2 linked")
+                              .arg(Name(link))
+                              .arg(members.size()));
+        TellOthers(link, MemberState::Gone, now_ms - link.last_heard_ms, result);
+        result.gone.append(link.endpoint);
+    }
+    return result;
+}
+
 Hub::Result Hub::Tick(qint64 now_ms) {
     Result result;
     QList<quint64> gone;

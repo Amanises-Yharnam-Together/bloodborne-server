@@ -231,6 +231,19 @@ public:
     // The virtual address of the game linked from `real`, nothing when none is.
     std::optional<Endpoint> VirtualOf(const Endpoint& real) const;
 
+    // The operator's view (admin.h): every link.
+    struct LinkRow {
+        Endpoint endpoint;
+        QByteArray online_id;
+        QByteArray build;
+        qint64 last_heard_ms = 0;
+    };
+    QList<LinkRow> Links() const;
+    // The operator's kick: the links of `online_id` (when not empty) or from `ipv4` (when not 0)
+    // forgotten now, the others told they went. A game whose link is forgotten hears no more pongs
+    // and says hello again, as after any outage.
+    Result Kick(const QByteArray& online_id, quint32 ipv4, qint64 now_ms);
+
 private:
     struct Link {
         Endpoint endpoint;

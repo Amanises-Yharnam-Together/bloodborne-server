@@ -174,6 +174,18 @@ class HostedHttpGate(unittest.TestCase):
         removal = {"MessageId": "SummonDataRemoveRequest", "SessionId": "gate-session"}
         self.assertEqual(send(self.webapi, "POST", "/summon_messenger/delete", removal,
                               source="127.0.0.2").status, 403)
+        # A request that changes a sign names its player: without a UserId it could act on
+        # anyone's sign (the party header is the game's to say).
+        self.assertEqual(send(self.webapi, "POST", "/summon_messenger/delete", removal).status,
+                         403)
+        claim = {"MessageId": "SummonDataSummonRequest", "SessionId": "gate-session",
+                 "TargetUserId": user_id}
+        self.assertEqual(send(self.webapi, "POST", "/summon_messenger/request", claim).status,
+                         403)
+        self.assertEqual(send(self.webapi, "POST", "/summon_messenger/request",
+                              dict(claim, UserId=user_id)).status, 200)
+        self.assertEqual(send(self.webapi, "POST", "/summon_messenger/delete",
+                              dict(removal, UserId=user_id)).status, 200)
         # The launcher's probe for the summon service (anything but 404) still sees it.
         self.assertNotEqual(send(self.webapi, "POST", "/summon_messenger/create",
                                  source="127.0.0.2").status, 404)

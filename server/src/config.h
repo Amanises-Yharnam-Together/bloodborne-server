@@ -40,6 +40,10 @@ struct HostedConfig {
     int partyWorlds = 2048;    // party worlds in memory at once (a team's each; idle ones go)
     bool stats = false;        // the stats page (it lists player ids; StatsEnabled as well)
     bool reports = false;      // crash reports (/bb/report), at most 8 MB each when on
+    // The operator's commands (admin.h): a UNIX-domain socket only the server's user opens (empty:
+    // none). Worlds nobody played for this many days are put aside, daily (0: never).
+    QString adminSocket = QStringLiteral("admin.sock");
+    int retireDays = 0;
 };
 
 class ConfigManager {

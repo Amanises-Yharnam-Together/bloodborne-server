@@ -125,7 +125,8 @@ private:
     bool Exec(const QString& sql);
     bool Exec(QSqlQuery& q);
     // Stores the virtual address of every account without one, unless an older account has it.
-    void AssignVirtualAddresses();
+    // Whether every account that may have one has its address now (false: not stored, try later).
+    bool AssignVirtualAddresses();
     bool AddressTaken(quint32 address);
     QByteArray HashPassword(const QString& password, const QByteArray& salt);
     QByteArray GenerateSalt(int bytes = 64);
