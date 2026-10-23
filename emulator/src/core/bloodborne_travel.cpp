@@ -1534,7 +1534,7 @@ void GiveBackPhantomKeyItems() {
             for (const HeldGoods& held : OwnKeyItemsForPhantom(own_look, last_look)) {
                 const TradeItem item{BloodborneCoop::TradeItemKind::Goods, held.goods,
                                      static_cast<u32>(held.count)};
-                AddTradeItems(std::span{&item, 1});
+                AddTradeItems(std::span{&item, 1}, ItemPopup::Silent);
                 LOG_INFO(Debug,
                          "Bloodborne party: {} x goods {} of the guest's own in the phantom's key "
                          "items",
@@ -1554,7 +1554,7 @@ void GiveBackPhantomKeyItems() {
     for (const HeldGoods& held : PhantomKeyItemsToGiveBack(first_look, last_look, HeldKeyGoods())) {
         const TradeItem item{BloodborneCoop::TradeItemKind::Goods, held.goods,
                              static_cast<u32>(held.count)};
-        AddTradeItems(std::span{&item, 1});
+        AddTradeItems(std::span{&item, 1}, ItemPopup::Silent);
         LOG_INFO(Debug,
                  "Bloodborne party: gave back {} x goods {}: gained as a phantom, dropped by "
                  "the game with its key item list",

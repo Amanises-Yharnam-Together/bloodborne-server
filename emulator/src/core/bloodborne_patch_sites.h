@@ -66,6 +66,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"team lobby", false},
     {"team join", false},
     {"no multiplayer banners", false},
+    {"silent key items", false},
     {"character names", false},
     {"no lost-connection popup", false},
     {"own player numbers", false},
@@ -315,6 +316,10 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
      "90 90"},
     {"name by online id option", "character names", CoopSiteKind::Patch, 0x01AE8727, "74 5C",
      "EB 5C"},
+    // Kaniel 2026-10-23: a joining guest's own key items go in with no item-received popup
+    // (ItemGetQueuedOffset).
+    {"item get popup", "silent key items", CoopSiteKind::Hook, 0x016D8850,
+     "55 48 89 E5 41 57 41 56"},
     // Kaniel 2026-10-18: no "Lost connection to the network" popup in a party (LanCutError...).
     {"lan cut error", "no lost-connection popup", CoopSiteKind::Hook, 0x01387130,
      "55 48 89 E5 41 56"},

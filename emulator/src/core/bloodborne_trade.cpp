@@ -462,10 +462,14 @@ bool TradeItemsCanBeAdded() {
 }
 
 // Puts the items in as a pickup does: goods up to the max held, the rest to the storage box,
-// each with the game's popup; echoes through AddSouls (the game's thread).
-void AddTradeItems(std::span<const TradeItem> items) {
+// each with the game's popup unless Silent; echoes through AddSouls (the game's thread).
+void AddTradeItems(std::span<const TradeItem> items, ItemPopup popup) {
     if (!trade_sites.load()) {
         return;
+    }
+    std::optional<SilentItemGets> silent;
+    if (popup == ItemPopup::Silent) {
+        silent.emplace();
     }
     struct GiveEntry {
         u32 handle;
@@ -536,7 +540,8 @@ void AddTradeItems(std::span<const TradeItem> items) {
                                       static_cast<s32>(item.count), -1};
     }
     give();
-    LOG_INFO(Debug, "Bloodborne trade: added {}", TradeItemsText(items));
+    LOG_INFO(Debug, "Bloodborne trade: added {}{}", TradeItemsText(items),
+             popup == ItemPopup::Silent ? " (no popup)" : "");
 }
 
 // The other members a trade may go to: on the vitals board, on this map, standing, the nearest

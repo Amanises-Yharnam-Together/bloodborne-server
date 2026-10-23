@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <set>
 
+#include <thread>
+
 #include <gtest/gtest.h>
 
 #include "core/bloodborne_party.h"
@@ -556,6 +558,26 @@ TEST(PhantomKeyItems, TheGuestsOwnKeyItemsGoInThePhantomsList) {
         last_look.push_back(put);
     }
     EXPECT_TRUE(PhantomKeyItemsToGiveBack(phantom, last_look, own).empty());
+}
+
+// Kaniel 2026-10-23: a joining guest's own key items went into the phantom's list each with the
+// game's "item received" popup ("Oedon Tomb Key 1 / OK"), one after another. Those grants show
+// none: the popup's queue push is skipped while a SilentItemGets lives on this thread.
+TEST(SilentItemGets, OnlyWhileOneLivesOnThisThread) {
+    EXPECT_FALSE(ItemGetsSilent()) << "a pickup or trade: the popup";
+    {
+        const SilentItemGets silent;
+        EXPECT_TRUE(ItemGetsSilent());
+        {
+            const SilentItemGets nested;
+            EXPECT_TRUE(ItemGetsSilent());
+        }
+        EXPECT_TRUE(ItemGetsSilent()) << "the outer one still lives";
+        bool other_thread = true;
+        std::thread{[&] { other_thread = ItemGetsSilent(); }}.join();
+        EXPECT_FALSE(other_thread) << "another thread's gives keep their popup";
+    }
+    EXPECT_FALSE(ItemGetsSilent());
 }
 
 // Rig 2026-10-14 (host-crash-apart, team-world): the host's game gone, the guest's game set 4047

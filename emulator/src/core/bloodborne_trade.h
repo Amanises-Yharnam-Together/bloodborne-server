@@ -48,7 +48,9 @@ std::vector<u32> HeldWeaponIds();
 std::vector<GestureSlot> PlayerGestures();
 bool LearnGesture(s32 gesture);
 bool TakeTradeItems(std::span<TradeItem> items, u32 handle = 0);
-void AddTradeItems(std::span<const TradeItem> items);
+// Whether a give shows the game's item-received popup (Silent: see SilentItemGets).
+enum class ItemPopup { Shown, Silent };
+void AddTradeItems(std::span<const TradeItem> items, ItemPopup popup = ItemPopup::Shown);
 // Whether AddTradeItems can (the game's functions it calls are the ones it knows).
 bool TradeItemsCanBeAdded();
 // An item's name for the other member's boxes (the port's, from the game's own text): the name it

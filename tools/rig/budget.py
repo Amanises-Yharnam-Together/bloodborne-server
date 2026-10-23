@@ -36,6 +36,7 @@ LONG = {
     "story-hostless": "the 10-20 case #286: a team join and a trip",
     "key-items-kept": "the 10-19 playtest case #267: a join, two trips",
     "gesture-own": "the 10-23 gestures case: a join, two trips",
+    "key-items-silent": "Kaniel 2026-10-23: a join, two trips",
     "team-world-other-block": "the 10-19 playtest case #266: two team sessions",
     "npc-progress-after-trip": "the 10-19 playtest case #269: a join, two trips",
     "wipe-one-map": "the 10-19 playtest case #270: three games, a death and a wake",

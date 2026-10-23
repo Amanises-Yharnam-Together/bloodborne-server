@@ -262,6 +262,22 @@ std::vector<HeldGoods> OwnKeyItemsForPhantom(std::span<const HeldGoods> own,
     return put;
 }
 
+namespace {
+thread_local u32 silent_item_gets = 0;
+} // namespace
+
+SilentItemGets::SilentItemGets() {
+    ++silent_item_gets;
+}
+
+SilentItemGets::~SilentItemGets() {
+    --silent_item_gets;
+}
+
+bool ItemGetsSilent() {
+    return silent_item_gets > 0;
+}
+
 std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> first_look,
                                                  std::span<const HeldGoods> last_look,
                                                  std::span<const HeldGoods> home) {

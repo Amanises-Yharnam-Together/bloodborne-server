@@ -417,6 +417,15 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     EXPECT_EQ(DecodeNearJumpTarget(host_dead.offset, host_dead.patched), HostDeadEpilogueOffset);
 }
 
+// The give (GiveItems, 0x017D89F0) queues each item it put in the inventory and each it sent to
+// the storage on the item-received popup's queue, the hook silent grants skip.
+TEST_F(BloodborneEboot, TheGiveQueuesItsPopupsAtTheHookedPush) {
+    EXPECT_EQ(CallTarget(0x017D9348), ItemGetQueuedOffset);
+    EXPECT_EQ(CallTarget(0x017D94C7), ItemGetQueuedOffset);
+    EXPECT_EQ(Bytes(ItemGetQueuedOffset, ItemGetQueuedPrologue.size()),
+              std::vector<u8>(ItemGetQueuedPrologue.begin(), ItemGetQueuedPrologue.end()));
+}
+
 // The boss-death tracer's sites are the game's dead-flag writes; the two deaths go straight on
 // to the death step.
 TEST_F(BloodborneEboot, TheDeathSitesSetTheDeadFlag) {
