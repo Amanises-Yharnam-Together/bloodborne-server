@@ -490,6 +490,11 @@ add_executable(pixel-format-test EXCLUDE_FROM_ALL ../tests/test_pixel_format.cpp
 target_compile_options(pixel-format-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(pixel-format-test PRIVATE shim shadps4)
 target_link_libraries(pixel-format-test PRIVATE bbgpu)
+# Vertex stream formats without dynamic vertex input (a player's RX 580 stopped on data format 15).
+add_executable(vertex-formats-test EXCLUDE_FROM_ALL ../tests/test_vertex_formats.cpp)
+target_compile_options(vertex-formats-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(vertex-formats-test PRIVATE shim shadps4)
+target_link_libraries(vertex-formats-test PRIVATE bbgpu)
 # Stencil-only depth target sizes (shadPS4 #5384).
 add_executable(depth-stencil-test EXCLUDE_FROM_ALL ../tests/test_depth_stencil.cpp)
 target_compile_options(depth-stencil-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
