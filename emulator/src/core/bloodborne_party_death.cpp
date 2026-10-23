@@ -122,7 +122,7 @@ void LogBloodstainStateChanges() {
     const u64 player = GetLocalPlayer();
     const auto state =
         fmt::format("has_mark={} record_valid={} record_30={} record_38={} record_block={:#x} "
-                    "record_pos=({}, {}, {}) stain={:#x} "
+                    "record_pos=({}, {}, {}) death_pos=({}, {}, {}) stain={:#x} "
                     "stain_hidden={} shown_marker={:#x} shown_effect={:#x} flag1592={} "
                     "flag1770={} chr_type={}",
                     data >= 0x10000 ? ReadValue<u8>(data, 0x28) : 0xFF,
@@ -130,6 +130,9 @@ void LogBloodstainStateChanges() {
                     record >= 0x10000 ? ReadValue<s32>(record, 0x30) : 0,
                     record >= 0x10000 ? ReadValue<s32>(record, 0x38) : 0,
                     record >= 0x10000 ? ReadValue<u32>(record, 0x3C) : 0,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x00) : 0.0f,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x04) : 0.0f,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x08) : 0.0f,
                     record >= 0x10000 ? ReadValue<float>(record, 0x18) : 0.0f,
                     record >= 0x10000 ? ReadValue<float>(record, 0x1C) : 0.0f,
                     record >= 0x10000 ? ReadValue<float>(record, 0x20) : 0.0f, stain,
@@ -148,13 +151,12 @@ void LogBloodstainStateChanges() {
 std::optional<Bloodstain> ReadOwnBloodstain() {
     const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
     const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
-    if (record < 0x10000 || !HasMemoryAccess(record, 0x40, MemoryProt::CpuRead)) {
+    const auto bytes =
+        record >= 0x10000 ? TryRead<std::array<u8, BloodstainRecordSize>>(record, 0) : std::nullopt;
+    if (!bytes) {
         return std::nullopt;
     }
-    return BloodstainOf(ReadValue<u8>(data, 0x28) != 0, ReadValue<u32>(record, 0x3C),
-                        {ReadValue<float>(record, 0x18), ReadValue<float>(record, 0x1C),
-                         ReadValue<float>(record, 0x20)},
-                        ReadValue<s32>(record, 0x38));
+    return BloodstainOfRecord(ReadValue<u8>(data, 0x28) != 0, *bytes);
 }
 
 } // namespace Coop

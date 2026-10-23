@@ -136,6 +136,22 @@ TEST_F(BloodborneEboot, EveryCoopSiteHoldsItsOriginalBytes) {
     }
 }
 
+// Player report 2026-10-23 (the compass's bloodstain a bit off): the record UpDateBloodMark
+// (0x013D2910) writes keeps where the stain lies at +0x00 and where the player died at +0x18
+// (BloodstainOfRecord), and the stain's marker is placed at the first.
+TEST_F(BloodborneEboot, TheBloodstainLiesAtTheRecordsFirstPlace) {
+    // In the player's own world: +0x00 = 0x01904660(player), `mov [rbx], rax; mov [rbx+8], edx`.
+    EXPECT_EQ(CallTarget(0x013D2982), 0x01904660u);
+    EXPECT_EQ(Bytes(0x013D2987, 6), (std::vector<u8>{0x48, 0x89, 0x03, 0x89, 0x53, 0x08}));
+    // ... which is [player +0x400] +0x30, the player's last safe ground.
+    EXPECT_EQ(Bytes(0x01904660, 16), HexBytes("48 8B 8F 00 04 00 00 48 85 C9 74 06 48 83 C1 30"));
+    // +0x18: the character's position now (its physics +0x1E0), where it died.
+    EXPECT_EQ(Bytes(0x013D2AEE, 20),
+              HexBytes("C5 F8 28 80 E0 01 00 00 C4 E3 79 17 43 20 02 C5 F9 D6 43 18"));
+    // The show (0x01868A50) copies the record's +0x00 into the stain's marker (+0x88).
+    EXPECT_EQ(Bytes(0x01868BAC, 16), HexBytes("48 8B 49 30 8B 51 08 89 50 08 48 8B 11 48 89 10"));
+}
+
 // The channel table drops a received packet by giving it a channel past 0x43: both receive paths
 // of 0x01790C20 test `cmp ..., 0x43` right after its hook and take the game's own drop branch
 // (`ja`), which frees the packet (reliable, 0x01790E31) or returns false (unreliable, 0x01790F2E).
