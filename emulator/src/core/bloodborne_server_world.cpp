@@ -175,6 +175,9 @@ constexpr u32 TeamSessionSign = 7;
 InvaderTrip invader_trip;
 InvadedTeam invaded_team;
 std::atomic<bool> invader_link{false};
+// invader_trip.AwayFromHome(), for the hooks that ask many times a frame (Invading): only the game
+// thread's tick changes it.
+std::atomic<bool> invader_away{false};
 
 std::string PartyKey() {
     if (team_switch) {
@@ -2583,11 +2586,7 @@ InvasionView InvasionViewNow() {
 }
 
 bool Invading() {
-    if (!team_switch) {
-        return false;
-    }
-    std::scoped_lock lock{team_mutex};
-    return invader_trip.AwayFromHome();
+    return team_switch && invader_away.load(std::memory_order_relaxed);
 }
 
 std::string InvaderInWorld() {
@@ -2635,6 +2634,7 @@ void TickInvasion() {
         invaded_team.Tick(now_ms);
         if (!invader_trip.Active() && !home_kept) {
             invader_link.store(false);
+            invader_away.store(false);
             return;
         }
     }
@@ -2676,6 +2676,7 @@ void TickInvasion() {
             }
         }
         action = invader_trip.Tick(frame);
+        invader_away.store(invader_trip.AwayFromHome());
         phase = invader_trip.Current();
         start = invader_trip.Start();
         join = invader_trip.Join(invasion_fallback_switch, TeamSessionKind);
@@ -2774,6 +2775,7 @@ void TickInvasion() {
         RestoreInvasionHome(false)) {
         std::scoped_lock lock{team_mutex};
         invader_trip.Home();
+        invader_away.store(invader_trip.AwayFromHome());
         home_kept = false;
         going_home_ms = -1;
         LOG_INFO(Debug, "Co-op invasion: home");

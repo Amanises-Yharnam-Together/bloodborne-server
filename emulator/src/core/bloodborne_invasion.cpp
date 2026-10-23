@@ -117,7 +117,7 @@ std::string_view InvasionEndReasonName(bbcoop::InvasionEnd::Reason reason) {
         return "invaders turned off";
     case bbcoop::InvasionEnd::NOT_FOUND:
         return "no world found";
-    case bbcoop::InvasionEnd::REFUSED:
+    case bbcoop::InvasionEnd_Reason_REFUSED:
         return "refused";
     default:
         return "ended";
@@ -381,6 +381,15 @@ InvasionView InvasionViewOf(const InvaderTrip& trip, const InvadedTeam& team, s6
             view.phase = InvasionView::Phase::Active;
             break;
         }
+        return view;
+    }
+    // A search that ended before any join (refused, nothing found): said a while.
+    if (team.Current() == InvadedTeam::Phase::None &&
+        trip.EndReason() != bbcoop::InvasionEnd::NONE &&
+        now_ms - trip.PhaseSinceMs() < InvadedTeam::EndShownMs) {
+        view.role = InvasionView::Role::Invader;
+        view.phase = InvasionView::Phase::Ended;
+        view.reason = trip.EndReason();
         return view;
     }
     switch (team.Current()) {

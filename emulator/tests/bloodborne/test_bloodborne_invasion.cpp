@@ -239,9 +239,9 @@ TEST(InvaderTrip, AJoinThatNeverTakes) {
 TEST(InvaderTrip, EndsBeforeTheJoin) {
     InvaderTrip refused;
     refused.Ask(0);
-    refused.TakeEnd(End(0, bbcoop::InvasionEnd::REFUSED), 10);
+    refused.TakeEnd(End(0, bbcoop::InvasionEnd_Reason_REFUSED), 10);
     EXPECT_FALSE(refused.Active());
-    EXPECT_EQ(refused.EndReason(), bbcoop::InvasionEnd::REFUSED);
+    EXPECT_EQ(refused.EndReason(), bbcoop::InvasionEnd_Reason_REFUSED);
 
     InvaderTrip noticed;
     noticed.Ask(0);
@@ -303,6 +303,12 @@ TEST(InvadedTeam, TheInvadersOwnView) {
     EXPECT_EQ(view.role, InvasionView::Role::Invader);
     EXPECT_EQ(view.phase, InvasionView::Phase::Approaching);
     EXPECT_EQ(view.seconds, 8);
+    // Nothing found: said a while, then nothing.
+    trip.TakeEnd(End(1, bbcoop::InvasionEnd::NOT_FOUND), 3'000);
+    EXPECT_EQ(InvasionViewOf(trip, {}, 4'000).phase, InvasionView::Phase::Ended);
+    EXPECT_EQ(InvasionViewOf(trip, {}, 4'000).reason, bbcoop::InvasionEnd::NOT_FOUND);
+    EXPECT_EQ(InvasionViewOf(trip, {}, 3'000 + InvadedTeam::EndShownMs).phase,
+              InvasionView::Phase::None);
 }
 
 // Kill attribution: only a lethal check right after the invader's hit, never while down.

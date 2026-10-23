@@ -143,6 +143,10 @@ public:
     s64 ApproachUntilMs() const {
         return approach_until_ms;
     }
+    // When the phase began (an end: when it ended).
+    s64 PhaseSinceMs() const {
+        return phase_since_ms;
+    }
 
 private:
     void GoHome(bool tell, bool death);
