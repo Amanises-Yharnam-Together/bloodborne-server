@@ -880,10 +880,6 @@ bool PS4_SYSV_ABI SkipDownedHitReaction(u64, const GuestRegisterSnapshot* regist
     return SkipsHitReaction(true, ReadValue<u64>(registers->rdi, 0x08), GetLocalPlayer());
 }
 
-// A character's fade (float, 1.0 while shown): a fall into the void fades it out to 0.0, which only
-// a map load puts back (rig 2026-10-22).
-constexpr u64 CharacterFadeOffset = 0x20C;
-
 // The fall damage step (0x01A35C33) takes a fall into the void as a fixed lethal height while
 // [[character +0x58] +0x38] +0x48 bit 1 is set. Such a fall stays a real death: nobody could
 // reach the player down there.

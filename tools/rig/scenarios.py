@@ -1960,6 +1960,76 @@ SCENARIOS = {
         "allow": [r"left the session outside a trip"],
         "timeout": 300,
     },
+    # Player report 2026-10-23 (v1.1.9): a guest of a team sometimes came back in the Hunter's Dream,
+    # not where it was, and the host never saw it until the host went there too. The team on
+    # Cathedral Ward (both rig saves start in Central Yharnam); the guest's game starts again and
+    # it joins the team's session where it was, seen by the host.
+    "team-guest-restart": {
+        "about": "a team on Cathedral Ward: the guest's game starts again and its team load puts "
+                 "it back on the Ward beside the host, both seeing each other",
+        "roles": {
+            "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                     "godmode", "wait-session 2 300", f"travel {CATHEDRAL_WARD_LAMP}",
+                     "wait-members 2 120", "wait 10", "wait-solo 180", "wait-session 2 420",
+                     "wait-members 2 120", "wait 20", "snapshot", f"expect-map {CATHEDRAL_WARD}",
+                     "expect-others-shown 1", "expect-session 2"],
+            "guest": [["team-accept", "team-ready", START, "godmode", "wait-session 2 300",
+                       f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120", "wait 15",
+                       "snapshot", "done"],
+                      ["team-ready", "godmode", "wait-session 2 420", "wait-members 2 120",
+                       "wait 20", "snapshot", f"expect-map {CATHEDRAL_WARD}",
+                       "expect-others-shown 1", "expect-session 2"]],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    # The same report: the host's game went (in the player's log it quit to the title after a
+    # wipe and opened its session again) while the guest stayed in its world on the team's map.
+    "team-host-restart": {
+        "about": "a team on Cathedral Ward: the host's game starts again; the guest stays on the "
+                 "Ward and joins the host's new session there, both seeing each other",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "godmode", "wait-session 2 300", f"travel {CATHEDRAL_WARD_LAMP}",
+                      "wait-members 2 120", "wait 15", "snapshot", "done"],
+                     ["title-wait 20", "team-start", "godmode", "wait-session 2 420",
+                      "wait-members 2 120", "wait 20", "snapshot", f"expect-map {CATHEDRAL_WARD}",
+                      "expect-others-shown 1", "expect-session 2"]],
+            "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300",
+                      f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120", "wait-solo 180",
+                      "wait 5", "snapshot", "wait-session 2 420", "wait-members 2 120", "wait 20",
+                      "snapshot", f"expect-map {CATHEDRAL_WARD}", "expect-others-shown 1",
+                      "expect-session 2"],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    # The player's log: each time, the host's game left 35-40 s after a party wipe (both woke at
+    # the host's lamp) and opened its session again; the guest came back in the Dream.
+    "team-wipe-host-restart": {
+        "about": "a team on Cathedral Ward wipes and wakes at the lamp; the host's game then "
+                 "starts again: the guest stays on the Ward and joins the host's new session "
+                 "there, both seeing each other",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120",
+                      "wait-member-vital down 120", "wait 3", *LETHAL_FALL, "wait-vital dead 30",
+                      "wait-vital up 120", "wait-members 2 240", "wait 25", "snapshot", "done"],
+                     ["title-wait 20", "team-start", "godmode", "wait-session 2 420",
+                      "wait-members 2 120", "wait 20", "snapshot", f"expect-map {CATHEDRAL_WARD}",
+                      "expect-others-shown 1", "expect-session 2"]],
+            "guest": ["team-accept", "team-ready", START, "wait-session 2 300",
+                      f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120", "wait 10",
+                      *LETHAL_FALL, "wait-vital down 30", "wait-vital dead 60",
+                      "wait-vital up 120", "godmode", "wait-solo 240", "wait 5", "snapshot",
+                      "wait-session 2 420", "wait-members 2 120", "wait 20", "snapshot",
+                      f"expect-map {CATHEDRAL_WARD}", "expect-others-shown 1",
+                      "expect-session 2"],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
     "team-menu-join": {
         "about": "in game, the host invites a guest playing alone; the guest joins the hunt from "
                  "the menu where it stands",
@@ -2983,7 +3053,9 @@ SCENARIOS = {
     # -190.1 -76.2 252.2); the guest steps off the ledge west of it where the player did (the
     # trace: dead about 16 m down, still falling). The void fades a character out (+0x20C, 1.0
     # while shown) and only a map load puts it back: once up again, the guest is faded in (on 1.1.2
-    # it stayed 0.0) and shown to the host.
+    # it stayed 0.0) and shown to the host. Player report 2026-10-23 (v1.1.9): the host's copy of
+    # the guest faded out in the void too and stayed so (expect-others-shown: "faded out fade
+    # 0.00"): it fades back in once the guest is up again.
     "void-fall-respawn": {
         "about": "in a session the guest steps off a Forbidden Woods cliff into the void while the "
                  "host stands at the lamp; it wakes at the lamp shown to itself and to the host",
@@ -2992,18 +3064,20 @@ SCENARIOS = {
                      "wait-session 2 300", "travel 2702950", "wait-members 2 120", "wait 10",
                      "expect-others-shown 1",
                      "wait-member-vital dead 60", "wait-member-vital up 60", "wait 15", "snapshot",
-                     "expect-others-shown 1", "expect-others-near 1 40",
+                     "expect-others-shown 1", "expect-others-near 1 40", "shot host-sees-guest",
                      "expect-session 2"],
             "guest": [START, f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "wait-session 2 300",
                       "travel 2702950", "wait-members 2 120", "wait 10",
                       "teleport -211.0 -76.5 250.4 1.5708", "wait 2", "stick 128 0 2500",
-                      "wait-vital dead 30", "wait-vital up 60", "wait 15", "snapshot",
+                      "wait-vital dead 45", "wait-vital up 60", "wait 15", "snapshot",
                       "peek self 20c", "expect-others-shown 1", "expect-others-near 1 40",
                       "expect-session 2"],
         },
         "expect": {"guest": [r"party death: the death was a fall into the void",
                              r"travelling there \(reset=false, void fall=true\)",
-                             r"autoplay peek: 0x10044000 \+0x20c = 0x3f800000"]},
+                             r"autoplay peek: 0x10044000 \+0x20c = 0x3f800000"],
+                   "host": [r"presence: player 0x1004400\d faded out \(a fall into the void\) "
+                            r"and its member \w+ is up again: faded back in"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "settings": PARTY_DEATH,
         "timeout": 300,

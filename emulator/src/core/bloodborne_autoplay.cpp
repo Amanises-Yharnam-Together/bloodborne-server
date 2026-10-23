@@ -1674,15 +1674,21 @@ bool AutoplayPickupStain(const AutoplayStep& step) {
 }
 
 // expect-others-shown <n>: exactly n other players show in this world (not hidden: Kaniel
-// 2026-10-15, members gone to another map still stood here).
+// 2026-10-15, members gone to another map still stood here; nor faded out: player report
+// 2026-10-23, the copy of a player who fell into the void stayed faded out after its respawn).
 bool AutoplayExpectOthersShown(const AutoplayStep& step) {
     size_t shown = 0;
     std::string seen;
     for (const OtherPlayer& other : OtherPlayers()) {
         const bool off = IsCharacterDisabled(other.character);
-        seen += fmt::format(" [{:#x} {}]", ReadValue<u32>(other.character, 0x08),
-                            off ? "hidden" : "shown");
-        shown += off ? 0 : 1;
+        const float fade = CharacterFade(other.character);
+        const bool faded = fade < 1.0f;
+        seen += fmt::format(" [{:#x} {} fade {:.2f}]", ReadValue<u32>(other.character, 0x08),
+                            off     ? "hidden"
+                            : faded ? "faded out"
+                                    : "shown",
+                            fade);
+        shown += off || faded ? 0 : 1;
     }
     if (shown != static_cast<size_t>(step.Number(0, 0))) {
         step.failure = fmt::format("{} shown:{}", shown, seen.empty() ? " none" : seen);
