@@ -198,6 +198,37 @@ public:
     // goes).
     void Drain();
 
+    // The operator's (admin.h). Where a linked game is: its lobby name, its team, the world it
+    // plays (its team's pick, or its party's), its map; nothing before its first message.
+    struct Place {
+        std::string lobby;
+        std::string team;
+        std::string world;
+        std::uint32_t map = 0;
+    };
+    std::optional<Place> PlaceOf(const ServerLink::Endpoint& link) const;
+    // The listed worlds: each one's line, folder, bytes on disk and games in it now.
+    struct WorldRow {
+        bbcoop::TeamWorldInfo info;
+        QString folder;
+        qint64 bytes = 0;
+        int games = 0;
+    };
+    std::vector<WorldRow> WorldRows() const;
+    // The worlds put aside (forgotten/<folder>-<when>): the line each had, when it was kept.
+    struct AsideRow {
+        QString folder;
+        qint64 bytes = 0;
+        std::optional<bbcoop::TeamWorldInfo> info;
+    };
+    std::vector<AsideRow> AsideRows() const;
+    // Worlds nobody played for `idle_ms` (and no team picked, no game is in) off the list, their
+    // folders put aside as a forgotten world's (never deleted): their ids.
+    std::vector<std::string> Retire(qint64 now_ms, qint64 idle_ms, Result& result);
+    // A world put aside (its folder in forgotten/) back on the list, to the players it had, as
+    // played now (the next retirement keeps it). `said`: its id, or why it could not.
+    bool Restore(const QString& aside, qint64 now_ms, QString& said, Result& result);
+
     // For the tests and the log.
     const BloodborneCoop::WorldLogHost* World(const QByteArray& party) const;
     int Parties() const {
@@ -356,8 +387,10 @@ private:
     void StoreWorldList(Result& result);
     // The folder of a party: its world's on the list ("world:<id>"), else a hash of its key.
     QString FolderOf(const QByteArray& party) const;
-    // Worlds off the list: their folders go aside (forgotten/<folder>-<when>), nothing deleted.
-    void PutAside(const std::vector<std::string>& forgotten, Result& result);
+    // Worlds off the list (`why`: forgotten, retired): their folders go aside
+    // (forgotten/<folder>-<when>) with their lines (kept_world.pb, for Restore), nothing deleted.
+    void PutAside(const std::vector<bbcoop::TeamWorldInfo>& lines, const QString& why,
+                  Result& result);
 
     QString folder;
     std::unique_ptr<WorldWriter> writer; // with a folder

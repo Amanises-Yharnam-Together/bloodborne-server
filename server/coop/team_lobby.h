@@ -82,6 +82,7 @@ public:
         std::vector<Departure> departed; // members out of their team
         // Worlds off the list (forgotten by a leader, or past MaxWorlds): their folders go aside.
         std::vector<std::string> forgotten;
+        std::vector<bbcoop::TeamWorldInfo> forgotten_lines; // their lines, as they were
         // Kaniel 2026-10-17: a world's line changed (a character played in it): the list to disk.
         bool worlds_changed = false;
     };
@@ -116,6 +117,11 @@ public:
     bool NoteWorld(const bbcoop::TeamWorldInfo& note);
     // An id no listed world (nor team) has.
     std::string NewWorldId();
+    // The operator's (admin.h): the worlds last played (never played: made) before `before_ms`
+    // that no team has picked, off the list (and no player's pick); their lines.
+    std::vector<bbcoop::TeamWorldInfo> TakeIdleWorlds(s64 before_ms);
+    // A world put aside back on the list; false when a listed world has its id.
+    bool AddWorld(bbcoop::TeamWorldInfo world);
 
     // The party key of a world: "world:<id>".
     static std::string PartyOf(const std::string& world);
@@ -137,8 +143,10 @@ private:
     // The started team (not `except`) that plays `world`, if any.
     const bbcoop::Team* PlayedBy(const std::string& world, const bbcoop::Team* except) const;
     static void PickWorld(bbcoop::Team& team, const std::string& world);
-    // Past MaxWorlds: the least lately played no team has picked go.
-    void KeepLastWorlds(std::vector<std::string>& forgotten);
+    // Past MaxWorlds: the least lately played no team has picked go. Hosted: each member of the
+    // `started` team past its worlds_per_player leaves its oldest; a world nobody keeps goes.
+    void KeepLastWorlds(const bbcoop::Team& started, std::vector<std::string>& forgotten,
+                        std::vector<bbcoop::TeamWorldInfo>& forgotten_lines);
     // Phase 7: the leader's sign is 0 (it hosts); a guest keeps its own, one without takes the
     // first free of 7, 6, 5.
     static void GiveSigns(bbcoop::Team& team);

@@ -197,17 +197,42 @@ void TeamLobby::PickWorld(bbcoop::Team& team, const std::string& world) {
     team.set_party(world.empty() ? std::string{} : PartyOf(world));
 }
 
-void TeamLobby::KeepLastWorlds(std::vector<std::string>& forgotten) {
+void TeamLobby::KeepLastWorlds(const bbcoop::Team& started, std::vector<std::string>& forgotten,
+                               std::vector<bbcoop::TeamWorldInfo>& forgotten_lines) {
     std::ranges::stable_sort(worlds, LaterFirst);
-    if (hosted) {
-        return; // each player's list is its own worlds (StateFor), none crowds out another's
-    }
     const auto picked = [this](const std::string& id) {
         return std::ranges::any_of(teams, [&](const bbcoop::Team& t) { return t.world() == id; });
     };
+    if (hosted) {
+        // Each player's list is its own worlds (StateFor), none crowds out another's: a player
+        // past its newest worlds_per_player leaves its oldest (one nobody keeps then goes), or
+        // starting again and again would grow the list without end.
+        std::set<std::string> left; // worlds a member left here
+        for (const bbcoop::TeamMember& m : started.members()) {
+            size_t kept = 0;
+            for (bbcoop::TeamWorldInfo& world : worlds) {
+                if (!Lists(world.members(), m.member()) || ++kept <= worlds_per_player ||
+                    picked(world.id())) {
+                    continue;
+                }
+                auto& keepers = *world.mutable_members();
+                keepers.erase(std::ranges::find(keepers, m.member()));
+                left.insert(world.id());
+            }
+        }
+        for (size_t at = worlds.size(); at-- > 0;) {
+            if (worlds[at].members().empty() && left.contains(worlds[at].id())) {
+                forgotten.push_back(worlds[at].id());
+                forgotten_lines.push_back(worlds[at]);
+                worlds.erase(worlds.begin() + static_cast<std::ptrdiff_t>(at));
+            }
+        }
+        return;
+    }
     for (size_t at = worlds.size(); worlds.size() > MaxWorlds && at-- > 0;) {
         if (!picked(worlds[at].id())) {
             forgotten.push_back(worlds[at].id());
+            forgotten_lines.push_back(worlds[at]);
             worlds.erase(worlds.begin() + static_cast<std::ptrdiff_t>(at));
         }
     }
@@ -219,6 +244,35 @@ std::string TeamLobby::NewWorldId() {
         id = make_id();
     }
     return id;
+}
+
+std::vector<bbcoop::TeamWorldInfo> TeamLobby::TakeIdleWorlds(s64 before_ms) {
+    std::vector<bbcoop::TeamWorldInfo> taken;
+    std::erase_if(worlds, [&](const bbcoop::TeamWorldInfo& world) {
+        const s64 last = world.played_ms() != 0 ? world.played_ms() : world.created_ms();
+        if (last >= before_ms || std::ranges::any_of(teams, [&](const bbcoop::Team& team) {
+                return team.world() == world.id();
+            })) {
+            return false;
+        }
+        taken.push_back(world);
+        return true;
+    });
+    for (auto& [id, player] : players) {
+        if (std::ranges::any_of(taken, [&](const auto& w) { return w.id() == player.world; })) {
+            player.world.clear();
+        }
+    }
+    return taken;
+}
+
+bool TeamLobby::AddWorld(bbcoop::TeamWorldInfo world) {
+    if (world.id().empty() || FindWorld(world.id())) {
+        return false;
+    }
+    worlds.push_back(std::move(world));
+    std::ranges::stable_sort(worlds, LaterFirst);
+    return true;
 }
 
 void TeamLobby::SetWorlds(std::vector<bbcoop::TeamWorldInfo> list) {
@@ -647,6 +701,7 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member, const bbcoop::T
                 return {.changed = true, .worlds_changed = true};
             }
         }
+        const bbcoop::TeamWorldInfo line = *FindWorld(request.world());
         std::erase_if(worlds, [&](const auto& w) { return w.id() == request.world(); });
         for (bbcoop::Team& team : teams) {
             if (team.world() == request.world()) {
@@ -658,7 +713,7 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member, const bbcoop::T
                 player.world.clear();
             }
         }
-        return {.changed = true, .forgotten = {request.world()}};
+        return {.changed = true, .forgotten = {request.world()}, .forgotten_lines = {line}};
     }
     case Action::START: {
         if (!mine || mine->leader() != member) {
@@ -694,7 +749,7 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member, const bbcoop::T
                     world.add_members(m.member()); // hosted: it is theirs now
                 }
             }
-            KeepLastWorlds(outcome.forgotten);
+            KeepLastWorlds(*mine, outcome.forgotten, outcome.forgotten_lines);
         }
         mine->set_started(true);
         for (const bbcoop::TeamMember& m : mine->members()) {
