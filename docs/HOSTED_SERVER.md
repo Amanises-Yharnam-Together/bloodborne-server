@@ -23,7 +23,11 @@ Off by default: a host's own server behaves as before. On (`shadnet.cfg`):
 
 Two fixes are on for everyone: a TCP packet size under its header no longer loops the session for
 ever (`client_session.cpp`), and a datagram from one game no longer walks every member's stream
-(`Service::FlushSome`; that walk was the limit past ~600 games).
+(`Service::FlushSome`; that walk was the limit past ~600 games). The worlds' disk writes (journal
+records, Compact, trades, team worlds, the world list) run on a writer thread
+(`bloodborne_world.h` `WorldWriter`): one queue in order, the journals fsynced together every
+100 ms or 256 records and always before a world.pb is written; SIGTERM/Ctrl+C drain it before
+exit. A power cut can lose the last ~100 ms of records (never their order, never the journal).
 
 Settings: `Hosted`, `HostedBuild`, `HostedBanList`, `HostedLinksPerAddress`,
 `HostedHellosPerSecond`, `HostedNewAccountsPerHour`, `HostedDatagramsPerSecond`,
@@ -97,7 +101,6 @@ Server only:
   answer addresses with a signed-in link, as that link's player.
 - Caps on the reliable streams' reassembly and out-of-order buffers and on the protobuf strings.
 - Store each account's virtual address and refuse a colliding new account (24-bit hash).
-- World journal writes off the link thread (each record is fsynced on it now).
 - Make the account limit hold against botnets: a proof-of-work in the hello, or sign-up through
   the launcher with a server-signed token.
 - Retire worlds nobody played for months (disk).
