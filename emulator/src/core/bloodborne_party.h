@@ -2204,6 +2204,13 @@ const std::vector<CodePatch>& QuietSummonBannerPatches();
 // chimes): the network banner (0x01BFFE80, message id in edi) shows none of them.
 constexpr std::array<u8, 8> ShowNetworkBannerPrologue{0x55, 0x48, 0x89, 0xE5,
                                                       0x41, 0x57, 0x41, 0x56};
+// Kaniel 2026-10-23: the item-received popup ("Oedon Tomb Key 1 / OK") and its pickup sound
+// (menu sound 300) come from one function: the give (GiveItems, 0x017D89F0) calls it for each
+// item it put in the inventory (0x017D9348) and each it sent to the storage (0x017D94C7) with
+// (queue [0x0553B1C0], &handle, category, id, count, to storage); it pushes the item on the
+// popup's queue. Its result is never read. Skipped while SilentItemGets lives (see there).
+constexpr u64 ItemGetQueuedOffset = 0x016D8850;
+constexpr std::array<u8, 8> ItemGetQueuedPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
 // Kaniel 2026-10-18: a guest whose connection dropped and came back (the party went on) still
 // had "Lost connection to the network. Returning to title menu." (FMG 204, 4701) with its OK
 // button over the game. The network script's OnLanCutError (0x01387130, a Lua C function: the

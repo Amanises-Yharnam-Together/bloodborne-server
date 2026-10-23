@@ -10,6 +10,7 @@
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
 #include "core/bloodborne_send_pace.h"
+#include "core/bloodborne_team.h"
 #include "core/bloodborne_trade.h"
 #include "core/bloodborne_write_watch.h"
 
@@ -1476,6 +1477,38 @@ void InstallNoLostConnectionPopup(u64 base, u64 image_size) {
     coop_features.On("no lost-connection popup");
 }
 
+// See ItemGetQueuedOffset: the item-received popup's queue push, skipped while a SilentItemGets
+// lives on this thread. Each push is logged (the rig's popup detector).
+bool PS4_SYSV_ABI SkipSilentItemGet(u64, const GuestRegisterSnapshot* registers) {
+    const bool silent = ItemGetsSilent();
+    static std::atomic<u32> logged{0};
+    if (logged.fetch_add(1) < 300) {
+        const u32 category = static_cast<u32>(registers->rdx) & 0xF0000000;
+        const char* kind = category == 0x40000000   ? "goods"
+                           : category == 0x10000000 ? "armor"
+                           : category == 0x20000000 ? "accessory"
+                           : category == 0          ? "weapon"
+                                                    : "item";
+        LOG_INFO(Debug, "Bloodborne party: item-get popup {} {} x {} {}", kind,
+                 static_cast<u32>(registers->rcx), static_cast<s32>(registers->r8),
+                 silent ? "not shown (a silent grant)" : "queued");
+    }
+    return silent;
+}
+
+void InstallSilentKeyItems(u64 base, u64 image_size) {
+    if (!party_controller || !CoopSitesMatch(base, image_size, "silent key items",
+                                             "a joining guest's key items show their popups")) {
+        return;
+    }
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + ItemGetQueuedOffset), ItemGetQueuedPrologue,
+                         0, GuestFunctionOverride{SkipSilentItemGet})) {
+        coop_features.Skipped("silent key items", "the hook did not go in");
+        return;
+    }
+    coop_features.On("silent key items");
+}
+
 void InstallNoMultiplayerBanners(u64 base, u64 image_size) {
     if (!party_controller || !CoopSitesMatch(base, image_size, "no multiplayer banners",
                                              "join and leave banners show")) {
@@ -1736,6 +1769,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallJoinAnywhere(base, image_size);
     InstallQuietSummonBanners(base, image_size);
     InstallNoMultiplayerBanners(base, image_size);
+    InstallSilentKeyItems(base, image_size);
     InstallCharacterNames(base, image_size);
     InstallNoLostConnectionPopup(base, image_size);
     InstallGuestsHitNpcs(base, image_size);
