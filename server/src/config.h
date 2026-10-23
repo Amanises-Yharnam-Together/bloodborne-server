@@ -37,6 +37,7 @@ struct HostedConfig {
     int lobbyPlayers = 32;     // players listed to each player besides its team and invites
     int lobbyIntervalMs = 250; // lobby states go out at most this often
     int worldsPerPlayer = 16;  // worlds listed to a player (the ones it played in)
+    int partyWorlds = 2048;    // party worlds in memory at once (a team's each; idle ones go)
 };
 
 class ConfigManager {

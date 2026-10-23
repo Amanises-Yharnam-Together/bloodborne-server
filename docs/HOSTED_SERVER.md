@@ -20,14 +20,32 @@ Off by default: a host's own server behaves as before. On (`shadnet.cfg`):
 | A party hello must be for the world the player's team plays | `bloodborne_world.cpp` `OnHello` | any player could join any world by its key |
 | A world is its players' (`TeamWorldInfo.members`): listed to them only, forgotten only by them (each for itself) | `team_lobby.cpp` | every world was listed to everyone; anyone could forget anyone's; 16 worlds server-wide |
 | The lobby goes out at most every 250 ms, only to players whose own state changed, listing their team, invites and 32 others | `team_lobby.cpp` `StateFor`, `bloodborne_world.cpp` `SendLobby` | every lobby change sent every player the whole server's list: O(n^2), 216 Mbit/s at 120 players |
+| A trade only between members of one started team | `bloodborne_world.cpp` `TakeTrade` | trades go by member name; a stranger in a party could be offered goods or answer for another |
+| Party worlds in memory: at most `HostedPartyWorlds` (2048) | `bloodborne_world.h` `Limits` | every team's world on one machine |
 
 Two fixes are on for everyone: a TCP packet size under its header no longer loops the session for
 ever (`client_session.cpp`), and a datagram from one game no longer walks every member's stream
 (`Service::FlushSome`; that walk was the limit past ~600 games).
 
+Caps, also for everyone (one game must not grow the server's memory without end; each is far
+above what a game sends, so only a broken or hostile one meets it):
+
+| What | Cap | Past it | Where |
+| --- | --- | --- | --- |
+| A Coop message (the largest a game sends: its TeamWorld, every world flag on; a portrait is 48 KiB) | 1 MiB | the member's stream is dropped; its game starts over and says hello again | `bloodborne_world.h` `Limits` |
+| A stream chunk | 1001 bytes (what a Send makes) | the same | `coop_stream.h` |
+| Chunks held out of order | 1 MiB a member (Rpc: 256 KiB) | dropped, they come again as resends | `game_link.h` |
+| Unreliable channels remembered | 16 | dropped (the games send none on these streams) | `game_link.h` |
+| What the server queued to a game not acked | 8 MiB | the member is dropped | `Service::FlushSome` |
+| An Rpc message (the game's bridge reads 16 KiB) | 64 KiB | the tunnel is dropped; the game connects again | `link_server.h` |
+| Rpc bytes before the TCP port answers / shadNet's answers not acked | 1 MiB / 9 MiB | the connection ends | `link_server.cpp` |
+| Message fields: names 64 bytes, characters 96, party key 256, portrait 128x128 RGB, join data 4 KiB, map state 1250 bytes, 4096 shown characters, HP enemies, flag events and echoes, 32768 kills, 250,000 team world flags, 64 trade items, trophies, revive hits | | the message is dropped (logged) | `Service::Oversized` |
+| Party worlds in memory | 1024 (hosted: `HostedPartyWorlds`); one nobody is in for 5 min goes back to disk only, and a new hello reads it again | a hello for a new world is refused | `Service::Collect` |
+
 Settings: `Hosted`, `HostedBuild`, `HostedBanList`, `HostedLinksPerAddress`,
 `HostedHellosPerSecond`, `HostedNewAccountsPerHour`, `HostedDatagramsPerSecond`,
-`HostedBytesPerSecond`, `HostedLobbyPlayers`, `HostedLobbyIntervalMs`, `HostedWorldsPerPlayer`.
+`HostedBytesPerSecond`, `HostedLobbyPlayers`, `HostedLobbyIntervalMs`, `HostedWorldsPerPlayer`,
+`HostedPartyWorlds`.
 
 The games need no change for any of this (the emulator already says its id in hex as its names;
 check the port does too). One game-side change is wanted: on a hosted server the lobby lists 32
@@ -95,7 +113,6 @@ world.pb, `sqlite3 .backup`, restic to S3/B2/Storage Box), with a restore drill 
 Server only:
 - The HTTP ports (31315 summon broker, 20443 backend) take the player id from the request: only
   answer addresses with a signed-in link, as that link's player.
-- Caps on the reliable streams' reassembly and out-of-order buffers and on the protobuf strings.
 - Store each account's virtual address and refuse a colliding new account (24-bit hash).
 - World journal writes off the link thread (each record is fsynced on it now).
 - Make the account limit hold against botnets: a proof-of-work in the hello, or sign-up through

@@ -51,6 +51,14 @@ private:
                const ServerLink::Endpoint& from);
 
     // A game's end of its Rpc tunnel here: the connection to shadNet's TCP port it stands for.
+    // What a game can make it hold: its messages (the bridge reads 16 KiB at a time) and those
+    // held out of order; what came before the TCP connection was up (it is up within a moment on
+    // 127.0.0.1); shadNet's answers it has not acked (one packet is at most 8 MiB, protocol.h).
+    // Past the first the tunnel goes, past the others its connection ends.
+    static constexpr size_t MaxRpcMessageBytes = 64 << 10;
+    static constexpr size_t MaxRpcHeldBytes = 256 << 10;
+    static constexpr qsizetype MaxRpcPendingBytes = 1 << 20;
+    static constexpr size_t MaxRpcUnackedBytes = 9 << 20;
     struct RpcEnd {
         std::unique_ptr<BloodborneCoop::RpcTunnel> tunnel;
         ServerLink::Endpoint to;
@@ -74,7 +82,6 @@ private:
     QElapsedTimer m_clock;
     Database m_db;
     quint16 m_tcpPort;
-    quint32 m_rpcInstance;
     QHash<QByteArray, QByteArray> m_signedIn; // player id -> its secret's hash, once signed in
     // Hosted: who may come in (admission.h), the sign-in thread and its checks under way, the
     // passwords refused lately (not hashed again for a while), the links of each address.

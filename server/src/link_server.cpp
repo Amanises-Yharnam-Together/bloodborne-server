@@ -13,8 +13,7 @@ LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_
     : QObject(parent), m_socket(new QUdpSocket(this)), m_shared(shared),
       m_linkTimer(new QTimer(this)),
       m_world(shared->config ? shared->config->GetBloodborneWorldPath() : QString{}),
-      m_worldTimer(new QTimer(this)), m_db(QStringLiteral("link_sign_in")), m_tcpPort(tcp_port),
-      m_rpcInstance(QRandomGenerator::global()->generate() | 1u) {
+      m_worldTimer(new QTimer(this)), m_db(QStringLiteral("link_sign_in")), m_tcpPort(tcp_port) {
     if (!m_db.Open(db_path))
         qCritical() << "Link: the accounts did not open:" << m_db.lastError();
     // Phase 11: the hello signs the player in (its id's account is made the first time).
@@ -53,6 +52,9 @@ LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_
         rules.lobby_interval_ms = m_hosted.lobbyIntervalMs;
         rules.worlds_per_player = static_cast<size_t>(std::max(1, m_hosted.worldsPerPlayer));
         m_world.SetHosted(rules);
+        BloodborneWorld::Limits world_limits;
+        world_limits.party_worlds = static_cast<size_t>(std::max(1, m_hosted.partyWorlds));
+        m_world.SetLimits(world_limits);
         // The password hashes on every core but the link's.
         m_signInPool.setMaxThreadCount(std::max(1, QThread::idealThreadCount() - 1));
         m_signInPool.setExpiryTimeout(-1);
@@ -259,14 +261,32 @@ void LinkServer::OnRpc(const ServerLink::Endpoint& from, const QByteArray& onlin
                        const QByteArray& body) {
     auto& slot = m_rpc[online_id];
     if (!slot) {
+        // The game's calls: none past a read of its bridge (16 KiB), its chunks a Send's. Each end
+        // its own instance: a game whose end was dropped sees a new one and connects again.
+        BloodborneCoop::CoopStream::Limits limits;
+        limits.message_bytes = MaxRpcMessageBytes;
+        limits.chunk_bytes = BloodborneCoop::CoopStream::ChunkBytes + 1;
+        limits.held_bytes = MaxRpcHeldBytes;
+        limits.unreliable_channels = 16;
         slot = std::make_unique<RpcEnd>();
-        slot->tunnel = std::make_unique<BloodborneCoop::RpcTunnel>("shadnet", m_rpcInstance);
+        slot->tunnel = std::make_unique<BloodborneCoop::RpcTunnel>(
+            "shadnet", QRandomGenerator::global()->generate() | 1u, limits);
     }
     RpcEnd& end = *slot;
     end.to = from;
     const auto bytes =
         std::span{reinterpret_cast<const u8*>(body.constData()), static_cast<size_t>(body.size())};
-    for (auto& event : end.tunnel->Receive(bytes, m_clock.elapsed())) {
+    const auto events = end.tunnel->Receive(bytes, m_clock.elapsed());
+    if (end.tunnel->Broken()) {
+        qInfo().noquote() << QStringLiteral("Link: %1's Rpc tunnel dropped: a message past %2 "
+                                            "bytes")
+                                 .arg(QString::fromLatin1(online_id.toHex()))
+                                 .arg(MaxRpcMessageBytes);
+        CloseRpc(end);
+        m_rpc.erase(online_id);
+        return;
+    }
+    for (auto& event : events) {
         using Kind = BloodborneCoop::RpcTunnel::Event::Kind;
         switch (event.kind) {
         case Kind::Opened:
@@ -275,10 +295,15 @@ void LinkServer::OnRpc(const ServerLink::Endpoint& from, const QByteArray& onlin
         case Kind::Data: {
             const QByteArray data(reinterpret_cast<const char*>(event.bytes.data()),
                                   static_cast<qsizetype>(event.bytes.size()));
-            if (end.socket && end.socket->state() == QAbstractSocket::ConnectedState)
+            if (end.socket && end.socket->state() == QAbstractSocket::ConnectedState) {
                 end.socket->write(data);
-            else
+            } else if (end.pending.size() + data.size() <= MaxRpcPendingBytes) {
                 end.pending.append(data);
+            } else {
+                // The connection to the TCP port is not up and the game keeps sending: over.
+                CloseRpc(end);
+                end.tunnel->Close(m_clock.elapsed());
+            }
             break;
         }
         case Kind::Closed:
@@ -311,6 +336,12 @@ void LinkServer::OpenRpc(const QByteArray& online_id, RpcEnd& end) {
         at->tunnel->Write(std::span{reinterpret_cast<const u8*>(data.constData()),
                                     static_cast<size_t>(data.size())},
                           m_clock.elapsed());
+        // A game that does not ack what shadNet answers: its connection ends, not the server's
+        // memory.
+        if (at->tunnel->UnackedBytes() > MaxRpcUnackedBytes) {
+            CloseRpc(*at);
+            at->tunnel->Close(m_clock.elapsed());
+        }
         FlushRpc(*at);
     });
     connect(socket, &QTcpSocket::disconnected, this, [this, socket, mine] {
