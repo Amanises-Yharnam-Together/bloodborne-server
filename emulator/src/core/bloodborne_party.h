@@ -1039,6 +1039,24 @@ std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp
 // What a member posts to the party's flag board from a change it saw: the SharedWithParty flags
 // that turned on.
 std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes);
+// What a guest running its map alone (no host there: its game runs the map's story) shares with
+// the team besides FlagsToShare: its changes to that map's own flags (TakesHostMapFlag, from
+// MapFlagBase(map)), sets and clears, as (flag, on). Kaniel's test 2026-10-23: the hag a lone guest
+// killed in Cathedral Ward was alive again for the host, a door it opened shut.
+std::vector<std::pair<s32, bool>> LoneGuestFlagsToShare(const FlagChanges& changes, u32 map);
+// Which of a lone guest's map changes go to the team (LoneGuestFlagsToShare): not the ones its
+// game's load sets up. Changes in the first LoadFlagsMs after a load are that map's load flags
+// (remembered for the session, a later visit sets them a moment later as well); after it every
+// other map change goes, at once (Kaniel's test 2026-10-23: the hag died 9 s after the load; with
+// no wait at all the boss's per-visit flags, 12414802..., went to the host too).
+class LoneGuestShares {
+public:
+    static constexpr s64 LoadFlagsMs = 8'000;
+    std::vector<std::pair<s32, bool>> Take(const FlagChanges& changes, u32 map, s64 since_load_ms);
+
+private:
+    std::map<u32, std::set<s32>> load_flags;
+};
 bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);
@@ -1834,6 +1852,10 @@ constexpr auto EnemyOwnerChangeSettles = std::chrono::seconds{5};
 // into the host's world, or a guest starting or ending its run of the map's enemies) or of its
 // own takeover or hand-back (`owner_changed_ms`).
 bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner_changed_ms);
+// Whether a settling character's death is still no kill: not when this player's own hit was its
+// last (Kaniel's test 2026-10-23: a lone guest killed the Cathedral Ward hag 9 s after a trip,
+// while its alone state had just changed; the kill was never posted and the host found her alive).
+bool SettlingHidesDeath(bool settling, std::optional<bool> last_hit_mine);
 // The world a lone guest's enemy claims (ClaimEnemiesWhenAlone) were made in: its map and the
 // local player's character. A load makes a new character, also on the same map (a join, a
 // respawn), and the claimed words go with the old world's memory (rig 2026-10-13: the hand-back
@@ -2747,6 +2769,14 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
 // Its game's ownership step gives its own player's enemies to it all the same: right after it, the
 // word such an enemy gets instead (the network's), or none (`hosting`: this game hosts).
 std::optional<u16> HostFollowerWord(EnemyRole role, bool hosting, u16 word);
+// Kaniel's test 2026-10-23: a guest alone on a map saw the characters its story hides (the
+// clinic's dog, every NPC the host's world hides). As the map loads they start loading ([control
+// +0x14] wanted, +0x10 applied), then the story hides them (+0x28); the host's game lets them go
+// (wanted and applied 0), a guest's game keeps them loaded with no host there to say otherwise, and
+// draws them. A lone guest (the owner of its map's enemies) switches such a one off; one it
+// switched off goes back on once it is no longer hidden or the guest no longer alone.
+bool LoneGuestSwitchesOff(bool lone_guest, bool hidden, bool disabled, s32 wanted, s32 applied);
+bool LoneGuestSwitchesBackOn(bool lone_guest, bool hidden);
 // Whether the activation pass wakes the enemies around the other players here (WakeAroundOthers):
 // on the owner, and on a host that follows (its copies by the owner take the owner's places, so
 // they stand there when it takes the map over).

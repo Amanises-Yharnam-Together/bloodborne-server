@@ -462,7 +462,28 @@ void PostWorldChanges(const FlagChanges& changes) {
         LOG_INFO(Debug, "Bloodborne party: the current altar's flags changed (altar {})",
                  altar ? fmt::to_string(*altar) : std::string{"unknown"});
     }
-    const auto shared = FlagsToShare(altar_changed ? AsAltarFlags(changes, altar) : changes);
+    auto shared = FlagsToShare(altar_changed ? AsAltarFlags(changes, altar) : changes);
+    // A guest running its map without the host (two guests there both do, each in its own copy):
+    // its game ran the map's story, so the team takes the map's steps it made, all but its loads'
+    // own (LoneGuestShares).
+    // Every guest's loads teach the map's load flags, alone or not yet known to be.
+    static LoneGuestShares lone_shares;
+    const auto map_steps =
+        IsPartyGuestRole()
+            ? lone_shares.Take(changes, PlayingMap(), SteadyMilliseconds() - world_loaded_ms.load())
+            : std::vector<std::pair<s32, bool>>{};
+    if (CurrentEnemyRole() == EnemyRole::Owner || HostAwayFromThisMap()) {
+        if (!map_steps.empty()) {
+            std::string which;
+            for (const auto& [flag, on] : map_steps) {
+                which += fmt::format(" {}{}", on ? "" : "-", flag);
+            }
+            LOG_INFO(Debug,
+                     "Bloodborne party: this lone guest's map steps go to the team (-off):{}",
+                     which);
+            shared.insert(shared.end(), map_steps.begin(), map_steps.end());
+        }
+    }
     if (shared.empty() || TakeFlagsForTheLog(shared)) {
         return;
     }

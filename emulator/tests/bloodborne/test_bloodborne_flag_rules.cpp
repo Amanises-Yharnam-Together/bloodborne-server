@@ -241,6 +241,43 @@ TEST(BloodborneFlagRules, SessionFlagsAreNeitherKeptNorShared) {
 // as a lamp's do: Old Yharnam's gates (m28 12800480: object act flags 12800201..., done flags
 // 12800480 + slot), Cathedral Ward's doors (12400130: 12400112, 12400130...) and its gate
 // (12400760 sets 12400160).
+// Kaniel's test 2026-10-23: a guest alone in Cathedral Ward killed the hag and opened a door; the
+// host who came later found her alive and the door shut. A lone guest's game runs its map's story,
+// so the changes it makes to that map's flags (once the load settled) go to the whole team.
+TEST(BloodborneFlagRules, ALoneGuestsMapStepsGoToTheTeam) {
+    constexpr u32 CathedralWard = 0x18000000;
+    const FlagChanges changes{{12400800, 12400565, 12410602, 52411000, 2011, 12400112},
+                              {12400701, 1101}};
+    EXPECT_EQ(
+        LoneGuestFlagsToShare(changes, CathedralWard),
+        (std::vector<std::pair<s32, bool>>{{12400565, true}, {12400701, false}, {12400800, true}}));
+    // A door's flag goes to the party anyway (FlagsToShare); another map's flags, pickups, the
+    // game's own and the story's other flags stay its own.
+    EXPECT_TRUE(
+        LoneGuestFlagsToShare(FlagChanges{{12410602, 52411000, 2011}, {1101}}, CathedralWard)
+            .empty());
+}
+
+// Kaniel's test 2026-10-23 again: the hag died 9 s after the guest's load and stayed alive for the
+// host; with no wait the map's own load flags (the boss's per-visit 12414802...) went out too.
+TEST(BloodborneFlagRules, ALoneGuestSharesItsMapStepsButNotItsLoadsFlags) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    LoneGuestShares shares;
+    // The load sets up the map: nothing goes, those flags are its load's.
+    EXPECT_TRUE(
+        shares.Take(FlagChanges{{12414802, 12414803}, {12410286}}, CentralYharnam, 3'000).empty());
+    EXPECT_TRUE(shares.Take(FlagChanges{{12414810}, {}}, CentralYharnam, 7'900).empty());
+    // After it, a step goes at once; the load's flags (late this time) still do not.
+    EXPECT_EQ(
+        shares.Take(FlagChanges{{12410999, 12414802, 12414810}, {12410286}}, CentralYharnam, 9'100),
+        (std::vector<std::pair<s32, bool>>{{12410999, true}}));
+    // Another visit's load: remembered from the first.
+    EXPECT_TRUE(shares.Take(FlagChanges{{12414803}, {}}, CentralYharnam, 20'000).empty());
+    // Another map's load flags are its own.
+    EXPECT_EQ(shares.Take(FlagChanges{{12400800}, {}}, 0x18000000, 9'100),
+              (std::vector<std::pair<s32, bool>>{{12400800, true}}));
+}
+
 TEST(BloodborneFlagRules, DoorsOneMemberOpenedOpenForTheParty) {
     for (const s32 flag : {12800201, 12800202, 12800209, 12800480, 12800481, 12800484, 12400112,
                            12400130, 12400190, 12400760, 12400160}) {

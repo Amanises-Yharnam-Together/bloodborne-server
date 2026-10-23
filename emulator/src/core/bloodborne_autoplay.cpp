@@ -985,6 +985,17 @@ bool AutoplayExpectOrWaitFlag(const AutoplayStep& step) {
     return step.WaitedOut(step.Number(2, 180));
 }
 
+// flags <flag>...: each flag's state, logged (which world has what, compared in the logs).
+bool AutoplayLogFlags(const AutoplayStep& step) {
+    std::string states;
+    for (size_t index = 0; !step.Arg(index).empty(); ++index) {
+        const s32 flag = static_cast<s32>(step.Number(index, 0));
+        states += fmt::format(" {}={}", flag, EventFlagOn(flag) ? 1 : 0);
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay flags (map {:#x}):{}", GetCurrentPackedMap(), states);
+    return true;
+}
+
 // godmode [off]: the player's HP back to its max on every party tick (tests that stand
 // around near enemies), until switched off.
 bool AutoplayGodmode(const AutoplayStep& step) {
@@ -1963,6 +1974,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"return-point", AutoplayReturnPoint},
     {"expect-flag", AutoplayExpectOrWaitFlag},
     {"wait-flag", AutoplayExpectOrWaitFlag},
+    {"flags", AutoplayLogFlags},
     {"godmode", AutoplayGodmode},
     {"snapshot", AutoplaySnapshot},
     {"census", AutoplayCensus},

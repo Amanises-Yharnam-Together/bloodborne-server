@@ -229,6 +229,14 @@ std::vector<std::pair<s32, bool>> TeamTimeOfDayAtLoad(const WorldFlags& team, u3
 // (TimeOfDayToFollow, never back). None when the blocks differ (loads take that world).
 std::vector<std::pair<s32, bool>> TeamStoryToFollow(const WorldFlags& before,
                                                     const WorldFlags& after);
+// A guest's kept session change (KeepWorldChanges, `kept_ms` when this game kept it, none when it
+// came from the file) that a team guest's load leaves to the team's world: a story step
+// (TeamStoryToFollow's kind) in a block the team's world covers, kept longer ago than the host's
+// reports take to carry it (Kaniel's playtest 2026-10-22: a guest alone on a map saw NPCs from its
+// own game's steps, put over the team's world as the map loaded).
+inline constexpr s64 KeptChangeReportMs = 20'000;
+bool KeptChangeYieldsToTeam(s32 flag, std::optional<s64> kept_ms, s64 now_ms,
+                            std::span<const u32> team_blocks, u32 flags_per_block);
 
 // Phase 6: the team join without signs or a bell (docs/native-netcode/session.md, "Team join").
 // The team's host opens its game session itself (NetSync CreateSession) once it stands in its

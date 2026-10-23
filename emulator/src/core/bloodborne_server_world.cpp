@@ -1847,8 +1847,15 @@ std::optional<WorldStore> ReadWorldStore() {
 size_t SetWorldFlags(const WorldStore& world, const WorldFlags& target) {
     using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
     const auto changes = WorldFlagChanges(world.store.flags_per_block, world.blocks, target);
+    std::string which;
     for (const auto& [flag, on] : changes) {
         reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, on);
+        if (which.size() < 600) {
+            which += fmt::format(" {}{}", on ? "" : "-", flag);
+        }
+    }
+    if (!which.empty()) {
+        LOG_INFO(Debug, "Co-op team world: flags set to the world's (-off):{}", which);
     }
     return changes.size();
 }
@@ -2011,6 +2018,14 @@ void ApplyTeamWorldOnLoad(bool trip) {
              retake ? fmt::format(" again after a trip's load (map {:#x})", GetCurrentPackedMap())
                     : "",
              store->blocks.size(), changed, world->version());
+}
+
+std::vector<u32> TeamWorldBlocksForGuest() {
+    std::scoped_lock lock{team_mutex};
+    if (!team_switch || team_host || !team_world || !team_world->exists()) {
+        return {};
+    }
+    return WorldFlagsOf(*team_world).blocks;
 }
 
 std::vector<s32> TeamWorldFlagsOnForGuest() {
