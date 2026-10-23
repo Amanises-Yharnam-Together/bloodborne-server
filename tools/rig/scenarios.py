@@ -454,7 +454,10 @@ SCENARIOS = {
             "host": [r"Bloodborne trade: offered .* Oedon Tomb Key, Hunter Axe \+5, Charred "
                      r"Hunter Garb"],
             "guest": [r"Bloodborne trade: added Oedon Tomb Key, Hunter Axe \+5, Charred Hunter "
-                      r"Garb"],
+                      r"Garb",
+                      # A trade's grant keeps the item-received popup (key-items-silent's are
+                      # silent).
+                      r"item-get popup goods 4000 x 1 queued"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
@@ -3443,6 +3446,50 @@ SCENARIOS["key-items-kept"] = {
     "forbid": {"host": SESSION_HOLDS,
                "guest": SESSION_HOLDS + [r"held-item flag \d+ cleared: this player has no "
                                          r"goods 4103"]},
+    "timeout": 600,
+}
+
+# Kaniel 2026-10-23: a joining guest saw the game's "item received" popup ("Oedon Tomb Key 1 /
+# OK") for each of its own key items put in the phantom's list; with many it went on and on.
+SWORD_HUNTER_BADGE = "goods:4114"
+OEDON_TOMB_KEY = "goods:4000"
+SILENT_KEY_ITEMS = (OEDON_TOMB_KEY, SAW_HUNTER_BADGE, SWORD_HUNTER_BADGE)
+
+
+def held_key_items(timeout: int = 20) -> list[str]:
+    return [f"expect-held {item} 1 {timeout}" for item in SILENT_KEY_ITEMS]
+
+
+SCENARIOS["key-items-silent"] = {
+    "about": "a joining guest's own key items (Oedon Tomb Key and two hunter badges) go in the "
+             "phantom's key item list with no item-received popup, and it still holds each after "
+             "the join and after a lamp trip and back; a vial give before the join still queues "
+             "its popup (the detector works)",
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "wait 100", "expect-session 2"],
+        "guest": [START, "godmode",
+                  *[step for item in SILENT_KEY_ITEMS
+                    for step in (f"trade-stock {item} 0", f"trade-stock {item} 1")],
+                  *held_key_items(5), "trade-stock vials 0", "trade-stock vials 3", "wait 3",
+                  "wait-session 2 300", "wait 15", *held_key_items(),
+                  f"travel {HUNTERS_DREAM}", "wait 15", *held_key_items(),
+                  f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15", *held_key_items(),
+                  "expect-session 2"],
+    },
+    "expect": {"guest": [
+        # The detector: the give before the join queued its popup.
+        r"item-get popup goods \d+ x 3 queued",
+        # Each key item went in silently.
+        *[rf"item-get popup goods {goods} x 1 not shown \(a silent grant\)[^\n]*\n"
+          rf"(?:[^\n]*\n){{0,3}}[^\n]*1 x goods {goods} of the guest's own in the phantom's "
+          rf"key items" for goods in (4000, 4103, 4114)],
+    ]},
+    "forbid": {"host": SESSION_HOLDS,
+               "guest": SESSION_HOLDS + [
+                   # Once the first went in the phantom's list, none of them shows its popup.
+                   r"in the phantom's key items[\s\S]*item-get popup goods (?:4000|4103|4114) "
+                   r"x \d+ queued",
+                   r"held-item flag \d+ cleared: this player has no goods (?:4103|4114)"]},
     "timeout": 600,
 }
 

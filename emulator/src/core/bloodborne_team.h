@@ -304,6 +304,19 @@ std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> firs
 std::vector<HeldGoods> OwnKeyItemsForPhantom(std::span<const HeldGoods> own,
                                              std::span<const HeldGoods> phantom);
 
+// Kaniel 2026-10-23: a joining guest saw the game's "item received" popup ("Oedon Tomb Key 1 /
+// OK") once for each of its own key items OwnKeyItemsForPhantom put in the phantom's list. While
+// one lives on a thread, the gives on that thread queue no popup (and no pickup sound): the hook
+// on the popup's queue push (ItemGetQueuedOffset) skips it. Nested ones are fine.
+class SilentItemGets {
+public:
+    SilentItemGets();
+    ~SilentItemGets();
+    SilentItemGets(const SilentItemGets&) = delete;
+    SilentItemGets& operator=(const SilentItemGets&) = delete;
+};
+bool ItemGetsSilent();
+
 // Event flag 4047 ("a player on the way out", docs/FLAGS.md): set when a session ends under a
 // player; a summoned guest's reload home cleared it. A team's guest stays in its world (no reload),
 // so once it stands out of a session with the flag on for ClearAfterMs, it is cleared: the party
