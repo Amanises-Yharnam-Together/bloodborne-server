@@ -48,6 +48,7 @@ public:
     struct Loaded {
         bbcoop::StoredWorld world;
         QList<bbcoop::JournalRecord> journal; // the records from world.journal_from on
+        bool journal_cut = false; // its journal ends in bytes that do not read (a crash)
     };
     // The world and its journal, or nothing (no world here yet). A world file that does not read
     // falls back to the backups; a journal cut short ends at its last whole record.
@@ -65,6 +66,46 @@ public:
 
 private:
     QString folder;
+};
+
+// The worlds' disk writes, on a thread of their own (security review P1 12): the link thread
+// that relays every game's packets only queues them. One queue for every world, written in the
+// order given, so each world's records reach its journal in order and a Compact comes after the
+// records it holds. Group commit: the journals written to are fsynced every commit_ms, after
+// commit_records records, before a world is written whole (journal before world.pb, as the
+// backups read them) and before a folder moves. A crash loses at most the records not fsynced
+// yet (a tail: the order holds); the journal still reads (WorldStore::Load stops at a cut record).
+class WorldWriter {
+public:
+    explicit WorldWriter(qint64 commit_ms = 100, int commit_records = 256);
+    // Drains: everything queued is on disk.
+    ~WorldWriter();
+    WorldWriter(const WorldWriter&) = delete;
+    WorldWriter& operator=(const WorldWriter&) = delete;
+
+    void Append(const QString& folder, bbcoop::JournalRecord record);
+    void Compact(const QString& folder, bbcoop::StoredWorld world,
+                 const QDate& today = QDate::currentDate());
+    void SaveTrades(const QString& folder, bbcoop::StoredTrades trades);
+    // A whole file (team_world.pb, worlds.pb), replaced at once (QSaveFile).
+    void Save(const QString& path, QByteArray bytes);
+    // `name` in `parent` moves to `to` (in `parent`): a world's folder put aside.
+    void Move(const QString& parent, const QString& name, const QString& to);
+    // Whether a Move of the folder `parent`/`name` is queued (what is in it is not known yet).
+    bool Moving(const QString& parent, const QString& name) const;
+    // Returns when everything queued before it is on disk.
+    void Drain();
+    // Stops at once, writing nothing more and fsyncing nothing (a crash, for the tests).
+    void Abandon();
+    // What went wrong since the last call, for the server's log.
+    QStringList TakeLog();
+    // Records fsynced, and fsync rounds, so far (the tests).
+    quint64 Synced() const;
+    quint64 Commits() const;
+
+private:
+    struct State;
+    std::unique_ptr<State> state;
 };
 
 // The world key of a party: a hash of its key, safe as a folder name.
@@ -90,6 +131,37 @@ struct InvasionRules {
     quint32 sign = 4;          // InvasionSign: the slot after the guests' 7, 6, 5 (a guess)
 };
 
+// What one game can make the service hold (docs/HOSTED_SERVER.md, "Caps"), for every server: far
+// above what a game sends, so only a broken or hostile one meets them.
+struct Limits {
+    // A message from a game, and the chunks it may have held out of order. The largest a game
+    // sends is its TeamWorld report: every world flag on in its save as a varint (~4 bytes each;
+    // tens of thousands at most) and a portrait (128x128 RGB, 48 KiB). Past it the member's stream
+    // is dropped (the game starts it over and says hello again).
+    size_t message_bytes = 1 << 20;
+    size_t held_bytes = 1 << 20;
+    // What the server queued to a game that has not acked it: a game acks every frame, so only
+    // one that never does nears it (the hub keeps a link alive on its pings alone). Past it the
+    // member is dropped.
+    size_t unacked_bytes = 8 << 20;
+    // The parties' worlds in memory at once, and how long one nobody is in stays (then only on
+    // disk; the next hello reads it again). A world kept in memory only (no folder) stays.
+    size_t party_worlds = 1024;
+    qint64 idle_world_ms = 5 * 60 * 1000;
+};
+
+// The fields of a game's message (coop.proto), each far above the game's own: a message past one
+// is dropped whole (and logged).
+constexpr size_t MaxNameBytes = 64;                // board names: an online id (16) in hex
+constexpr size_t MaxCharacterBytes = 96;           // a character's name: 16 UTF-16 units, as UTF-8
+constexpr size_t MaxPartyKeyBytes = 256;           // "world:<id>", "<name>:<secret>"
+constexpr size_t MaxPortraitBytes = 128 * 128 * 3; // bloodborne_portrait.h: 128x128 RGB888
+constexpr size_t MaxJoinBytes = 4096;         // the game's join data: 0x200 (bloodborne_join.cpp)
+constexpr size_t MaxListEntries = 4096;       // shown characters, HP enemies, flag events, echoes
+constexpr size_t MaxKillHandles = 32768;      // a member's standing kills (a map: a few hundred)
+constexpr size_t MaxTeamWorldFlags = 250'000; // TeamWorld.on, within message_bytes
+constexpr size_t MaxSmallList = 64; // trophy ids (the game has 34), trade items, revive hits
+
 class Service {
 public:
     // `folder`: where the worlds are kept (one folder per party); empty keeps them in memory only.
@@ -108,6 +180,10 @@ public:
     void SetHosted(const HostedRules& rules);
     void SetInvasions(const InvasionRules& rules) {
         invasion_rules = rules;
+    }
+    // For the members that link from now on (and the worlds).
+    void SetLimits(const Limits& limits) {
+        this->limits = limits;
     }
 
     // Every party's world in the folder (shadNet's start).
@@ -136,6 +212,10 @@ public:
     const BloodborneCoop::TeamLobby& Lobby() const {
         return lobby;
     }
+
+    // Returns when the worlds' writes so far are on disk (the tests; the service drains when it
+    // goes).
+    void Drain();
 
     // For the tests and the log.
     const BloodborneCoop::WorldLogHost* World(const QByteArray& party) const;
@@ -189,9 +269,11 @@ private:
         // Kaniel 2026-10-17: which of the server's worlds (TeamWorldInfo.id) this party is, from
         // its key ("world:<id>").
         std::string team_world_id;
+        std::optional<qint64> empty_since_ms; // nobody in it since (Collect)
     };
     struct Member {
-        explicit Member(quint32 instance) : stream{"shadnet", instance} {}
+        Member(quint32 instance, BloodborneCoop::CoopStream::Limits limits)
+            : stream{"shadnet", instance, limits} {}
         BloodborneCoop::CoopStream stream;
         bool to_flush = false; // something to send since the last flush (Service::flush_now)
         quint64 key = 0;       // its link's (Endpoint::Key)
@@ -237,6 +319,18 @@ private:
     };
 
     PartyWorld& WorldFor(const QString& name, qint64 now_ms, Result& result);
+    // A world from its folder (Load, and a world collected while nobody was in it): whether one
+    // was there.
+    bool LoadWorld(const QString& name, qint64 now_ms, Result& result);
+    // Whether a world for `name` is in memory or may be (read again, or made).
+    bool RoomFor(const QString& name, qint64 now_ms, Result& result);
+    // Worlds nobody is in (for idle_world_ms, or `all` of them) out of memory, written whole.
+    void Collect(qint64 now_ms, bool all, Result& result);
+    // A member past the limits: forgotten as when its link goes (its game's next datagram meets
+    // a new stream and says hello again).
+    void Drop(quint64 key, const QString& why, Result& result);
+    // Why a game's message is past the field limits, or nothing.
+    static std::optional<QString> Oversized(const bbcoop::Envelope& envelope);
     void Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_ms, Result& result);
     void OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms, Result& result);
     void OnLifecycle(Member& member, const bbcoop::Lifecycle& lifecycle, qint64 now_ms,
@@ -313,6 +407,7 @@ private:
     void PutAside(const std::vector<std::string>& forgotten, Result& result);
 
     QString folder;
+    std::unique_ptr<WorldWriter> writer; // with a folder
     qint64 heartbeat_ms;
     int compact_records;
     qint64 compact_ms;
@@ -348,6 +443,8 @@ private:
 
     BloodborneCoop::TeamLobby lobby;
     HostedRules hosted;
+    Limits limits;
+    qint64 collected_ms = 0;
     qint64 lobby_sent_ms = 0;
     std::map<std::string, std::string> lobby_sent; // hosted: each player's last state, as sent
     bool lobby_changed = false; // a player's game went: states to send at the next tick

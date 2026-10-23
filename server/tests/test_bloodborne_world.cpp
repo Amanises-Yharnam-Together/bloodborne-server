@@ -272,7 +272,8 @@ struct Game {
   std::vector<TradeItems> added; // what its trades added
   u32 run = 0x1001;
   u32 number = 0;
-  bool online = true;   // false: its datagrams are lost
+  bool online = true; // false: its datagrams are lost
+  bool deaf = false;  // true: what the server sends it is lost (it never acks)
   QByteArray online_id; // its link's player id (empty: its name)
   std::vector<bbcoop::InvasionNotice> notices;
   std::optional<bbcoop::InvasionStart> invasion;
@@ -305,7 +306,7 @@ void Pump(Service &service, const std::vector<Game *> &games, qint64 now_ms) {
     sends.append(service.Tick(now_ms).sends);
     for (const Service::Send &send : sends) {
       for (Game *game : games) {
-        if (game->online && game->endpoint == send.to) {
+        if (game->online && !game->deaf && game->endpoint == send.to) {
           moved = true;
           const auto bytes =
               std::span{reinterpret_cast<const u8 *>(send.body.constData()),
@@ -541,6 +542,46 @@ int AJournalCutShortLoadsUpToItsLastRecord() {
   CHECK(world != nullptr);
   CHECK(WorldLogHandles(world->Kills()) == std::unordered_set<u32>{1});
   // A world file that does not read: the backup.
+  return 0;
+}
+
+// A journal whose tail does not read (a crash in a write): the world is written
+// whole at the load, so the records after it are not written behind the tail
+// that does not read.
+int AJournalsBrokenTailIsNotWrittenAfter() {
+  QTemporaryDir dir;
+  qint64 now = 1'000'000;
+  {
+    Service service{dir.path(), 1000, 1, 30'000}; // every record written whole
+    Game host{1000, "host", 11};
+    host.Hello(now);
+    Pump(service, {&host}, now);
+    host.Propose({{0x18000000, {1}}}, now + 1);
+    Pump(service, {&host}, now + 1);
+  }
+  const QString folder =
+      QDir{dir.path()}.filePath(BloodborneWorld::PartyFolderName(Party));
+  {
+    QFile journal{QDir{folder}.filePath("journal.pb")};
+    CHECK(journal.open(QIODevice::WriteOnly | QIODevice::Append));
+    CHECK(journal.size() == 0);
+    journal.write(QByteArray("\x09\x00\x00\x00ab", 6)); // a cut record
+  }
+  {
+    Service service{dir.path(), 1000, 1000, 1'000'000}; // the journal only
+    service.Load(now + 10);
+    Game host{1000, "host", 21};
+    host.run = 0x2001;
+    host.Hello(now + 20);
+    Pump(service, {&host}, now + 20);
+    host.Propose({{0x18000000, {1, 2}}}, now + 30);
+    Pump(service, {&host}, now + 30);
+  }
+  Service service{dir.path()};
+  service.Load(now + 40);
+  const WorldLogHost *world = service.World(Party);
+  CHECK(world != nullptr);
+  CHECK((WorldLogHandles(world->Kills()) == std::unordered_set<u32>{1, 2}));
   return 0;
 }
 
@@ -1812,6 +1853,7 @@ int AForgottenWorldsFolderIsPutAside() {
   a.LobbyHello(true, now);
   Pump(service, {&a}, now);
   const QString folder = FolderOfKey(dir.path(), go.party());
+  service.Drain();
   CHECK(QDir{folder}.exists());
   bbcoop::Envelope forget;
   forget.mutable_team_request()->set_action(bbcoop::TeamRequest::FORGET_WORLD);
@@ -1828,6 +1870,7 @@ int AForgottenWorldsFolderIsPutAside() {
   Pump(service, {&a2}, now);
   a2.Send(forget, now);
   Pump(service, {&a2}, now);
+  service.Drain(); // the folder goes aside on the writer's thread
   CHECK(a2.lobby.notice().empty());
   CHECK(a2.lobby.worlds_size() == 0);
   CHECK(!QDir{folder}.exists());
@@ -2271,7 +2314,7 @@ constexpr u32 RulesKind = 0x1234;
 constexpr u32 RulesSign = 4;
 
 struct InvasionRig {
-  Service service{{}};
+  Service service;
   Game a{1000, "aa", 11};
   Game b{1001, "bb", 12};
   Game red{1002, "rr", 13};
@@ -2279,7 +2322,14 @@ struct InvasionRig {
   qint64 now = 1'000'000;
   QByteArray party;
 
-  explicit InvasionRig(bool enabled = true, bool allow = true) {
+  explicit InvasionRig(bool enabled = true, bool allow = true,
+                       const QString &folder = {},
+                       const BloodborneWorld::Limits &limits = {})
+      : service{folder} {
+    service.SetLimits(limits);
+    if (!folder.isEmpty()) {
+      service.Load(now);
+    }
     BloodborneWorld::InvasionRules rules;
     rules.enabled = enabled;
     rules.kind = RulesKind;
@@ -2597,10 +2647,279 @@ int EachEndTellsEveryoneAndRestoresTheRouting() {
   return 0;
 }
 
+// Caps (docs/HOSTED_SERVER.md): a message past the limit drops the member's
+// stream; its game starts the stream over and says hello again.
+int AMessagePastTheLimitDropsTheStream() {
+  Service service{{}};
+  BloodborneWorld::Limits limits;
+  limits.message_bytes = 64 * 1024;
+  service.SetLimits(limits);
+  Game host{1000, "host", 11};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  Pump(service, {&host}, now);
+  CHECK(host.welcome && host.welcome->accepted());
+  CHECK(!service.PartyOf(host.endpoint).isEmpty());
+  host.stream.Send(std::vector<u8>(100 * 1024, 0x0A), now);
+  Pump(service, {&host}, now);
+  CHECK(service.PartyOf(host.endpoint).isEmpty());
+  CHECK(host.stream.TakeRestarted());
+  host.welcome.reset();
+  now += 100;
+  host.Hello(now);
+  Pump(service, {&host}, now);
+  CHECK(host.welcome && host.welcome->accepted());
+  CHECK(!service.PartyOf(host.endpoint).isEmpty());
+  return 0;
+}
+
+// A member that never acks what the server queues to it is dropped past the
+// limit; the others play on.
+int AMemberThatNeverAcksIsDropped() {
+  Service service{{}};
+  BloodborneWorld::Limits limits;
+  limits.unacked_bytes = 200 * 1024;
+  service.SetLimits(limits);
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.welcome && guest.welcome->accepted());
+  guest.deaf = true;
+  for (u32 id = 1; id <= 8; ++id) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_portrait()->set_id(id);
+    envelope.mutable_portrait()->set_pixels(std::string(40'000, 'p'));
+    host.Send(envelope, now);
+    Pump(service, {&host, &guest}, now);
+  }
+  CHECK(service.PartyOf(guest.endpoint).isEmpty());
+  CHECK(!service.PartyOf(host.endpoint).isEmpty());
+  return 0;
+}
+
+// A message with a field past its limit is dropped whole.
+int AMessagePastAFieldsLimitIsDropped() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope portrait;
+  portrait.mutable_portrait()->set_id(1);
+  portrait.mutable_portrait()->set_pixels(
+      std::string(BloodborneWorld::MaxPortraitBytes + 1, 'p'));
+  host.Send(portrait, now);
+  host.MapState(0x18000000, std::vector<u8>(5000, 0xFF), now);
+  std::vector<u8> bits((MapFlagCount + 7) / 8);
+  bits[0] = 0x80;
+  WorldLogKills kills;
+  for (u32 handle = 0; handle < 40'000; ++handle) {
+    kills[0x18000000].insert(handle);
+  }
+  host.Propose(kills, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.portraits.empty());
+  CHECK(service.World(Party)->MapStateNow().bits.empty());
+  CHECK(service.World(Party)->Kills().empty());
+  // Within the limits they go through.
+  portrait.mutable_portrait()->set_pixels(
+      std::string(BloodborneWorld::MaxPortraitBytes, 'p'));
+  host.Send(portrait, now);
+  host.MapState(0x18000000, bits, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(guest.portraits.size() == 1);
+  CHECK(!service.World(Party)->MapStateNow().bits.empty());
+  // A hello with a name past the limit gets no answer.
+  Game long_name{1002, std::string(200, 'x'), 13};
+  long_name.Hello(now);
+  Pump(service, {&host, &guest, &long_name}, now);
+  CHECK(!long_name.welcome);
+  return 0;
+}
+
+// A world nobody is in goes out of memory after a while, and comes back from
+// its folder as it was with the next hello.
+int AnEmptyPartyWorldIsCollected() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  Service service{folder.path()};
+  BloodborneWorld::Limits limits;
+  limits.idle_world_ms = 60'000;
+  service.SetLimits(limits);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  Game host{1000, "host", 11};
+  host.Hello(now);
+  Pump(service, {&host}, now);
+  host.Propose({{0x18000000, {0x10014066}}}, now);
+  Pump(service, {&host}, now);
+  CHECK(Killed(host, 0x10014066));
+  service.Forget(host.endpoint);
+  service.Tick(now + 1000);
+  CHECK(service.Parties() == 1);
+  service.Tick(now + 30'000);
+  CHECK(service.Parties() == 1);
+  service.Tick(now + 70'000);
+  CHECK(service.Parties() == 0);
+  Game again{1001, "host", 21};
+  again.run = 0x2002;
+  again.Hello(now + 80'000);
+  Pump(service, {&again}, now + 80'000);
+  CHECK(again.welcome && again.welcome->accepted());
+  CHECK(service.Parties() == 1);
+  CHECK(Killed(again, 0x10014066));
+  return 0;
+}
+
+// So many worlds in memory at once: a new one past them only when a world
+// nobody is in can go.
+int TheWorldsInMemoryAreCapped() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  Service service{folder.path()};
+  BloodborneWorld::Limits limits;
+  limits.party_worlds = 2;
+  service.SetLimits(limits);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  Game a{1000, "a", 11};
+  Game b{1001, "b", 12};
+  Game c{1002, "c", 13};
+  a.Hello(now, "a:1");
+  b.Hello(now, "b:1");
+  Pump(service, {&a, &b}, now);
+  c.Hello(now, "c:1");
+  Pump(service, {&a, &b, &c}, now);
+  CHECK(a.welcome && a.welcome->accepted());
+  CHECK(b.welcome && b.welcome->accepted());
+  CHECK(c.welcome && !c.welcome->accepted());
+  CHECK(service.Parties() == 2);
+  service.Forget(a.endpoint);
+  c.welcome.reset();
+  c.Hello(now + 10, "c:1");
+  Pump(service, {&b, &c}, now + 10);
+  CHECK(c.welcome && c.welcome->accepted());
+  CHECK(service.Parties() == 2);
+  return 0;
+}
+
+// Hosted: a trade only between members of one started team.
+int HostedTradesAreWithinAStartedTeam() {
+  Service service{{}};
+  BloodborneWorld::HostedRules rules;
+  rules.enabled = true;
+  service.SetHosted(rules);
+  const auto hex = [](const char *id) {
+    return QByteArray(id).toHex().toStdString();
+  };
+  Game leader{1000, hex("Kaniel"), 11};
+  leader.online_id = "Kaniel";
+  leader.claims_host = true;
+  Game guest{1001, hex("Ada"), 12};
+  guest.online_id = "Ada";
+  const std::vector<Game *> games{&leader, &guest};
+  qint64 now = 1'000'000;
+  const auto step = [&] {
+    now += 300;
+    Pump(service, games, now);
+  };
+  for (Game *game : games) {
+    game->LobbyHello(false, now);
+  }
+  step();
+  leader.Team(bbcoop::TeamRequest::CREATE, now);
+  step();
+  leader.Team(bbcoop::TeamRequest::INVITE, now, guest.name);
+  step();
+  guest.Team(bbcoop::TeamRequest::ACCEPT, now, {},
+             guest.lobby.invites(0).team());
+  step();
+  leader.Team(bbcoop::TeamRequest::READY, now, {}, {}, 0, "Hunter");
+  guest.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1, "Doll");
+  step();
+  leader.Team(bbcoop::TeamRequest::START, now);
+  step();
+  CHECK(!leader.starts.empty());
+  const QByteArray party =
+      QByteArray::fromStdString(leader.starts.back().party());
+  leader.Hello(now, party);
+  guest.Hello(now, party);
+  for (Game *game : games) {
+    game->LobbyHello(true, now);
+  }
+  step();
+  CHECK(guest.welcome && guest.welcome->accepted());
+  const TradeItem vials{TradeItemKind::Goods, BloodVialGoods, 3};
+  leader.Send(leader.trades.Offer(guest.name, "Doll", "Hunter", {vials}, {}),
+              now);
+  step();
+  CHECK(guest.trades.Asked().size() == 1);
+
+  // Both back at the title: the team is not started, its games still linked.
+  for (Game *game : games) {
+    game->LobbyHello(false, now);
+  }
+  step();
+  CHECK(service.Lobby().TeamOf(leader.name) &&
+        !service.Lobby().TeamOf(leader.name)->started());
+  CHECK(!service.PartyOf(guest.endpoint).isEmpty());
+  leader.Send(leader.trades.Offer(guest.name, "Doll", "Hunter", {vials}, {}),
+              now);
+  step();
+  CHECK(guest.trades.Asked().size() == 1);
+  CHECK(leader.added.size() == 1 && leader.added.front() == TradeItems{vials});
+  return 0;
+}
+
+// Merged with the caps and the world collector (docs/HOSTED_SERVER.md): an
+// invader whose stream breaks its limit is dropped like any game, and its
+// invasion ends; a world with an invasion is never put out of memory, and the
+// invader keeps no world loaded.
+int AnInvasionLivesWithTheCapsAndTheCollector() {
+  {
+    BloodborneWorld::Limits limits;
+    limits.message_bytes = 64 * 1024;
+    InvasionRig rig{true, true, {}, limits};
+    CHECK(rig.Invade());
+    bbcoop::Envelope big;
+    big.mutable_portrait()->set_pixels(std::string(100'000, 'p'));
+    rig.red.Send(big, rig.now);
+    rig.Step();
+    CHECK(EndedFor(rig.a, bbcoop::InvasionEnd::INVADER_LEFT) &&
+          EndedFor(rig.b, bbcoop::InvasionEnd::INVADER_LEFT));
+    CHECK(!rig.Routes(rig.red, rig.a, 0x06));
+  }
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  BloodborneWorld::Limits limits;
+  limits.idle_world_ms = 1000;
+  InvasionRig rig{true, true, folder.path(), limits};
+  const int parties = rig.service.Parties();
+  CHECK(rig.Invade());
+  rig.Step(5000);
+  CHECK(rig.service.Parties() == parties);
+  CHECK(rig.service.World(rig.party) != nullptr);
+  CHECK(rig.service.PartyOf(rig.red.endpoint).isEmpty());
+  CHECK(rig.red.ends.empty() && rig.Routes(rig.red, rig.a, 0x06));
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
       {"HostedPartiesAreTheirTeamsOnly", HostedPartiesAreTheirTeamsOnly},
+      {"AMessagePastTheLimitDropsTheStream",
+       AMessagePastTheLimitDropsTheStream},
+      {"AMemberThatNeverAcksIsDropped", AMemberThatNeverAcksIsDropped},
+      {"AMessagePastAFieldsLimitIsDropped", AMessagePastAFieldsLimitIsDropped},
+      {"AnEmptyPartyWorldIsCollected", AnEmptyPartyWorldIsCollected},
+      {"TheWorldsInMemoryAreCapped", TheWorldsInMemoryAreCapped},
+      {"HostedTradesAreWithinAStartedTeam", HostedTradesAreWithinAStartedTeam},
       {"ATeamEndsWhenEveryMembersGameIsGone",
        ATeamEndsWhenEveryMembersGameIsGone},
       {"TheWorldsOfTheOldTeamsAreOnTheList",
@@ -2623,6 +2942,8 @@ int main() {
        AJournalCutShortLoadsUpToItsLastRecord},
       {"ABrokenWorldFileFallsBackToABackup",
        ABrokenWorldFileFallsBackToABackup},
+      {"AJournalsBrokenTailIsNotWrittenAfter",
+       AJournalsBrokenTailIsNotWrittenAfter},
       {"TheServerRestartingMidSessionLosesNothing",
        TheServerRestartingMidSessionLosesNothing},
       {"AWorldKeepsADatedCopyADayForAWeek", AWorldKeepsADatedCopyADayForAWeek},
@@ -2668,6 +2989,8 @@ int main() {
        AnInvaderNeverChangesTheTeamsWorld},
       {"EachEndTellsEveryoneAndRestoresTheRouting",
        EachEndTellsEveryoneAndRestoresTheRouting},
+      {"AnInvasionLivesWithTheCapsAndTheCollector",
+       AnInvasionLivesWithTheCapsAndTheCollector},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {
