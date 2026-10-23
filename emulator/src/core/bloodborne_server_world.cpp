@@ -801,8 +801,11 @@ bool TakeServerWorldNews() {
 }
 
 std::vector<EnemyOwnerEntry> ServerEnemyOwners(s64 now_ms) {
+    // Invasions: an invader hears the target world's owners only as they change (a member hears
+    // them with every answer to its map): its last list stands for the visit.
+    const bool invading = Invading();
     std::scoped_lock lock{owners_mutex};
-    if (owners_heard_ms == 0 || now_ms - owners_heard_ms > EnemyOwnersFreshMs) {
+    if (owners_heard_ms == 0 || (now_ms - owners_heard_ms > EnemyOwnersFreshMs && !invading)) {
         return {};
     }
     return server_owners;
@@ -2540,6 +2543,12 @@ void SendInvadeRequest(bool cancel) {
 // again, to its own respawn lamp (the kept world's); its flags come back once there. A dead
 // invader first gets up where it fell (its death script's hook, ReviveInvaderInPlace).
 void InvaderGoHome(bool died, bool tell_server) {
+    {
+        // The target world's enemy owners are not its own world's.
+        std::scoped_lock lock{owners_mutex};
+        server_owners.clear();
+        owners_heard_ms = 0;
+    }
     const u64 manager = GetMatchingState();
     if (InPartySession() && manager >= 0x10000) {
         reinterpret_cast<void PS4_SYSV_ABI (*)(u64)>(image_base +
