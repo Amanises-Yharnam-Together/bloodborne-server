@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
     // The game's own online services (on unless BloodborneBackend=false). When it cannot start, the
     // kits' Python backend can take its port instead.
     BloodborneBackendServer backend;
-    if (config.GetBackend().enabled && !backend.Start(&config)) {
+    if (config.GetBackend().enabled && !backend.Start(&config, &server.Shared().httpGate)) {
         qWarning() << "Backend failed to start; continuing without it";
     }
 #else
