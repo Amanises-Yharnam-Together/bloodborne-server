@@ -129,6 +129,50 @@ class AnswersTests(unittest.TestCase):
         self.assertGreaterEqual(len(fresh['password']), 32)
         self.assertNotEqual(coop.virtual_address(fresh['account']), coop.virtual_address(settings['account']))
 
+    def test_a_new_id_is_only_for_the_server_that_refused_the_old_one(self):
+        # A public server refusing the id's address must not change the id the player's friends' home
+        # host knows (their teams and worlds there): the new id is kept for that server only.
+        settings = dict(coop.DEFAULTS, account='p0123456789abcd', password='a' * 32, host_ip='26.1.2.3')
+        self.assertEqual(coop.player_id_for(settings, 'Play.Example.com'), ('p0123456789abcd', 'a' * 32),
+                         'no override: the one id')
+        made = coop.with_server_id(settings, ' Play.Example.com ')
+        self.assertEqual((made['account'], made['password']), ('p0123456789abcd', 'a' * 32), 'the default id stays')
+        self.assertNotIn('server_ids', settings, 'a copy')
+        account, secret = coop.player_id_for(made, 'play.example.com')
+        self.assertNotEqual(account, 'p0123456789abcd')
+        self.assertTrue(coop.valid_name(account) and coop.valid_secret(secret) and len(secret) >= 32)
+        self.assertNotEqual(coop.virtual_address(account), coop.virtual_address('p0123456789abcd'))
+        self.assertEqual(coop.player_id_for(made, 'PLAY.example.com'), (account, secret), 'the name as typed, any case')
+        self.assertEqual(coop.player_id_for(made, '26.1.2.3'), ('p0123456789abcd', 'a' * 32), 'other hosts: the one id')
+        self.assertEqual(coop.player_id_for(made, 'other.example.com'), ('p0123456789abcd', 'a' * 32))
+        again = coop.with_server_id(made, 'play.example.com')
+        self.assertNotEqual(coop.player_id_for(again, 'play.example.com')[0], account, 'refused again: another')
+        self.assertNotEqual(coop.virtual_address(coop.player_id_for(again, 'play.example.com')[0]),
+                            coop.virtual_address(account))
+        self.assertEqual(coop.player_id_for(made, 'play.example.com'), (account, secret), 'the copy is not changed')
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            # An old coop.json (no overrides) reads as before and is written back the same.
+            old = {key: '' for key in coop.DEFAULTS}
+            old.update(game='G', host_ip='26.1.2.3', account='kaniel', password='pw', role='guest',
+                       p2p_port='auto', harder='off')
+            coop.settings_path(install).parent.mkdir(parents=True)
+            coop.settings_path(install).write_text(json.dumps(old, indent=2) + '\n', encoding='utf-8')
+            loaded = coop.load_settings(install)
+            self.assertEqual((loaded['account'], loaded['password']), ('kaniel', 'pw'))
+            self.assertEqual(coop.player_id_for(loaded, 'play.example.com'), ('kaniel', 'pw'))
+            coop.save_settings(install, loaded)
+            self.assertEqual(json.loads(coop.settings_path(install).read_text(encoding='utf-8')), old)
+            # The override is saved and read back; a broken one is ignored.
+            coop.save_settings(install, coop.with_server_id(loaded, 'play.example.com'))
+            back = coop.load_settings(install)
+            self.assertEqual(back['account'], 'kaniel')
+            self.assertNotEqual(coop.player_id_for(back, 'play.example.com')[0], 'kaniel')
+            saved = json.loads(coop.settings_path(install).read_text(encoding='utf-8'))
+            saved['server_ids'] = {'play.example.com': 'not an id', 'b.example.com': ['bad name!', 'x']}
+            coop.settings_path(install).write_text(json.dumps(saved), encoding='utf-8')
+            self.assertEqual(coop.player_id_for(coop.load_settings(install), 'play.example.com'), ('kaniel', 'pw'))
+
     def test_a_public_server_is_typed_by_its_name_or_address(self):
         # Play on a public server (docs/HOSTED_SERVER.md): Host's IP address also takes a server's name.
         for good in ('play.example.com', 'yharnam-together.net', 'eu-1.Server.example.org', '26.1.2.3', '203.0.113.7'):

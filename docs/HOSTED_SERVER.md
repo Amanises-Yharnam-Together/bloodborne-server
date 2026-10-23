@@ -162,4 +162,5 @@ Server only:
 Game and launcher:
 - A cookie handshake and an HMAC on every datagram (secrets cross the internet in clear today, and
   after the hello a datagram is trusted by its address), ~3-5 days; or Noise, ~1.5-2 weeks.
-- A fresh id when the server refuses one (virtual address collision).
+- ~~A fresh id when the server refuses one (virtual address collision).~~ Done: the launcher makes
+  one for that server only (coop.json `server_ids`, keyed by the address as typed) and starts again.

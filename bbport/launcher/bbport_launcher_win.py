@@ -4337,7 +4337,9 @@ class Launcher:
             address = bbport_coop.resolve_host(settings['host_ip'])
             if not address:
                 raise RuntimeError(_(bbport_coop.UNKNOWN_SERVER_TEXT).format(settings['host_ip']))
-            settings = dict(settings, host_ip=address)
+            # The id for this server: its own when it refused the player's one id (coop_watch_line).
+            account, secret = bbport_coop.player_id_for(settings, settings['host_ip'])
+            settings = dict(settings, host_ip=address, server=settings['host_ip'], account=account, password=secret)
             user = PORT_DIR / 'user'
             user.mkdir(parents=True, exist_ok=True)
             (user / 'host_overrides.custom.json').write_text(bbport_coop.host_overrides(settings['host_ip']),
@@ -4380,8 +4382,8 @@ class Launcher:
 
     def coop_watch_line(self, line):
         """A line of the co-op game's log. A server refuses a new id whose virtual address another account
-        has (docs/HOSTED_SERVER.md): the launcher then makes a new id, saves it and starts the game again,
-        NEW_ID_TRIES times; after that it stops the game and the status line says why."""
+        has (docs/HOSTED_SERVER.md): the launcher then makes a new id for that server, saves it and starts the
+        game again, NEW_ID_TRIES times; after that it stops the game and the status line says why."""
         if not getattr(self, 'coop_playing', None) or getattr(self, 'coop_new_id', None):
             return
         tries = getattr(self, 'coop_id_tries', 0)
@@ -4390,8 +4392,8 @@ class Launcher:
             return
         if what == 'retry':
             self.coop_id_tries = tries + 1
-            fresh = bbport_coop.with_new_player_id(self.coop)
-            self.coop['account'], self.coop['password'] = fresh['account'], fresh['password']
+            # For this server only: the friends' home hosts keep the player's one id (and its worlds).
+            self.coop['server_ids'] = bbport_coop.with_server_id(self.coop, self.coop_playing[0]['server'])['server_ids']
             try:
                 bbport_coop.save_settings(PORT_DIR, self.coop)
             except OSError:
@@ -4410,8 +4412,8 @@ class Launcher:
         playing, self.coop_playing = getattr(self, 'coop_playing', None), None
         if what == 'retry' and playing:
             settings, root = playing
-            self.coop_start_game(dict(settings, account=self.coop['account'], password=self.coop['password']),
-                                 root, None, '')
+            account, secret = bbport_coop.player_id_for(self.coop, settings['server'])
+            self.coop_start_game(dict(settings, account=account, password=secret), root, None, '')
         elif what == 'give_up':
             self.status.configure(text=_(bbport_coop.NEW_ID_FAILED_TEXT).format(getattr(self, 'coop_id_tries', 0)),
                                   fg=BAD)

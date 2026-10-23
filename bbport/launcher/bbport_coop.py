@@ -224,6 +224,42 @@ def with_new_player_id(settings):
     return settings
 
 
+def server_key(host):
+    """A server's key in `server_ids`: Host's IP address as typed, in lower case. Not the address a name
+    finds: a public server can move to another address and keep its accounts."""
+    return (host or '').strip().lower()
+
+
+def player_id_for(settings, host):
+    """(id, secret) the game signs in with on `host`: the server's own id when one was made for it
+    (with_server_id), else the player's one id."""
+    own = (settings.get('server_ids') or {}).get(server_key(host))
+    if own:
+        return own[0], own[1]
+    return settings.get('account', ''), settings.get('password', '')
+
+
+def with_server_id(settings, host):
+    """A copy of the settings with a new id for `host` only, at another address than the id it refused
+    (address_taken). The player's one id stays: the friends' home hosts know it, with its teams and worlds."""
+    account, secret = player_id_for(settings, host)
+    fresh = with_new_player_id(dict(settings, account=account, password=secret))
+    settings = dict(settings)
+    settings['server_ids'] = dict(settings.get('server_ids') or {})
+    settings['server_ids'][server_key(host)] = [fresh['account'], fresh['password']]
+    return settings
+
+
+def server_ids_of(saved):
+    """The valid entries of coop.json's server_ids ({} in a file from before it)."""
+    found = saved.get('server_ids') if isinstance(saved, dict) else None
+    if not isinstance(found, dict):
+        return {}
+    return {str(host): [pair[0], pair[1]] for host, pair in found.items()
+            if isinstance(pair, list) and len(pair) == 2 and all(isinstance(v, str) for v in pair)
+            and valid_name(pair[0]) and valid_secret(pair[1])}
+
+
 # How the game's log says the server refused its hello (p2p_sockets.cpp OnWelcome, an error: on stderr,
 # so in console.txt, which the launcher follows), and the refusal of a new id whose virtual address
 # another account has (server link_server.cpp RefusalOf).
@@ -292,7 +328,9 @@ def read_settings(install):
     path = settings_path(install)
     try:
         saved = json.loads(path.read_text(encoding='utf-8'))
-        return {key: str(saved.get(key, default)) for key, default in DEFAULTS.items()}
+        settings = {key: str(saved.get(key, default)) for key, default in DEFAULTS.items()}
+        settings['server_ids'] = server_ids_of(saved)
+        return settings
     except (OSError, ValueError, AttributeError):
         pass
     bat = Path(install) / 'settings.bat'
@@ -307,8 +345,10 @@ def read_settings(install):
 def save_settings(install, settings):
     path = settings_path(install)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({key: settings.get(key, default) for key, default in DEFAULTS.items()},
-                               indent=2) + '\n', encoding='utf-8')
+    saved = {key: settings.get(key, default) for key, default in DEFAULTS.items()}
+    if settings.get('server_ids'):  # only once a server refused the id: older files stay as they were
+        saved['server_ids'] = settings['server_ids']
+    path.write_text(json.dumps(saved, indent=2) + '\n', encoding='utf-8')
 
 
 # --- the game ---------------------------------------------------------------------------------
