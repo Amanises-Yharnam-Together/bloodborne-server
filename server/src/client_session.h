@@ -17,6 +17,7 @@
 #include <QTcpSocket>
 #include <database.h>
 #include "config.h"
+#include "http_gate.h"
 #include "matching_types.h"
 #include "protocol.h"
 #include "score_cache.h"
@@ -59,6 +60,9 @@ struct SharedState {
 
     // Matchmaking shared state
     MatchingSharedState matching;
+
+    // The players of each address's signed-in links, for the HTTP ports (http_gate.h).
+    HttpGate::Gate httpGate;
 
     // Live usage stats for the read-only stats HTTP server
     mutable QReadWriteLock usageLock;

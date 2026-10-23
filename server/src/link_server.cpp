@@ -359,6 +359,7 @@ void LinkServer::Apply(const ServerLink::Hub::Result& result) {
                 m_addressLinks.remove(address);
         }
         m_guard.Forget(gone.Key());
+        m_shared->httpGate.Gone(gone.Key());
         // A game gone (or moved to another address): its connection to the TCP port is over.
         for (auto it = m_rpc.begin(); it != m_rpc.end();) {
             if (it->second->to == gone) {
@@ -376,6 +377,8 @@ void LinkServer::Apply(const ServerLink::Hub::Result& result) {
             m_linkAddress.insert(linked.endpoint.Key(), linked.endpoint.ipv4);
             ++m_addressLinks[linked.endpoint.ipv4];
         }
+        m_shared->httpGate.Linked(linked.endpoint.Key(), linked.endpoint.ipv4,
+                                  QString::fromUtf8(linked.online_id));
         QWriteLocker lk(&m_shared->matching.udpLock);
         m_shared->matching.udpExt[QString::fromUtf8(linked.online_id)] = {
             QHostAddress(linked.virtual_endpoint.ipv4).toString(), linked.virtual_endpoint.port};

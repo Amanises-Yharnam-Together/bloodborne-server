@@ -37,6 +37,8 @@ struct HostedConfig {
     int lobbyPlayers = 32;     // players listed to each player besides its team and invites
     int lobbyIntervalMs = 250; // lobby states go out at most this often
     int worldsPerPlayer = 16;  // worlds listed to a player (the ones it played in)
+    bool stats = false;        // the stats page (it lists player ids; StatsEnabled as well)
+    bool reports = false;      // crash reports (/bb/report), at most 8 MB each when on
 };
 
 class ConfigManager {
@@ -116,6 +118,12 @@ public:
         QReadLocker lk(&m_lock);
         return m_tcpLocalOnly;
     }
+    // The HTTP ports answer only addresses with a signed-in link, as one of its players
+    // (http_gate.h). Always on for a hosted server; this turns it on for a host's own.
+    bool IsHttpLinkedOnly() const {
+        QReadLocker lk(&m_lock);
+        return m_httpLinkedOnly || m_hosted.enabled;
+    }
     bool IsBannedDomain(const QString& d) const {
         QReadLocker lk(&m_lock);
         return m_bannedDomains.contains(d.toLower());
@@ -168,6 +176,7 @@ private:
     bool m_bloodborneSeamlessCoop = false;
     BackendConfig m_backend;
     HostedConfig m_hosted;
+    bool m_httpLinkedOnly = false;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     QString m_bloodborneWorldPath = "bloodborne_worlds";

@@ -106,6 +106,8 @@ set(SOURCES
     src/link_server.cpp
     src/admission.h
     src/admission.cpp
+    src/http_gate.h
+    src/http_gate.cpp
     # The games' one link to the server (co-op phase 2)
     src/server_link.h
     src/server_link.cpp
@@ -283,6 +285,11 @@ if(BUILD_TESTING)
     target_link_libraries(test_admission PRIVATE Qt6::Core Qt6::Network)
     add_test(NAME admission COMMAND test_admission)
 
+    add_executable(test_http_gate EXCLUDE_FROM_ALL tests/test_http_gate.cpp src/http_gate.cpp)
+    target_include_directories(test_http_gate PRIVATE src)
+    target_link_libraries(test_http_gate PRIVATE Qt6::Core Qt6::Network)
+    add_test(NAME http_gate COMMAND test_http_gate)
+
     add_executable(test_team_lobby EXCLUDE_FROM_ALL
         tests/test_team_lobby.cpp
         ${COOP_SOURCES}
@@ -325,6 +332,11 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_parity
             WORKING_DIRECTORY "${BLOODBORNE_SS_INFO_DIR}/tests")
         set_tests_properties(bloodborne_backend_parity PROPERTIES
+            ENVIRONMENT "SHADNET_EXE=$<TARGET_FILE:shadnet>")
+        add_test(NAME http_gate_routes
+            COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_http_gate_routes
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        set_tests_properties(http_gate_routes PROPERTIES
             ENVIRONMENT "SHADNET_EXE=$<TARGET_FILE:shadnet>")
     endif()
 endif()
