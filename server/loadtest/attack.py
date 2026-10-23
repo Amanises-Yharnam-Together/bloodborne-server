@@ -88,7 +88,8 @@ def signin_flood(args):
         sockets.append(s)
     sent = welcomed = refused = cookies = 0
     reasons = {}
-    sessions = {}  # (socket index, online id) -> its session, once its cookie came
+    last_ids = {}  # socket index -> the id of its last first hello (its cookie answers that one)
+    sessions = {}  # socket index -> the session of its last hello with a cookie
     start = time.time()
     interval = 1.0 / args.rate
     next_at = start
@@ -98,8 +99,7 @@ def signin_flood(args):
         if now >= next_at:
             s = sockets[sent % len(sockets)]
             online_id = f"bot{tag % 1000}x{sent}".encode()[:16]
-            # The id rides in the socket's last first hello: its cookie answers that one.
-            s.last_id = online_id
+            last_ids[sent % len(sockets)] = online_id
             s.sendto(hello(online_id, b"pw-" + online_id), (args.server, args.port))
             sent += 1
             next_at += interval
@@ -111,14 +111,14 @@ def signin_flood(args):
                     if cookie:
                         cookies += 1
                         if not args.no_cookie:
-                            online_id = s.last_id
+                            online_id = last_ids[index]
                             nonce = os.urandom(16)
                             secret = b"pw-" + online_id
-                            s.session = Session(secret, nonce, cookie, online_id)
+                            sessions[index] = Session(secret, nonce, cookie, online_id)
                             s.sendto(hello(online_id, secret, cookie=cookie, nonce=nonce),
                                      (args.server, args.port))
                         continue
-                    session = getattr(s, "session", None)
+                    session = sessions.get(index)
                     body = session.open(datagram) if session else None
                     answer = welcome_of(body) if body else None
                     if answer:
