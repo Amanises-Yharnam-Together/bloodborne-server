@@ -79,6 +79,8 @@ void ConfigManager::Parse(const QString& path) {
     m_hosted.partyWorlds = str("HostedPartyWorlds", "2048").toInt();
     m_hosted.stats = boolean("HostedStats", false);
     m_hosted.reports = boolean("HostedReports", false);
+    m_hosted.adminSocket = str("HostedAdminSocket", "admin.sock").trimmed();
+    m_hosted.retireDays = str("HostedRetireDays", "0").toInt();
     m_httpLinkedOnly = boolean("HttpLinkedOnly", false);
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");

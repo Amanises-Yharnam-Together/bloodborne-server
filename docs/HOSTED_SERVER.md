@@ -14,16 +14,19 @@ Off by default: a host's own server behaves as before. On (`shadnet.cfg`):
 | Passwords checked on a thread pool, not the link's thread; a wrong one is not hashed again for 30 s; at most 512 checks queued | `link_server.cpp` `SignIn` | each new id cost ~3 password hashes (100k rounds) on the thread that relays every game: 30 new players froze pings for 1.7 s |
 | Hellos an address (4/s, burst 20), games an address (8), new accounts an address an hour (5) | `admission.h` | bots making accounts; one PC flooding hellos |
 | Each link's datagrams (1500/s) and bytes (400 KB/s); past them dropped, 5 seconds past them in a minute bans the address for 15 min | `admission.h` | a game sends ~60-200 datagrams and ~10 KB a second |
-| `banned.txt`: one address or player id a line, read every 30 s | `link_server.cpp` | the operator's bans |
+| `banned.txt`: one address or player id a line (`until=<unix s>` ends one), read every 30 s; a linked game it bans is unlinked then, not only at its next hello (only its bans: an address's rate ban holds its next hellos, it does not unlink every game behind it) | `link_server.cpp`, `admin.h` `KickBanned` | the operator's bans |
 | `HostedBuild`: the build every game must say | `server_link.cpp` | otherwise the first game to link decides it |
 | Lobby and party names must be the player's own id (hex, as the games say them) | `bloodborne_world.cpp` `OwnName` | anyone could act in the lobby, or say hello into a party, as another player |
 | A party hello must be for the world the player's team plays | `bloodborne_world.cpp` `OnHello` | any player could join any world by its key |
-| A world is its players' (`TeamWorldInfo.members`): listed to them only, forgotten only by them (each for itself) | `team_lobby.cpp` | every world was listed to everyone; anyone could forget anyone's; 16 worlds server-wide |
+| A world is its players' (`TeamWorldInfo.members`): listed to them only, forgotten only by them (each for itself); a player in more than `HostedWorldsPerPlayer` leaves its oldest at a Start (one nobody keeps is put aside) | `team_lobby.cpp` | every world was listed to everyone; anyone could forget anyone's; 16 worlds server-wide; Create/Start/Leave again and again grew the list without end |
 | The HTTP ports (20443 the game's services, 31315 summons and WebAPI) answer only addresses with a signed-in link, and only as a player linked from there (the backend's `UserId` or `PlatformAccountId`, the summon's `UserId`, the bearer token's account); 403 otherwise. GETs (ss.info, status) act as nobody and stay open | `http_gate.h` | the player id came from the request: anyone reaching the ports could act as any player |
 | Crash reports (`/bb/report`) off unless `HostedReports` (then 8 MB each); the stats page off unless `HostedStats` | `webapi_server.cpp`, `server.cpp` | a report costs a password hash; the stats page lists player ids |
 | The lobby goes out at most every 250 ms, only to players whose own state changed, listing their team, invites and 32 others | `team_lobby.cpp` `StateFor`, `bloodborne_world.cpp` `SendLobby` | every lobby change sent every player the whole server's list: O(n^2), 216 Mbit/s at 120 players |
 | A trade only between members of one started team | `bloodborne_world.cpp` `TakeTrade` | trades go by member name; a stranger in a party could be offered goods or answer for another |
 | Party worlds in memory: at most `HostedPartyWorlds` (2048) | `bloodborne_world.h` `Limits` | every team's world on one machine |
+| The operator's commands on a UNIX-domain socket only the server's user opens (`HostedAdminSocket`, never a network port; `server/hosting/admin.sh`): list players, kick, ban/unban by id or address with an optional end (written to `banned.txt`, so restarts keep them), list worlds (members, last played, bytes on disk, measured off the link thread) and those put aside, restore one (its folder moved back at once), stats (players, worlds, link thread load, refusals); a second server started on a live socket is refused it instead of taking it | `admin.h`, `link_server.cpp` | only `banned.txt` and a restart before; a forgotten world could only come back by hand |
+| Worlds nobody started for `HostedRetireDays` days (0, the default: never) are put aside once a day, as a forgotten world's folder (writer thread, logged, never deleted); a world put aside keeps its line beside it (`kept_world.pb`, with the players it had when it went: a forgotten one names its last player), so `restore` gives it back to them | `bloodborne_world.cpp` `Service::Retire` | every world ever played stays on disk and on its players' lists |
+| A summon request (create, get, delete, request) must name its player (`UserId`) | `webapi_routes_bloodborne.cpp` `Refused` | one naming nobody passed the gate and could remove or claim another player's sign by its `SessionId` |
 
 Two fixes are on for everyone: a TCP packet size under its header no longer loops the session for
 ever (`client_session.cpp`), and a datagram from one game no longer walks every member's stream
@@ -46,7 +49,7 @@ above what a game sends, so only a broken or hostile one meets it):
 | An Rpc message (the game's bridge reads 16 KiB) | 64 KiB | the tunnel is dropped; the game connects again | `link_server.h` |
 | Rpc bytes before the TCP port answers / shadNet's answers not acked | 1 MiB / 9 MiB | the connection ends | `link_server.cpp` |
 | Message fields: names 64 bytes, characters 96, party key 256, portrait 128x128 RGB, join data 4 KiB, map state 1250 bytes, 4096 shown characters, HP enemies, flag events and echoes, 32768 kills, 250,000 team world flags, 64 trade items, trophies, revive hits | | the message is dropped (logged) | `Service::Oversized` |
-| Party worlds in memory | 1024 (hosted: `HostedPartyWorlds`); one nobody is in for 5 min goes back to disk only, and a new hello reads it again | a hello for a new world is refused | `Service::Collect` |
+| Party worlds in memory | 1024 (hosted: `HostedPartyWorlds`); one nobody is in for 5 min goes back to disk only (where its members stood is kept for when a new hello reads it again, for a day and 4096 worlds at most); at the cap the 4 oldest such go | a hello for a new world is refused | `Service::Collect` |
 
 Also for everyone: a summon removal touches only its party's signs, the summon broker keeps at most
 4096 signs, and an address sends at most 20 crash reports, then one a minute. A host can turn the
@@ -74,12 +77,21 @@ Settings: `Hosted`, `HostedBuild`, `HostedBanList`, `HostedLinksPerAddress`,
 `HostedHellosPerSecond`, `HostedNewAccountsPerHour`, `HostedSignupWorkBits`,
 `HostedSignupWorkMaxBits`, `HostedSignupsPerMinute`, `HostedDatagramsPerSecond`,
 `HostedBytesPerSecond`, `HostedLobbyPlayers`, `HostedLobbyIntervalMs`, `HostedWorldsPerPlayer`,
-`HostedPartyWorlds`, `HostedStats`, `HostedReports`,
+`HostedPartyWorlds`, `HostedStats`, `HostedReports`, `HostedAdminSocket`, `HostedRetireDays`,
 `HttpLinkedOnly`.
 
 The games need no change for any of this but the link's handshake below (the emulator already says
-its id in hex as its names; check the port does too). One game-side change is wanted: on a hosted server the lobby lists 32
-players, so inviting a friend needs invite by name or code.
+its id in hex as its names; check the port does too).
+
+A friend the lobby does not list (it lists 32 players), on every server: each team has a 6-letter
+code (no 0/O, 1/I; `coop/team_code.h`), shown to its leader on the team screen, made again with
+New code. Join by code puts the player straight into that team (the leader handing out the code is
+its invite, the typing the accept, so the leader has nothing more to answer). Invite by name sends
+the usual invite to the one signed-in player of that name as the lobby shows it (case aside;
+several of that name: refused), who is then listed to the inviter. Wrong codes and names count
+per player: past 5 in a minute every lookup waits (`TeamLobby::LookupTries`). Both are typed in
+the window's text entry (the game's name dialog's) and need this build on both sides
+(`TeamRequest` actions 12-14, `Team.code`).
 
 ## The link's handshake (link version 3)
 
@@ -185,11 +197,10 @@ world.pb, `sqlite3 .backup`, restic to S3/B2/Storage Box), with a restore drill 
 
 ## Before a public launch
 
-Server only:
-- Retire worlds nobody played for months (disk).
+Server only: nothing left; each item is a row in the tables above.
 
 Game and launcher:
 - Encryption (Noise, ~1.5-2 weeks): the link is authenticated now, but the secret and the game
   data still cross the internet in clear.
-- Invite by name or code (the lobby lists 32 players).
-- A fresh id when the server refuses one (virtual address collision).
+- ~~A fresh id when the server refuses one (virtual address collision).~~ Done: the launcher makes
+  one for that server only (coop.json `server_ids`, keyed by the address as typed) and starts again.

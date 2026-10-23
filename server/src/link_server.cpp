@@ -5,8 +5,14 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
+#include <QFutureWatcher>
+#include <QJsonDocument>
+#include <QPromise>
 #include <QRandomGenerator>
+#include <QThreadPool>
 #include <QtEndian>
+#include "admin.h"
 #include "link_server.h"
 
 namespace {
@@ -87,6 +93,27 @@ LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_
         m_banTimer = new QTimer(this);
         connect(m_banTimer, &QTimer::timeout, this, &LinkServer::LoadBanList);
         m_banTimer->start(30'000);
+        if (!m_hosted.adminSocket.isEmpty()) {
+            // Never a network port: a socket file only the server's own user may open. A path, so
+            // Qt keeps it where it is said (a bare name would go to the temp folder).
+            const QString path = QFileInfo{m_hosted.adminSocket}.absoluteFilePath();
+            m_admin = new QLocalServer(this);
+            m_admin->setSocketOptions(QLocalServer::UserAccessOption);
+            if (QString why; Admin::ListenAdmin(*m_admin, path, why)) {
+                connect(m_admin, &QLocalServer::newConnection, this,
+                        &LinkServer::OnAdminConnection);
+                qInfo().noquote() << "Hosted: the operator's commands on" << path;
+            } else {
+                qWarning().noquote() << "Hosted: no admin socket at" << path << ":" << why;
+            }
+        }
+        if (m_hosted.retireDays > 0) {
+            // Daily, the first a minute after the start (the list is read by then).
+            m_retireTimer = new QTimer(this);
+            connect(m_retireTimer, &QTimer::timeout, this, &LinkServer::RetireWorlds);
+            m_retireTimer->start(24 * 3600 * 1000);
+            QTimer::singleShot(60'000, this, &LinkServer::RetireWorlds);
+        }
         qInfo().noquote() << QStringLiteral(
                                  "Hosted: %1 links an address, %2 hellos/s, %3 new accounts/h, "
                                  "%4 datagrams/s and %5 bytes/s a link, build %6, new accounts' "
@@ -119,12 +146,81 @@ LinkServer::~LinkServer() {
 }
 
 void LinkServer::LoadBanList() {
-    QFile file(m_hosted.banList);
-    QSet<quint32> addresses;
-    QSet<QByteArray> ids;
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text))
-        Admission::ParseBanList(QString::fromUtf8(file.readAll()), addresses, ids);
-    m_guard.SetBanned(addresses, ids);
+    Admin::LoadBans(m_hosted.banList, QDateTime::currentSecsSinceEpoch(), m_guard);
+    // A linked game banned now goes now (the guard checks ids at the hello only).
+    Apply(Admin::KickBanned(m_link, m_guard, m_clock.elapsed()));
+}
+
+void LinkServer::OnAdminConnection() {
+    while (QLocalSocket* socket = m_admin->nextPendingConnection()) {
+        connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+        connect(socket, &QLocalSocket::readyRead, this, [this, socket] {
+            // One command a connection, one line.
+            if (!socket->canReadLine()) {
+                if (socket->bytesAvailable() > 4096)
+                    socket->abort();
+                return;
+            }
+            const QString line = QString::fromUtf8(socket->readLine(4096)).trimmed();
+            RunAdmin(socket, line);
+        });
+    }
+}
+
+void LinkServer::RunAdmin(QLocalSocket* socket, const QString& line) {
+    Admin::Context context{m_link, m_world, m_guard};
+    context.ban_list = m_hosted.banList;
+    context.link_ms = m_clock.elapsed();
+    context.wall_ms = QDateTime::currentMSecsSinceEpoch();
+    context.retire_ms = qint64{std::max(0, m_hosted.retireDays)} * 24 * 3600 * 1000;
+    context.link_load = m_linkLoad;
+    const Admin::Answer answer = Admin::Run(line, context);
+    qInfo().noquote() << "Admin:" << line << (answer.json["ok"].toBool() ? "done" : "refused");
+    Apply(answer.link);
+    Apply(answer.world);
+    const auto reply = [socket](const QJsonObject& json) {
+        socket->write(QJsonDocument{json}.toJson(QJsonDocument::Compact) + '\n');
+        socket->disconnectFromServer();
+    };
+    if (!answer.finish) {
+        reply(answer.json);
+        return;
+    }
+    // What reads the disk runs on the pool, the answer comes back here (none if the operator's
+    // connection went: the watcher goes with it).
+    auto promise = std::make_shared<QPromise<QJsonObject>>();
+    auto* watcher = new QFutureWatcher<QJsonObject>(socket);
+    connect(watcher, &QFutureWatcherBase::finished, socket,
+            [watcher, reply] { reply(watcher->result()); });
+    watcher->setFuture(promise->future());
+    QThreadPool::globalInstance()->start(
+        [promise, finish = answer.finish, json = answer.json]() mutable {
+            promise->start();
+            finish(json);
+            promise->addResult(json);
+            promise->finish();
+        });
+}
+
+void LinkServer::RetireWorlds() {
+    BloodborneWorld::Service::Result result;
+    const auto retired = m_world.Retire(QDateTime::currentMSecsSinceEpoch(),
+                                        qint64{m_hosted.retireDays} * 24 * 3600 * 1000, result);
+    Apply(result);
+    qInfo().noquote() << QStringLiteral("Hosted: %1 worlds not played for %2 days put aside")
+                             .arg(retired.size())
+                             .arg(m_hosted.retireDays);
+}
+
+void LinkServer::Busy(const QElapsedTimer& since) {
+    m_busyNs += since.nsecsElapsed();
+    if (!m_loadClock.isValid()) {
+        m_loadClock.start();
+    } else if (const qint64 window = m_loadClock.nsecsElapsed(); window >= 10'000'000'000) {
+        m_linkLoad = static_cast<double>(m_busyNs) / static_cast<double>(window);
+        m_busyNs = 0;
+        m_loadClock.restart();
+    }
 }
 
 bool LinkServer::Start(const QHostAddress& addr, uint16_t port) {
@@ -142,6 +238,8 @@ bool LinkServer::Start(const QHostAddress& addr, uint16_t port) {
 }
 
 void LinkServer::OnReadyRead() {
+    QElapsedTimer busy;
+    busy.start();
     while (m_socket->hasPendingDatagrams()) {
         QByteArray raw;
         raw.resize(static_cast<int>(m_socket->pendingDatagramSize()));
@@ -157,6 +255,7 @@ void LinkServer::OnReadyRead() {
             HandleLink(raw, sender, senderPort);
         }
     }
+    Busy(busy);
 }
 
 void LinkServer::HandleLink(const QByteArray& datagram, const QHostAddress& sender,
@@ -209,14 +308,20 @@ bool LinkServer::Admit(const QByteArray& datagram, ServerLink::Kind kind, quint3
 void LinkServer::OnLinkTick() {
     if (m_hosted.enabled)
         m_link.SetSignupWork(m_signupWork.Bits(m_clock.elapsed()));
+    QElapsedTimer busy;
+    busy.start();
     Apply(m_link.Tick(m_clock.elapsed()));
+    Busy(busy);
 }
 
 void LinkServer::OnWorldTick() {
+    QElapsedTimer busy;
+    busy.start();
     Apply(m_world.Tick(QDateTime::currentMSecsSinceEpoch()));
     // The Rpc tunnels' resends and keepalives.
     for (auto& [id, end] : m_rpc)
         FlushRpc(*end);
+    Busy(busy);
 }
 
 std::optional<ServerLink::SignInVerdict> LinkServer::SignIn(const QByteArray& online_id,

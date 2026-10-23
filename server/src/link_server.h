@@ -5,6 +5,8 @@
 #include <memory>
 #include <QElapsedTimer>
 #include <QHostAddress>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QObject>
 #include <QTcpSocket>
 #include <QThread>
@@ -47,6 +49,12 @@ private:
     void SignedIn(const QByteArray& online_id, const QByteArray& hash, bool accepted, bool made,
                   quint32 address, bool counted, const QByteArray& refusal);
     void LoadBanList();
+    // Hosted: the operator's commands (admin.h) on the admin socket, and the worlds' retirement.
+    void OnAdminConnection();
+    void RunAdmin(QLocalSocket* socket, const QString& line);
+    void RetireWorlds();
+    // The link thread's busy share (the stats command): the time in its handlers, by 10 s.
+    void Busy(const QElapsedTimer& since);
     // Hosted (docs/HOSTED_SERVER.md): whether a datagram from `sender` goes on to the hub.
     bool Admit(const QByteArray& datagram, ServerLink::Kind kind, quint32 address,
                const ServerLink::Endpoint& from);
@@ -101,6 +109,11 @@ private:
     QHash<quint64, quint32> m_linkAddress; // link (Endpoint::Key) -> its address
     QHash<quint32, int> m_addressLinks;    // address -> its links
     QTimer* m_banTimer = nullptr;
+    QLocalServer* m_admin = nullptr;
+    QTimer* m_retireTimer = nullptr;
+    QElapsedTimer m_loadClock;
+    qint64 m_busyNs = 0;
+    double m_linkLoad = 0;
     QString m_dbPath;
     std::map<QByteArray, std::unique_ptr<RpcEnd>> m_rpc; // by player id
 };

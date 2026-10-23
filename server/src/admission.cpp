@@ -3,8 +3,12 @@
 #include "admission.h"
 
 #include <algorithm>
+#include <optional>
+#include <QDateTime>
 #include <QHostAddress>
+#include <QRegularExpression>
 #include <QStringList>
+#include <QTimeZone>
 
 namespace Admission {
 
@@ -93,18 +97,43 @@ void Guard::SetBanned(const QSet<quint32>& addresses, const QSet<QByteArray>& id
     banned_ids = ids;
 }
 
-void ParseBanList(const QString& text, QSet<quint32>& addresses, QSet<QByteArray>& ids) {
-    for (QString line : text.split('\n')) {
-        line = line.section('#', 0, 0).trimmed();
-        if (line.isEmpty()) {
+namespace {
+
+// A line's entry and its end (0: for ever), without its comment; nothing for a comment or blank.
+std::optional<BanLine> ReadBanLine(const QString& raw) {
+    const QString line = raw.section('#', 0, 0).trimmed();
+    if (line.isEmpty()) {
+        return std::nullopt;
+    }
+    const QStringList words = line.split(QRegularExpression(QStringLiteral("\\s+")));
+    BanLine ban{words[0], 0, raw.section('#', 1).trimmed()};
+    for (const QString& word : words.mid(1)) {
+        if (word.startsWith(QStringLiteral("until="))) {
+            ban.until_s = word.mid(6).toLongLong();
+        }
+    }
+    // WithBan's own "until <date> UTC" before the note.
+    static const QRegularExpression written{QStringLiteral("^until [0-9-]+ [0-9:]+ UTC(, )?")};
+    if (ban.until_s != 0) {
+        ban.note.remove(written);
+    }
+    return ban;
+}
+
+} // namespace
+
+void ParseBanList(const QString& text, QSet<quint32>& addresses, QSet<QByteArray>& ids,
+                  qint64 now_s) {
+    for (const BanLine& ban : BanLines(text)) {
+        if (ban.until_s != 0 && ban.until_s <= now_s) {
             continue;
         }
         bool ipv4 = false;
-        const quint32 address = QHostAddress(line).toIPv4Address(&ipv4);
+        const quint32 address = QHostAddress(ban.who).toIPv4Address(&ipv4);
         if (ipv4) {
             addresses.insert(address);
         } else {
-            ids.insert(line.toUtf8());
+            ids.insert(ban.who.toUtf8());
         }
     }
 }
@@ -139,6 +168,58 @@ int SignupWork::Bits(qint64 now_ms) {
         bits += 2;
     }
     return std::min(bits, max_bits);
+}
+
+QList<BanLine> BanLines(const QString& text) {
+    QList<BanLine> bans;
+    for (const QString& line : text.split('\n')) {
+        if (auto ban = ReadBanLine(line)) {
+            bans.append(*ban);
+        }
+    }
+    return bans;
+}
+
+QString WithBan(const QString& text, const BanLine& ban, qint64 now_s) {
+    QStringList lines;
+    for (const QString& line : text.split('\n')) {
+        const auto old = ReadBanLine(line);
+        if (old && (old->who == ban.who || (old->until_s != 0 && old->until_s <= now_s))) {
+            continue;
+        }
+        lines.append(line);
+    }
+    while (!lines.isEmpty() && lines.last().trimmed().isEmpty()) {
+        lines.removeLast();
+    }
+    QString added = ban.who;
+    QStringList comment;
+    if (ban.until_s != 0) {
+        added += QStringLiteral(" until=%1").arg(ban.until_s);
+        comment.append(QDateTime::fromSecsSinceEpoch(ban.until_s, QTimeZone::utc())
+                           .toString(QStringLiteral("'until' yyyy-MM-dd HH:mm 'UTC'")));
+    }
+    if (!ban.note.isEmpty()) {
+        comment.append(QString{ban.note}.replace('\n', ' '));
+    }
+    if (!comment.isEmpty()) {
+        added += QStringLiteral(" # ") + comment.join(QStringLiteral(", "));
+    }
+    lines.append(added);
+    return lines.join('\n') + '\n';
+}
+
+QString WithoutBan(const QString& text, const QString& who, bool& found) {
+    found = false;
+    QStringList lines;
+    for (const QString& line : text.split('\n')) {
+        if (const auto old = ReadBanLine(line); old && old->who == who) {
+            found = true;
+            continue;
+        }
+        lines.append(line);
+    }
+    return lines.join('\n');
 }
 
 } // namespace Admission

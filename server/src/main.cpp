@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2019-2026 rpcsn Project
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <cstdio>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFileInfo>
+#include <QLocalSocket>
 #include <QLoggingCategory>
 #ifdef Q_OS_UNIX
 #include <csignal>
@@ -52,6 +55,27 @@ void QuitOnSignals(QCoreApplication& app) {
 } // namespace
 #endif
 
+namespace {
+// `shadnet --admin <command>`: the operator's command (admin.h) to the running server's admin
+// socket (HostedAdminSocket, in SHADNET_HOME), its JSON answer printed.
+int RunAdminCommand(const QString& path, const QString& line) {
+    QLocalSocket socket;
+    socket.connectToServer(QFileInfo{path}.absoluteFilePath());
+    if (!socket.waitForConnected(5000)) {
+        fprintf(stderr, "no server at %s: %s\n", qPrintable(path),
+                qPrintable(socket.errorString()));
+        return 2;
+    }
+    socket.write(line.toUtf8() + '\n');
+    QByteArray answer;
+    while (socket.state() == QLocalSocket::ConnectedState && socket.waitForReadyRead(30000))
+        answer += socket.readAll();
+    answer += socket.readAll();
+    fputs(answer.constData(), stdout);
+    return answer.contains("\"ok\":true") ? 0 : 1;
+}
+} // namespace
+
 int main(int argc, char* argv[]) {
     QLoggingCategory::setFilterRules(QStringLiteral("*.debug=false\n*.info=true\n*.warning=true"));
     qSetMessagePattern(QStringLiteral("%{time yyyy-MM-dd HH:mm:ss.zzz}  "
@@ -74,6 +98,12 @@ int main(int argc, char* argv[]) {
     if (arguments.removeAll(QStringLiteral("--watchdog")) > 0) {
         return RunWatchdog(QCoreApplication::applicationFilePath(),
                            arguments << QStringLiteral("--beat"));
+    }
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--admin")); at >= 0) {
+        ConfigManager config;
+        config.Load();
+        return RunAdminCommand(config.GetHosted().adminSocket,
+                               arguments.mid(at + 1).join(QLatin1Char(' ')));
     }
     if (arguments.contains(QStringLiteral("--beat"))) {
         StartWatchdogBeat(&app);
