@@ -74,6 +74,9 @@ void ConfigManager::Parse(const QString& path) {
     m_hosted.lobbyIntervalMs = str("HostedLobbyIntervalMs", "250").toInt();
     m_hosted.worldsPerPlayer = str("HostedWorldsPerPlayer", "16").toInt();
     m_hosted.partyWorlds = str("HostedPartyWorlds", "2048").toInt();
+    m_hosted.stats = boolean("HostedStats", false);
+    m_hosted.reports = boolean("HostedReports", false);
+    m_httpLinkedOnly = boolean("HttpLinkedOnly", false);
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_bloodborneWorldPath = str("BloodborneWorldPath", "bloodborne_worlds");
