@@ -631,10 +631,17 @@ void Service::Collect(qint64 now_ms, bool all, Result& result) {
         // Where its members stood and its boards are not in the stored world: kept until it is
         // read again, so a guest still resumes where it was.
         if (!world.places.empty()) {
-            kept[name] = Kept{std::move(world.places), std::move(world.boards)};
+            kept[name] = Kept{std::move(world.places), std::move(world.boards), now_ms};
         }
         result.log.append(QStringLiteral("party world %1: nobody in it, out of memory").arg(name));
         worlds.erase(it);
+    }
+    // Not for ever, for every server: a world that never comes back would keep it.
+    std::erase_if(
+        kept, [&](const auto& entry) { return now_ms - entry.second.since_ms >= limits.kept_ms; });
+    while (kept.size() > limits.kept_worlds) {
+        kept.erase(std::ranges::min_element(
+            kept, {}, [](const auto& entry) { return entry.second.since_ms; }));
     }
 }
 
@@ -2316,7 +2323,7 @@ std::vector<Service::WorldRow> Service::WorldRows() const {
         row.info = info;
         row.folder = FolderOf(QByteArray::fromStdString(TeamLobby::PartyOf(info.id())));
         if (!folder.isEmpty()) {
-            row.bytes = BytesIn(QDir{folder}.filePath(row.folder));
+            row.path = QDir{folder}.filePath(row.folder);
         }
         row.games = static_cast<int>(std::ranges::count_if(
             members, [&](const auto& entry) { return entry.second.party == row.folder; }));
@@ -2324,7 +2331,15 @@ std::vector<Service::WorldRow> Service::WorldRows() const {
     return rows;
 }
 
+qint64 Service::BytesOn(const QString& path) {
+    return BytesIn(path);
+}
+
 std::vector<Service::AsideRow> Service::AsideRows() const {
+    return AsideRowsIn(folder);
+}
+
+std::vector<Service::AsideRow> Service::AsideRowsIn(const QString& folder) {
     std::vector<AsideRow> rows;
     if (folder.isEmpty()) {
         return rows;
@@ -2414,12 +2429,20 @@ bool Service::Restore(const QString& aside, qint64 now_ms, QString& said, Result
     }
     bbcoop::TeamWorldInfo info = kept.info();
     info.set_played_ms(now_ms);
-    if (!lobby.AddWorld(info)) {
+    if (info.id().empty() || std::ranges::any_of(lobby.Worlds(), [&](const auto& listed) {
+            return listed.id() == info.id();
+        })) {
         said = QStringLiteral("world %1 is listed").arg(QString::fromStdString(info.id()));
         return false;
     }
+    // Here, at once (drained above): a move queued on the writer would leave the folder missing
+    // to a hello or a Start that comes first, which would make an empty one in its place.
+    if (!QDir{dir}.rename(from, name)) {
+        said = QStringLiteral("could not move %1 to %2").arg(from, name);
+        return false;
+    }
+    lobby.AddWorld(info);
     world_folders[info.id()] = name;
-    writer->Move(folder, from, name);
     StoreWorldList(result);
     lobby_changed = true;
     said = QString::fromStdString(info.id());

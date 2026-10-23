@@ -6,8 +6,11 @@
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QJsonDocument>
+#include <QPromise>
 #include <QRandomGenerator>
+#include <QThreadPool>
 #include <QtEndian>
 #include "admin.h"
 #include "link_server.h"
@@ -84,14 +87,12 @@ LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_
             const QString path = QFileInfo{m_hosted.adminSocket}.absoluteFilePath();
             m_admin = new QLocalServer(this);
             m_admin->setSocketOptions(QLocalServer::UserAccessOption);
-            QLocalServer::removeServer(path); // one left by a crash
-            if (m_admin->listen(path)) {
+            if (QString why; Admin::ListenAdmin(*m_admin, path, why)) {
                 connect(m_admin, &QLocalServer::newConnection, this,
                         &LinkServer::OnAdminConnection);
                 qInfo().noquote() << "Hosted: the operator's commands on" << path;
             } else {
-                qWarning().noquote()
-                    << "Hosted: no admin socket at" << path << ":" << m_admin->errorString();
+                qWarning().noquote() << "Hosted: no admin socket at" << path << ":" << why;
             }
         }
         if (m_hosted.retireDays > 0) {
@@ -163,8 +164,28 @@ void LinkServer::RunAdmin(QLocalSocket* socket, const QString& line) {
     qInfo().noquote() << "Admin:" << line << (answer.json["ok"].toBool() ? "done" : "refused");
     Apply(answer.link);
     Apply(answer.world);
-    socket->write(QJsonDocument{answer.json}.toJson(QJsonDocument::Compact) + '\n');
-    socket->disconnectFromServer();
+    const auto reply = [socket](const QJsonObject& json) {
+        socket->write(QJsonDocument{json}.toJson(QJsonDocument::Compact) + '\n');
+        socket->disconnectFromServer();
+    };
+    if (!answer.finish) {
+        reply(answer.json);
+        return;
+    }
+    // What reads the disk runs on the pool, the answer comes back here (none if the operator's
+    // connection went: the watcher goes with it).
+    auto promise = std::make_shared<QPromise<QJsonObject>>();
+    auto* watcher = new QFutureWatcher<QJsonObject>(socket);
+    connect(watcher, &QFutureWatcherBase::finished, socket,
+            [watcher, reply] { reply(watcher->result()); });
+    watcher->setFuture(promise->future());
+    QThreadPool::globalInstance()->start(
+        [promise, finish = answer.finish, json = answer.json]() mutable {
+            promise->start();
+            finish(json);
+            promise->addResult(json);
+            promise->finish();
+        });
 }
 
 void LinkServer::RetireWorlds() {

@@ -200,6 +200,28 @@ int AnAccountWithoutItsAddressIsNotLookedAtOnEveryOpen(const QString &folder) {
   return 0;
 }
 
+// The addresses not stored because their transaction did not begin (another
+// connection writing past the busy timeout; here, one already open on this
+// connection, which fails the same BEGIN IMMEDIATE): not marked done either,
+// so the next migration stores them.
+int AddressesNotStoredForABusyDatabaseAreStoredLater(const QString &folder) {
+  Database db("busy");
+  CHECK(db.Open(folder + "/busy.db"));
+  CHECK(!db.CreateAccount("kaniel", "pw2", "avatar.png", "k.pw@p2p.db"));
+  QSqlQuery q(db.Conn());
+  CHECK(q.exec("UPDATE account SET virtual_address=NULL"));
+  CHECK(q.exec("DELETE FROM migration WHERE migration_id=3"));
+  CHECK(q.exec("BEGIN"));
+  db.Migrate();
+  CHECK(q.exec("COMMIT"));
+  CHECK(AddressOf(db, "kaniel").isNull());
+  CHECK(q.exec("SELECT 1 FROM migration WHERE migration_id=3"));
+  CHECK(!q.next()); // not done
+  CHECK(db.Migrate());
+  CHECK(AddressOf(db, "kaniel").toLongLong() == VirtualAddressOf("kaniel"));
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -213,7 +235,8 @@ int main(int argc, char **argv) {
        {AFirstSignInMakesTheAccount, WithoutMakingAnUnknownIdIsRefused,
         AnOldAccountSignsInAsBefore, ANewIdOnAnotherAccountsAddressIsRefused,
         AnOldDatabaseGetsItsAddresses,
-        AnAccountWithoutItsAddressIsNotLookedAtOnEveryOpen}) {
+        AnAccountWithoutItsAddressIsNotLookedAtOnEveryOpen,
+        AddressesNotStoredForABusyDatabaseAreStoredLater}) {
     if (const int failed = test(folder.path())) {
       return failed;
     }

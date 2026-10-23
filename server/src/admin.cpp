@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QHostAddress>
 #include <QJsonArray>
+#include <QLocalSocket>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QTimeZone>
@@ -157,21 +158,34 @@ Answer Bans(Context& context) {
 
 Answer Worlds(Context& context) {
     QJsonArray worlds;
+    QStringList paths;
     for (const auto& row : context.world.WorldRows()) {
         QJsonObject line = Line(row.info);
         line["folder"] = row.folder;
-        line["bytes"] = row.bytes;
         line["games"] = row.games;
         worlds.append(line);
+        paths.append(row.path);
     }
-    QJsonArray aside;
-    for (const auto& row : context.world.AsideRows()) {
-        QJsonObject line = row.info ? Line(*row.info) : QJsonObject{};
-        line["folder"] = row.folder;
-        line["bytes"] = row.bytes;
-        aside.append(line);
-    }
-    return {QJsonObject{{"ok", true}, {"worlds", worlds}, {"aside", aside}}, {}, {}};
+    Answer answer{QJsonObject{{"ok", true}, {"worlds", worlds}, {"aside", QJsonArray{}}}, {}, {}};
+    // Every file of every world, and the folders put aside: read off the link's thread.
+    answer.finish = [paths, folder = context.world.Folder()](QJsonObject& json) {
+        QJsonArray worlds = json["worlds"].toArray();
+        for (qsizetype at = 0; at < worlds.size() && at < paths.size(); ++at) {
+            QJsonObject line = worlds[at].toObject();
+            line["bytes"] = paths[at].isEmpty() ? 0 : BloodborneWorld::Service::BytesOn(paths[at]);
+            worlds[at] = line;
+        }
+        json["worlds"] = worlds;
+        QJsonArray aside;
+        for (const auto& row : BloodborneWorld::Service::AsideRowsIn(folder)) {
+            QJsonObject line = row.info ? Line(*row.info) : QJsonObject{};
+            line["folder"] = row.folder;
+            line["bytes"] = row.bytes;
+            aside.append(line);
+        }
+        json["aside"] = aside;
+    };
+    return answer;
 }
 
 Answer Restore(Context& context, const QString& aside) {
@@ -242,7 +256,9 @@ ServerLink::Hub::Result KickBanned(ServerLink::Hub& hub, const Admission::Guard&
                                    qint64 link_ms) {
     ServerLink::Hub::Result result;
     for (const ServerLink::Hub::LinkRow& link : hub.Links()) {
-        if (guard.BannedId(link.online_id) || guard.Banned(link.endpoint.ipv4, link_ms)) {
+        // banned.txt's alone: a rate ban (Guard::Ban) holds the address's next hellos only, or
+        // every game behind one address (a CGNAT) would go with the one flooding.
+        if (guard.BannedId(link.online_id) || guard.ListBanned(link.endpoint.ipv4)) {
             const auto kicked = hub.Kick(link.online_id, 0, link_ms);
             result.sends.append(kicked.sends);
             result.log.append(kicked.log);
@@ -250,6 +266,22 @@ ServerLink::Hub::Result KickBanned(ServerLink::Hub& hub, const Admission::Guard&
         }
     }
     return result;
+}
+
+bool ListenAdmin(QLocalServer& server, const QString& path, QString& why) {
+    QLocalSocket probe;
+    probe.connectToServer(path);
+    if (probe.waitForConnected(500)) {
+        probe.abort();
+        why = QStringLiteral("another server answers on it");
+        return false;
+    }
+    QLocalServer::removeServer(path); // one left by a crash: nothing answers on it
+    if (!server.listen(path)) {
+        why = server.errorString();
+        return false;
+    }
+    return true;
 }
 
 Answer Run(const QString& line, Context& context) {

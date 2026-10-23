@@ -205,15 +205,20 @@ bool Database::Migrate() {
     }
     // Once: after it, an account without an address shares an older one's on purpose (and gets
     // it when that one is deleted). Every session and sign-in thread opens a connection.
+    // Recorded only once they are stored: a database another connection wrote to past the busy
+    // timeout tries again at the next open.
+    bool assigned = false;
     {
         QSqlQuery done(m_db);
         if (!done.exec("SELECT 1 FROM migration WHERE migration_id=3") || !done.next())
-            AssignVirtualAddresses();
+            assigned = AssignVirtualAddresses();
     }
     Exec("CREATE UNIQUE INDEX IF NOT EXISTS account_virtual_address ON account(virtual_address)");
-    QSqlQuery ins3(m_db);
-    ins3.prepare("INSERT OR IGNORE INTO migration VALUES(3,'account virtual_address')");
-    Exec(ins3);
+    if (assigned) {
+        QSqlQuery ins3(m_db);
+        ins3.prepare("INSERT OR IGNORE INTO migration VALUES(3,'account virtual_address')");
+        Exec(ins3);
+    }
 
     qInfo() << "Database migrations complete";
 
@@ -221,15 +226,19 @@ bool Database::Migrate() {
     return true;
 }
 
-void Database::AssignVirtualAddresses() {
+bool Database::AssignVirtualAddresses() {
     {
         QSqlQuery any(m_db);
-        if (!any.exec("SELECT 1 FROM account WHERE virtual_address IS NULL LIMIT 1") || !any.next())
-            return;
+        if (!any.exec("SELECT 1 FROM account WHERE virtual_address IS NULL LIMIT 1"))
+            return false;
+        if (!any.next())
+            return true;
     }
     // Immediate, and the accounts read inside it: another connection may be storing them now.
-    if (!Exec("BEGIN IMMEDIATE"))
-        return;
+    if (!Exec("BEGIN IMMEDIATE")) {
+        qWarning() << "Accounts: the virtual addresses are not stored yet:" << m_lastError;
+        return false;
+    }
     QSqlQuery missing(m_db);
     QList<QPair<qlonglong, QString>> accounts;
     if (missing.exec("SELECT user_id, username FROM account WHERE virtual_address IS NULL "
@@ -255,9 +264,14 @@ void Database::AssignVirtualAddresses() {
         if (Exec(set) && set.numRowsAffected() > 0)
             ++assigned;
     }
-    Exec("COMMIT");
+    if (!Exec("COMMIT")) {
+        Exec("ROLLBACK");
+        qWarning() << "Accounts: the virtual addresses are not stored yet:" << m_lastError;
+        return false;
+    }
     if (assigned > 0)
         qInfo() << "Accounts: stored the virtual address of" << assigned << "account(s)";
+    return true;
 }
 
 bool Database::AddressTaken(quint32 address) {

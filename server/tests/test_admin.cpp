@@ -5,10 +5,13 @@
 // days idle (an injected clock) and put back.
 #include <iostream>
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QTemporaryDir>
 
 #include "admin.h"
@@ -92,7 +95,11 @@ struct Rig {
     context.wall_ms = wall_ms;
     context.retire_ms = retire_ms;
     context.link_load = 0.25;
-    return Admin::Run(line, context);
+    Admin::Answer answer = Admin::Run(line, context);
+    if (answer.finish) {
+      answer.finish(answer.json); // LinkServer runs it off the link's thread
+    }
+    return answer;
   }
   // A game linked from `from` as `id`.
   void Link(const Endpoint &from, const QByteArray &id) {
@@ -255,6 +262,10 @@ int IdleWorldsRetireAndComeBack() {
   const auto restored = rig.Run("restore " + name);
   CHECK(restored.json["ok"].toBool());
   CHECK(restored.json["id"].toString() == "w2");
+  // In its folder at once (no Drain): a game's hello or a Start that comes
+  // now reads it there, not an empty folder of the same name.
+  CHECK(QFile::exists(QDir{worlds}.filePath("folder-w2/team_world.pb")));
+  CHECK(!QDir{worlds}.exists("forgotten/" + name));
   rig.world.Drain();
   CHECK(QFile::exists(QDir{worlds}.filePath("folder-w2/team_world.pb")));
   const QJsonArray listed = rig.Run("worlds").json["worlds"].toArray();
@@ -324,9 +335,67 @@ int ABanListReadAgainUnlinksTheBanned() {
   return 0;
 }
 
+// The sizes on disk are not read on the link's thread: the command's answer
+// gets them in a step LinkServer runs on another thread.
+int WorldSizesAreReadOffTheLinkThread() {
+  QTemporaryDir dir;
+  Rig rig{dir.path()};
+  SeedWorlds(QDir{dir.path()}.filePath("worlds"), {{"w1", Now - Day}});
+  rig.world.Load(Now);
+  Admin::Context context{rig.hub, rig.world, rig.guard};
+  context.wall_ms = Now;
+  Admin::Answer answer = Admin::Run("worlds", context);
+  CHECK(answer.finish != nullptr);
+  CHECK(!answer.json["worlds"].toArray()[0].toObject().contains("bytes"));
+  answer.finish(answer.json);
+  CHECK(answer.json["worlds"].toArray()[0].toObject()["bytes"].toInteger() > 0);
+  return 0;
+}
+
+// Only banned.txt's bans unlink linked games when it is read again: an
+// address the guard banned for a while on its own (its rate) does not take
+// every game behind it (one CGNAT) off every 30 s.
+int ARateBanDoesNotUnlinkLinkedGames() {
+  QTemporaryDir dir;
+  Rig rig{dir.path()};
+  rig.Link(Alice, "Alice");
+  rig.guard.Ban(Alice.ipv4, rig.link_ms + 60'000);
+  CHECK(rig.guard.Banned(Alice.ipv4, rig.link_ms)); // its next hello waits
+  const auto result = Admin::KickBanned(rig.hub, rig.guard, rig.link_ms);
+  CHECK(result.gone.isEmpty());
+  CHECK(rig.hub.Members() == 1);
+  return 0;
+}
+
+// A second server started on the same admin socket does not take it from the
+// running one: it is refused, the running server keeps answering.
+int ARunningServersAdminSocketIsKept() {
+  QTemporaryDir dir;
+  const QString path = QDir{dir.path()}.filePath("admin.sock");
+  QLocalServer first;
+  QString why;
+  CHECK(Admin::ListenAdmin(first, path, why));
+  QLocalServer second;
+  CHECK(!Admin::ListenAdmin(second, path, why));
+  CHECK(!why.isEmpty());
+  QLocalSocket client;
+  client.connectToServer(path);
+  CHECK(client.waitForConnected(1000));
+  CHECK(first.waitForNewConnection(1000));
+  // One left by a crash (nothing answers) is taken over.
+  first.close();
+  QFile stale{path};
+  stale.open(QIODevice::WriteOnly);
+  stale.close();
+  QLocalServer third;
+  CHECK(Admin::ListenAdmin(third, path, why));
+  return 0;
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  QCoreApplication app(argc, argv); // the local sockets
   int failed = 0;
   failed |= PlayersAreListed();
   failed |= AKickUnlinksAtOnce();
@@ -336,6 +405,9 @@ int main() {
   failed |= ServerStats();
   failed |= Durations();
   failed |= ABanListReadAgainUnlinksTheBanned();
+  failed |= WorldSizesAreReadOffTheLinkThread();
+  failed |= ARateBanDoesNotUnlinkLinkedGames();
+  failed |= ARunningServersAdminSocketIsKept();
   if (failed == 0) {
     std::cout << "admin: all checks passed\n";
   }

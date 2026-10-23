@@ -59,6 +59,10 @@ public:
     bool BannedId(const QByteArray& online_id) const {
         return banned_ids.contains(online_id);
     }
+    // In the operator's list (not a rate ban of Ban's).
+    bool ListBanned(quint32 address) const {
+        return banned_addresses.contains(address);
+    }
     void Ban(quint32 address, qint64 until_ms) {
         bans[address] = until_ms;
     }

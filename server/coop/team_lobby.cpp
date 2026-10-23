@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <random>
 #include <set>
 #include <vector>
@@ -207,7 +208,9 @@ void TeamLobby::KeepLastWorlds(const bbcoop::Team& started, std::vector<std::str
         // Each player's list is its own worlds (StateFor), none crowds out another's: a player
         // past its newest worlds_per_player leaves its oldest (one nobody keeps then goes), or
         // starting again and again would grow the list without end.
-        std::set<std::string> left; // worlds a member left here
+        // The worlds a member left here, as they were: one that goes aside keeps its players in
+        // its line, so the operator's restore gives it back to them.
+        std::map<std::string, bbcoop::TeamWorldInfo> left;
         for (const bbcoop::TeamMember& m : started.members()) {
             size_t kept = 0;
             for (bbcoop::TeamWorldInfo& world : worlds) {
@@ -215,15 +218,16 @@ void TeamLobby::KeepLastWorlds(const bbcoop::Team& started, std::vector<std::str
                     picked(world.id())) {
                     continue;
                 }
+                left.try_emplace(world.id(), world);
                 auto& keepers = *world.mutable_members();
                 keepers.erase(std::ranges::find(keepers, m.member()));
-                left.insert(world.id());
             }
         }
         for (size_t at = worlds.size(); at-- > 0;) {
-            if (worlds[at].members().empty() && left.contains(worlds[at].id())) {
+            if (const auto line = left.find(worlds[at].id());
+                worlds[at].members().empty() && line != left.end()) {
                 forgotten.push_back(worlds[at].id());
-                forgotten_lines.push_back(worlds[at]);
+                forgotten_lines.push_back(line->second);
                 worlds.erase(worlds.begin() + static_cast<std::ptrdiff_t>(at));
             }
         }
@@ -687,8 +691,10 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member, const bbcoop::T
             if (mine == keepers.end()) {
                 return refuse("the server has no such world");
             }
-            keepers.erase(mine);
-            if (!keepers.empty()) {
+            // The last one's goes, its line still naming it: restored, it is that player's
+            // again (the others forgot it for themselves).
+            if (keepers.size() > 1) {
+                keepers.erase(mine);
                 for (bbcoop::Team& team : teams) {
                     if (team.world() == request.world() && team.leader() == member) {
                         PickWorld(team, {});

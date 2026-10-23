@@ -139,6 +139,10 @@ struct Limits {
     // disk; the next hello reads it again). A world kept in memory only (no folder) stays.
     size_t party_worlds = 1024;
     qint64 idle_world_ms = 5 * 60 * 1000;
+    // What a collected world keeps for its next read (where its guests stood, its boards): for so
+    // long, and for so many worlds at most (the oldest go first).
+    qint64 kept_ms = 24 * 60 * 60 * 1000;
+    size_t kept_worlds = 4096;
 };
 
 // The fields of a game's message (coop.proto), each far above the game's own: a message past one
@@ -209,14 +213,20 @@ public:
         std::uint32_t map = 0;
     };
     std::optional<Place> PlaceOf(const ServerLink::Endpoint& link) const;
-    // The listed worlds: each one's line, folder, bytes on disk and games in it now.
+    // The listed worlds: each one's line, folder and games in it now. Their bytes on disk are not
+    // read here (every file of every world): BytesOn(path), off the link's thread (admin.cpp).
     struct WorldRow {
         bbcoop::TeamWorldInfo info;
         QString folder;
+        QString path; // the folder on disk (none: in memory only)
         qint64 bytes = 0;
         int games = 0;
     };
     std::vector<WorldRow> WorldRows() const;
+    static qint64 BytesOn(const QString& path);
+    const QString& Folder() const {
+        return folder;
+    }
     // The worlds put aside (forgotten/<folder>-<when>): the line each had, when it was kept.
     struct AsideRow {
         QString folder;
@@ -224,6 +234,8 @@ public:
         std::optional<bbcoop::TeamWorldInfo> info;
     };
     std::vector<AsideRow> AsideRows() const;
+    // The same from the disk alone (any thread).
+    static std::vector<AsideRow> AsideRowsIn(const QString& folder);
     // Worlds nobody played for `idle_ms` (and no team picked, no game is in) off the list, their
     // folders put aside as a forgotten world's (never deleted): their ids.
     std::vector<std::string> Retire(qint64 now_ms, qint64 idle_ms, Result& result);
@@ -235,6 +247,9 @@ public:
     const BloodborneCoop::WorldLogHost* World(const QByteArray& party) const;
     int Parties() const {
         return static_cast<int>(worlds.size());
+    }
+    int KeptWorlds() const {
+        return static_cast<int>(kept.size());
     }
 
 private:
@@ -289,6 +304,7 @@ private:
     struct Kept {
         std::map<std::string, PartyWorld::Place> places;
         PartyBoards boards;
+        qint64 since_ms = 0; // collected then (Limits::kept_ms)
     };
     // The worlds Collect takes out at once for room (each is written whole).
     static constexpr size_t CollectAtOnce = 4;

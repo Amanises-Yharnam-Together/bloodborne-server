@@ -2684,6 +2684,112 @@ int APlayersPlaceIsKnownByItsLink() {
   return 0;
 }
 
+// Hosted: a world its last player forgot goes aside with the line that names
+// that player; restored, it is listed to it again (the one who forgot it
+// before, for itself, does not get it back).
+int AForgottenHostedWorldIsRestoredToItsPlayer() {
+  QTemporaryDir dir;
+  CHECK(dir.isValid());
+  Service service{dir.path()};
+  BloodborneWorld::HostedRules rules;
+  rules.enabled = true;
+  service.SetHosted(rules);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  const auto hex = [](const char *id) {
+    return QByteArray(id).toHex().toStdString();
+  };
+  Game leader{1000, hex("Kaniel"), 11};
+  leader.online_id = "Kaniel";
+  leader.claims_host = true;
+  Game guest{1001, hex("Ada"), 12};
+  guest.online_id = "Ada";
+  const std::vector<Game *> games{&leader, &guest};
+  const auto step = [&] {
+    now += 300;
+    Pump(service, games, now);
+  };
+  leader.LobbyHello(false, now);
+  guest.LobbyHello(false, now);
+  step();
+  leader.Team(bbcoop::TeamRequest::CREATE, now);
+  step();
+  leader.Team(bbcoop::TeamRequest::INVITE, now, guest.name);
+  step();
+  CHECK(guest.lobby.invites_size() == 1);
+  guest.Team(bbcoop::TeamRequest::ACCEPT, now, {},
+             guest.lobby.invites(0).team());
+  step();
+  leader.Team(bbcoop::TeamRequest::READY, now, {}, {}, 0, "Hunter");
+  guest.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1, "Doll");
+  step();
+  leader.Team(bbcoop::TeamRequest::START, now);
+  step();
+  CHECK(!leader.starts.empty());
+  const std::string world = leader.starts.back().world();
+  guest.Team(bbcoop::TeamRequest::LEAVE, now);
+  leader.Team(bbcoop::TeamRequest::LEAVE, now);
+  step();
+  bbcoop::Envelope forget;
+  forget.mutable_team_request()->set_action(bbcoop::TeamRequest::FORGET_WORLD);
+  forget.mutable_team_request()->set_world(world);
+  leader.Send(forget, now);
+  step();
+  guest.Send(forget, now);
+  step();
+  service.Drain();
+  CHECK(service.Lobby().Worlds().empty());
+  const auto aside = service.AsideRows();
+  CHECK(aside.size() == 1 && aside[0].info);
+  QString said;
+  BloodborneWorld::Service::Result result;
+  CHECK(service.Restore(aside[0].folder, now, said, result));
+  CHECK(said == QString::fromStdString(world));
+  CHECK(service.Lobby().StateFor(guest.name).worlds_size() == 1);
+  CHECK(service.Lobby().StateFor(leader.name).worlds_size() == 0);
+  return 0;
+}
+
+// What a collected world keeps for its next read (where its guests stood) is
+// dropped once old, and only so many are kept: worlds that never come back do
+// not stay in memory for ever.
+int WhatCollectedWorldsKeepIsBounded() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  Service service{folder.path()};
+  BloodborneWorld::Limits limits;
+  limits.idle_world_ms = 60'000;
+  limits.kept_ms = 3'600'000;
+  limits.kept_worlds = 2;
+  service.SetLimits(limits);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  for (int i = 0; i < 3; ++i) {
+    Game host{static_cast<quint32>(1000 + 2 * i), "host",
+              static_cast<quint32>(11 + i)};
+    Game guest{static_cast<quint32>(1001 + 2 * i), "guest",
+               static_cast<quint32>(31 + i)};
+    const QByteArray party = "p:" + QByteArray::number(i);
+    host.Hello(now, party);
+    guest.Hello(now, party);
+    Pump(service, {&host, &guest}, now);
+    bbcoop::Envelope vitals = VitalsOf(0x18010000, 1);
+    vitals.mutable_vitals()->mutable_at()->set_x(-215.5f);
+    guest.Send(vitals, now + 10);
+    Pump(service, {&host, &guest}, now + 10);
+    service.Forget(host.endpoint);
+    service.Forget(guest.endpoint);
+    service.Tick(now + 1000);
+    now += 70'000;
+    service.Tick(now);
+  }
+  CHECK(service.Parties() == 0);
+  CHECK(service.KeptWorlds() == 2); // the oldest went
+  service.Tick(now + 3'600'000 + 1);
+  CHECK(service.KeptWorlds() == 0);
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
@@ -2760,6 +2866,9 @@ int main() {
       {"ATeamsWorldComesFromItsHostAndOutlivesTheServer",
        ATeamsWorldComesFromItsHostAndOutlivesTheServer},
       {"ATeamsWorldsAreKeptApart", ATeamsWorldsAreKeptApart},
+      {"AForgottenHostedWorldIsRestoredToItsPlayer",
+       AForgottenHostedWorldIsRestoredToItsPlayer},
+      {"WhatCollectedWorldsKeepIsBounded", WhatCollectedWorldsKeepIsBounded},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {

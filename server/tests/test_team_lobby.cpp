@@ -669,7 +669,6 @@ int AWorldsLampsAreCounted() {
   return 0;
 }
 
-
 // Hosted (docs/HOSTED_SERVER.md): a world is its players'; a lobby lists few
 // others.
 static std::string PlayAWorld(TeamLobby &lobby, const std::string &leader,
@@ -693,7 +692,7 @@ static int HostedWorldsAreTheirPlayersOnly() {
   CHECK(!world.empty());
   CHECK(lobby.StateFor("a").worlds_size() == 1);
   CHECK(lobby.StateFor("b").worlds_size() == 1);
-  CHECK(lobby.StateFor("c").worlds_size() == 0); // not c's
+  CHECK(lobby.StateFor("c").worlds_size() == 0);            // not c's
   CHECK(lobby.StateFor("a").worlds(0).members_size() == 0); // never sent
   // c can neither pick it nor forget it.
   lobby.Request("c", Request(Action::CREATE));
@@ -714,6 +713,11 @@ static int HostedWorldsAreTheirPlayersOnly() {
   const TeamLobby::Outcome last = lobby.Request("b", forget);
   CHECK(last.forgotten == std::vector<std::string>{world});
   CHECK(lobby.Worlds().empty());
+  // The line put aside with it names the last one who kept it: restored, it is
+  // b's again (a forgot it before, for itself).
+  CHECK(last.forgotten_lines.size() == 1);
+  CHECK(last.forgotten_lines[0].members_size() == 1 &&
+        last.forgotten_lines[0].members(0) == "b");
   return 0;
 }
 
@@ -742,14 +746,12 @@ static int AHostedLobbyListsFewOthers() {
   lobby.Request("p0", Request(Action::CREATE));
   lobby.Request("p0", Request(Action::INVITE, "p40"));
   const bbcoop::LobbyState state = lobby.StateFor("p0");
-  CHECK(std::ranges::any_of(state.players(), [](const auto &p) {
-    return p.member() == "p40";
-  }));
+  CHECK(std::ranges::any_of(state.players(),
+                            [](const auto &p) { return p.member() == "p40"; }));
   // And the leader who invited a player is listed to it.
   const bbcoop::LobbyState invited = lobby.StateFor("p40");
-  CHECK(std::ranges::any_of(invited.players(), [](const auto &p) {
-    return p.member() == "p0";
-  }));
+  CHECK(std::ranges::any_of(invited.players(),
+                            [](const auto &p) { return p.member() == "p0"; }));
   return 0;
 }
 
@@ -929,6 +931,10 @@ static int AHostedPlayersWorldsAreCapped() {
     const TeamLobby::Outcome go = lobby.Request("a", Request(Action::START));
     CHECK(go.notice.empty());
     CHECK(go.forgotten.size() == go.forgotten_lines.size());
+    // Each line put aside still names its player: restored, it is a's again.
+    for (const bbcoop::TeamWorldInfo &line : go.forgotten_lines) {
+      CHECK(std::ranges::count(line.members(), "a") == 1);
+    }
     forgotten += go.forgotten.size();
     lobby.Request("a", Request(Action::LEAVE));
   }

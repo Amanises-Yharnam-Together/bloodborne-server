@@ -16,9 +16,11 @@
 //   stats                            players, worlds, the link thread's load, refusals
 #pragma once
 
+#include <functional>
 #include <optional>
 
 #include <QJsonObject>
+#include <QLocalServer>
 #include <QString>
 
 #include "admission.h"
@@ -44,6 +46,9 @@ struct Answer {
     // log lines).
     ServerLink::Hub::Result link;
     BloodborneWorld::Service::Result world;
+    // What reads the disk (the worlds' sizes), to run on another thread before the answer goes:
+    // it fills `json` in. It touches nothing of the link's or the worlds'.
+    std::function<void(QJsonObject& json)> finish;
 };
 
 Answer Run(const QString& line, Context& context);
@@ -57,5 +62,9 @@ void LoadBans(const QString& path, qint64 now_s, Admission::Guard& guard);
 // the game's next hello.
 ServerLink::Hub::Result KickBanned(ServerLink::Hub& hub, const Admission::Guard& guard,
                                    qint64 link_ms);
+
+// The admin socket at `path`: refused while another server answers on it (a second one started by
+// mistake must not unlink the running one's), else one left by a crash is replaced. `why`: why not.
+bool ListenAdmin(QLocalServer& server, const QString& path, QString& why);
 
 } // namespace Admin
