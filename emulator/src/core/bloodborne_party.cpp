@@ -6151,8 +6151,7 @@ std::optional<Bloodstain> BloodstainOfRecord(bool has_mark, std::span<const u8> 
         return value;
     };
     return BloodstainOf(has_mark, read(0x3C, u32{}),
-                        {read(0x00, 0.0f), read(0x04, 0.0f), read(0x08, 0.0f)},
-                        read(0x38, s32{}));
+                        {read(0x00, 0.0f), read(0x04, 0.0f), read(0x08, 0.0f)}, read(0x38, s32{}));
 }
 
 PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view self, u32 map,
