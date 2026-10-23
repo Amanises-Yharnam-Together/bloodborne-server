@@ -27,7 +27,7 @@ VERBS = {
     "mark", "approach", "attack", "teleport", "press", "cutscene-options", "stick", "set-flag",
     "expect-walks", "place",  # playtest 2026-10-18: a player kept in a talk never walks
     "expect-flag",
-    "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
+    "wait-flag", "flags", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",
     "expect-compass",  # Kaniel 2026-10-17: the teammate compass
     "expect-stains", "pickup-stain",  # Kaniel 2026-10-20: bloodstains on the compass and map
@@ -44,6 +44,7 @@ VERBS = {
     "menu-invite", "menu-kick", "menu-join", "menu-leave",  # the team menu in game
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
     "trade-socket", "expect-socketed",
+    "talk-gesture", "expect-gesture",  # an NPC talk's gesture step
     "cut-link",  # phase 7: a dropped connection
     "watch-unseen",  # a story NPC never drawn after a load
 }

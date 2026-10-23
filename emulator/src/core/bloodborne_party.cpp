@@ -1027,6 +1027,26 @@ std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool ho
     return holds;
 }
 
+std::optional<bool> GestureFlagFix(bool party_configured, bool flag_on, bool learned) {
+    if (!party_configured || !flag_on || learned) {
+        return std::nullopt;
+    }
+    return false;
+}
+
+std::optional<GestureSlot> DecodeGestureSlot(u32 entry) {
+    // 0x02042B01: above 0xFFFEFFFF, or 0xFFFE / 0xFFFF in the low half, is no gesture.
+    if (entry > 0xFFFEFFFF || (entry & 0xFFFE) == 0xFFFE) {
+        return std::nullopt;
+    }
+    // The gesture table's row (0x014EC980: 31 rows, row 0 none, row k gesture k - 1).
+    const s32 row = static_cast<s16>(entry & 0xFFFF) >> 1;
+    if (row < 1 || row > 30) {
+        return std::nullopt;
+    }
+    return GestureSlot{row - 1, (entry & 1) != 0};
+}
+
 bool HoldsWeapon(u32 weapon, std::span<const u32> held) {
     return std::ranges::any_of(held, [&](u32 id) {
         return id >= weapon && id - weapon <= 1000 && (id - weapon) % 100 == 0;
@@ -1263,6 +1283,43 @@ std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
             shared.emplace_back(flag, false);
         }
     }
+    return shared;
+}
+
+std::vector<std::pair<s32, bool>> LoneGuestFlagsToShare(const FlagChanges& changes, u32 map) {
+    const s32 first = MapFlagBase(map);
+    const auto takes = [first](s32 flag) {
+        return flag >= first && flag < first + MapFlagCount && TakesHostMapFlag(flag) &&
+               RuleFor(flag).owner == FlagOwner::Host;
+    };
+    std::vector<std::pair<s32, bool>> shared;
+    for (const s32 flag : changes.set) {
+        if (takes(flag)) {
+            shared.emplace_back(flag, true);
+        }
+    }
+    for (const s32 flag : changes.cleared) {
+        if (takes(flag)) {
+            shared.emplace_back(flag, false);
+        }
+    }
+    std::ranges::sort(shared);
+    return shared;
+}
+
+std::vector<std::pair<s32, bool>> LoneGuestShares::Take(const FlagChanges& changes, u32 map,
+                                                        s64 since_load_ms) {
+    std::set<s32>& known = load_flags[map];
+    auto shared = LoneGuestFlagsToShare(changes, map);
+    if (since_load_ms < LoadFlagsMs) {
+        for (const auto& [flag, on] : shared) {
+            known.insert(flag);
+        }
+        return {};
+    }
+    std::erase_if(shared, [&known](const std::pair<s32, bool>& change) {
+        return known.contains(change.first);
+    });
     return shared;
 }
 
@@ -2348,6 +2405,10 @@ bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner
         std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();
     return now_ms - world_changed_ms < settle ||
            (owner_changed_ms && now_ms - *owner_changed_ms < settle);
+}
+
+bool SettlingHidesDeath(bool settling, std::optional<bool> last_hit_mine) {
+    return settling && last_hit_mine != true;
 }
 
 bool SeenDead(u8 death_flags, s32 hp, std::optional<s64> zero_hit_ms, s64 now_ms) {
@@ -3984,6 +4045,14 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
         return std::nullopt;
     }
     return OwnedEnemyWord;
+}
+
+bool LoneGuestSwitchesOff(bool lone_guest, bool hidden, bool disabled, s32 wanted, s32 applied) {
+    return lone_guest && hidden && !disabled && wanted == 0 && applied > 0;
+}
+
+bool LoneGuestSwitchesBackOn(bool lone_guest, bool hidden) {
+    return !lone_guest || !hidden;
 }
 
 std::optional<u16> HostFollowerWord(EnemyRole role, bool hosting, u16 word) {
@@ -5767,6 +5836,27 @@ std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
     return current;
 }
 
+std::vector<u32> ClearBossGauges(std::span<u8> gauges) {
+    std::vector<u32> up;
+    for (std::size_t slot = 0; slot < BossGaugeSlots; ++slot) {
+        if ((slot + 1) * BossGaugeSize > gauges.size()) {
+            break;
+        }
+        u8* gauge = gauges.data() + slot * BossGaugeSize;
+        s32 handle = 0;
+        std::memcpy(&handle, gauge + 4, sizeof(handle));
+        if (handle != -1) {
+            up.push_back(static_cast<u32>(handle));
+        }
+        constexpr s32 None = -1;
+        std::memcpy(gauge, &None, sizeof(None));
+        std::memcpy(gauge + 4, &None, sizeof(None));
+        std::memset(gauge + 8, 0, 8);
+        gauge[0x10] = 0;
+    }
+    return up;
+}
+
 bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies) {
     return std::ranges::find(downed_bodies, handle) != downed_bodies.end();
 }
@@ -6142,6 +6232,18 @@ std::optional<Bloodstain> BloodstainOf(bool has_mark, u32 map, const LampPositio
     return Bloodstain{.map = map, .at = at, .echoes = echoes};
 }
 
+std::optional<Bloodstain> BloodstainOfRecord(bool has_mark, std::span<const u8> record) {
+    if (record.size() < BloodstainRecordSize) {
+        return std::nullopt;
+    }
+    const auto read = [record]<typename T>(size_t offset, T value) {
+        std::memcpy(&value, record.data() + offset, sizeof(value));
+        return value;
+    };
+    return BloodstainOf(has_mark, read(0x3C, u32{}),
+                        {read(0x00, 0.0f), read(0x04, 0.0f), read(0x08, 0.0f)}, read(0x38, s32{}));
+}
+
 PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view self, u32 map,
                            const std::optional<LampPosition>& me) {
     PartyPanel panel;
@@ -6179,10 +6281,22 @@ bool PresenceHides(s64 now_ms, s64 first_seen_ms, s64 unmatched_since_ms) {
 std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
                                     std::span<const MemberVitals> board, std::string_view self,
                                     u32 map) {
+    const std::vector<std::optional<size_t>> members =
+        VouchingMembers(characters, board, self, map);
+    std::vector<bool> shown(characters.size(), false);
+    for (size_t c = 0; c < characters.size(); ++c) {
+        shown[c] = !characters[c] || members[c].has_value();
+    }
+    return shown;
+}
+
+std::vector<std::optional<size_t>> VouchingMembers(
+    std::span<const std::optional<LampPosition>> characters, std::span<const MemberVitals> board,
+    std::string_view self, u32 map) {
     // Kaniel's playtest 2026-10-16: krolebord's copy stayed by the lantern after his Dream trip,
     // kept shown by Lisara standing 16 m away. Each member on this map vouches for one character
     // only: the nearest pairs first.
-    std::vector<bool> shown(characters.size(), false);
+    std::vector<std::optional<size_t>> vouched_by(characters.size());
     struct Pair {
         float distance;
         size_t character;
@@ -6192,7 +6306,6 @@ std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>>
     for (size_t c = 0; c < characters.size(); ++c) {
         const std::optional<LampPosition>& at = characters[c];
         if (!at) {
-            shown[c] = true;
             continue;
         }
         for (size_t m = 0; m < board.size(); ++m) {
@@ -6212,12 +6325,25 @@ std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>>
     std::ranges::sort(pairs, {}, &Pair::distance);
     std::vector<bool> vouched(board.size(), false);
     for (const Pair& pair : pairs) {
-        if (!shown[pair.character] && !vouched[pair.member]) {
-            shown[pair.character] = true;
+        if (!vouched_by[pair.character] && !vouched[pair.member]) {
+            vouched_by[pair.character] = pair.member;
             vouched[pair.member] = true;
         }
     }
-    return shown;
+    return vouched_by;
+}
+
+bool FadeBack::Tick(float fade, bool someone_died, std::optional<Vital> member) {
+    if (fade >= 1.0f) {
+        died = false;
+        return false;
+    }
+    died = died || someone_died;
+    if (!died || member != Vital::Up) {
+        return false;
+    }
+    died = false;
+    return true;
 }
 
 std::vector<bool> StaleDuplicatePlayers(std::span<const u64> identities,

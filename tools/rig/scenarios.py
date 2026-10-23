@@ -160,6 +160,8 @@ CLINIC = "0x10014000"  # 573 HP, by Iosefka's door 32 m from the first lamp, 10 
 # the hide byte +0x28) seconds after every load, so he stood by the lamp until then (Kaniel's
 # and Lisara's playtest 2026-10-15). The first lamp is 110 m away.
 GILBERT = "0x1001400c"
+CLINIC_DOG = "0x10014009"  # entity 2410019, by the clinic; the rig's characters have it hidden
+GILBERT_HERE = 1246  # his step "at the window" (m24_01 event 12410760 shows him only with it)
 GILBERT_SEEN = r"watched 0x1001400c drawn"
 OTHER_MAP_FLAG = 12700999  # no door's (DoorFlags are shared with the party)
 OLD_YHARNAM_GATE = 12800201  # the object act flag of Old Yharnam's gate (m28 event 12800480)
@@ -452,7 +454,10 @@ SCENARIOS = {
             "host": [r"Bloodborne trade: offered .* Oedon Tomb Key, Hunter Axe \+5, Charred "
                      r"Hunter Garb"],
             "guest": [r"Bloodborne trade: added Oedon Tomb Key, Hunter Axe \+5, Charred Hunter "
-                      r"Garb"],
+                      r"Garb",
+                      # A trade's grant keeps the item-received popup (key-items-silent's are
+                      # silent).
+                      r"item-get popup goods 4000 x 1 queued"],
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
@@ -1524,6 +1529,127 @@ SCENARIOS = {
                              r"party trip: arrived map=0x18010000"]},
         "timeout": 300,
     },
+    # Kaniel 2026-10-22: a guest alone on a map saw NPCs the host's world hides (Cathedral Ward:
+    # once the host came, only the right ones). Each trip's load put the guest's own game's story
+    # steps of the session over the team's world while the map placed its characters; the arrival
+    # set the team's back only after. Gilbert stands at his window only with 1246 (m24_01 event
+    # 12410760; with none of 1240-1246, as the rig's characters have, he is hidden): the guest's
+    # game takes that step, the host's world has none; the guest's lamp trip alone loads Central
+    # Yharnam with the team's step.
+    "team-story-trip": {
+        "about": "a story step only the guest's game took (Gilbert at his window) yields to the "
+                 "team's world at its lamp trip alone",
+        "roles": {
+            "host": [START, "wait-session 2 300", f"expect-flag {GILBERT_HERE} 0", "wait 20",
+                     f"travel {HUNTERS_DREAM}", "wait 30", "wait 30", "wait 30",
+                     f"expect-flag {GILBERT_HERE} 0", "done"],
+            "guest": [START, "wait-session 2 300", "wait 5", f"set-flag {GILBERT_HERE} 1",
+                      "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 28",
+                      f"expect-flag {GILBERT_HERE} 0", "done"],
+        },
+        # On main the arrival set 1246 back too, after the trip's load had put it in for the map's
+        # events (rig 2026-10-22: "set 5 of the session's world changes as a trip loads", 1246
+        # among them): the load itself must leave it to the team's world.
+        "expect": {"guest": [r"story steps left to the team's world \(-off\):[^\n]* 1246",
+                             r"party trip: arrived map=0x18010000"]},
+        "timeout": 300,
+    },
+    # Kaniel's test 2026-10-23: in the clinic the dog (0x10014009, entity 2410019) is not there;
+    # both go to the Dream, the guest comes back alone and sees it; the host comes back and it is
+    # gone again. As the map loads it starts loading ([control +0x14] wanted, +0x10 applied 4),
+    # then the story hides it (+0x28); the host's game lets it go (0/0), the lone guest's kept it
+    # (wanted 0, applied 4) and drew it. The lone guest switches it off (LoneGuestSwitchesOff).
+    "dog-alone": {
+        "about": "the clinic's dog, hidden by the story, stays unseen for a guest that comes back "
+                 "alone from the Dream",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                     "wait 50", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 20", "census 60",
+                     "done"],
+            "guest": [START, "wait-session 2 300", "wait 15", f"travel {HUNTERS_DREAM}",
+                      "wait 15", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 12", "census 60",
+                      f"expect-disabled {CLINIC_DOG} 1", "wait 20", "census 60", "done"],
+        },
+        "expect": {"guest": [r"party trip: arrived map=0x18010000"]},
+        "timeout": 300,
+    },
+    # Kaniel's test 2026-10-23: a guest alone in Cathedral Ward killed the hag and opened its door;
+    # the host who came later found her alive and the door shut. A lone guest's game runs its map's
+    # story; its changes to the map's flags go to the team (LoneGuestFlagsToShare). Here the host
+    # is in the Dream, the guest alone in Central Yharnam sets TEAM_WORLD_FLAG (its map's, unused)
+    # 10 s after its lamp trip there (the hag died 9 s after the load; the first fix waited for
+    # the guest's alone state to settle and dropped it); the host comes back to it on. The map's
+    # load flags stay the guest's (LoneGuestShares).
+    "lone-guest-progress": {
+        "about": "a map flag a guest alone on its map set is on for the host that comes back",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}", "wait 30",
+                     "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                     f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest": [START, "wait-session 2 300", "wait 20", f"travel {CENTRAL_YHARNAM_LAMP}",
+                      "wait 5", f"set-flag {TEAM_WORLD_FLAG} 1", "wait 30", "wait 20",
+                      f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+        },
+        "expect": {"guest": [r"lone guest's map steps go to the team \(-off\): 12410999\n"]},
+        # Not the map's load flags (Gascoigne's per-visit 12414802...).
+        "forbid": {"guest": [r"go to the team \(-off\):[^\n]* 124148"]},
+        "timeout": 300,
+    },
+    # The same with three: the host and the second guest in the Dream while the first guest, alone
+    # in Central Yharnam, sets the flag; both come back to it on.
+    # Kaniel's test 2026-10-23: the hag a lone guest killed 9 s after its trip to Cathedral Ward was
+    # alive for the host who came later. Its alone state had just changed (settling: deaths then
+    # are no kills) and the kill was never posted. Here the guest, alone in Central Yharnam right
+    # after a lamp trip, kills the enemy by the lamp with its own hits and stays; the host comes
+    # back from the Dream and finds it killed (by the host it stands: it dies there, HP 0). The rig
+    # does not hit the settle window every time: on the build before the fix it passed too.
+    "lone-guest-kill": {
+        "about": "an enemy a guest killed right after its lone trip stays killed for the host "
+                 "that comes back while the guest is still there",
+        "roles": {
+            "host": [START, "wait-session 2 300", "wait 10", f"travel {HUNTERS_DREAM}", "wait 30",
+                     "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15", "census 40",
+                     f"expect-hp {ENEMY} == 0", "done"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 20",
+                      f"travel {CENTRAL_YHARNAM_LAMP}", f"teleport {GUEST_ALONE_SPOT}",
+                      f"attack {ENEMY} 30", "census 40", "wait 30", "wait 30", "done"],
+        },
+        "expect": {"guest": [r"kill board gets 1 kills, 0 back \(visit 0x1801[0-9a-f]+\): "
+                             r"0x1001400b"]},
+        "timeout": 300,
+    },
+    "lone-guest-progress3": {
+        "about": "a map flag a guest alone on its map set is on for the host and the other guest "
+                 "that come back",
+        "roles": {
+            "host": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}", "wait 30",
+                     "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                     f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest": [START, "wait-session 3 300", "wait 35", f"set-flag {TEAM_WORLD_FLAG} 1",
+                      "wait 30", "wait 30", f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest2": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                       "wait 30", "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                       f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+        },
+        "timeout": 300,
+    },
+    # The other way with three: the host alone in Central Yharnam sets the flag while both guests
+    # are in the Dream; both come back to it on (the team's world, TakesTeamWorldBlock).
+    "host-progress3": {
+        "about": "a map flag the host set while both guests were in the Dream is on for both when "
+                 "they come back",
+        "roles": {
+            "host": [START, "wait-session 3 300", "wait 35", f"set-flag {TEAM_WORLD_FLAG} 1",
+                     "wait 30", "wait 30", f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                      "wait 30", "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                      f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+            "guest2": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}",
+                       "wait 30", "wait 30", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                       f"expect-flag {TEAM_WORLD_FLAG} 1", "done"],
+        },
+        "timeout": 300,
+    },
     # Release thread 2026-10-16 (dog): the host travelled to the Dream before it saw the guest's
     # character; neither game said ready and the guest stayed covered (its input held) until the
     # host came back. A member on another map is not waited for: both screens open with the host
@@ -1959,6 +2085,76 @@ SCENARIOS = {
         },
         "allow": [r"left the session outside a trip"],
         "timeout": 300,
+    },
+    # Player report 2026-10-23 (v1.1.9): a guest of a team sometimes came back in the Hunter's Dream,
+    # not where it was, and the host never saw it until the host went there too. The team on
+    # Cathedral Ward (both rig saves start in Central Yharnam); the guest's game starts again and
+    # it joins the team's session where it was, seen by the host.
+    "team-guest-restart": {
+        "about": "a team on Cathedral Ward: the guest's game starts again and its team load puts "
+                 "it back on the Ward beside the host, both seeing each other",
+        "roles": {
+            "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                     "godmode", "wait-session 2 300", f"travel {CATHEDRAL_WARD_LAMP}",
+                     "wait-members 2 120", "wait 10", "wait-solo 180", "wait-session 2 420",
+                     "wait-members 2 120", "wait 20", "snapshot", f"expect-map {CATHEDRAL_WARD}",
+                     "expect-others-shown 1", "expect-session 2"],
+            "guest": [["team-accept", "team-ready", START, "godmode", "wait-session 2 300",
+                       f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120", "wait 15",
+                       "snapshot", "done"],
+                      ["team-ready", "godmode", "wait-session 2 420", "wait-members 2 120",
+                       "wait 20", "snapshot", f"expect-map {CATHEDRAL_WARD}",
+                       "expect-others-shown 1", "expect-session 2"]],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    # The same report: the host's game went (in the player's log it quit to the title after a
+    # wipe and opened its session again) while the guest stayed in its world on the team's map.
+    "team-host-restart": {
+        "about": "a team on Cathedral Ward: the host's game starts again; the guest stays on the "
+                 "Ward and joins the host's new session there, both seeing each other",
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "godmode", "wait-session 2 300", f"travel {CATHEDRAL_WARD_LAMP}",
+                      "wait-members 2 120", "wait 15", "snapshot", "done"],
+                     ["title-wait 20", "team-start", "godmode", "wait-session 2 420",
+                      "wait-members 2 120", "wait 20", "snapshot", f"expect-map {CATHEDRAL_WARD}",
+                      "expect-others-shown 1", "expect-session 2"]],
+            "guest": ["team-accept", "team-ready", START, "godmode", "wait-session 2 300",
+                      f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120", "wait-solo 180",
+                      "wait 5", "snapshot", "wait-session 2 420", "wait-members 2 120", "wait 20",
+                      "snapshot", f"expect-map {CATHEDRAL_WARD}", "expect-others-shown 1",
+                      "expect-session 2"],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
+    },
+    # The player's log: each time, the host's game left 35-40 s after a party wipe (both woke at
+    # the host's lamp) and opened its session again; the guest came back in the Dream.
+    "team-wipe-host-restart": {
+        "about": "a team on Cathedral Ward wipes and wakes at the lamp; the host's game then "
+                 "starts again: the guest stays on the Ward and joins the host's new session "
+                 "there, both seeing each other",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                      "wait-session 2 300", f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120",
+                      "wait-member-vital down 120", "wait 3", *LETHAL_FALL, "wait-vital dead 30",
+                      "wait-vital up 120", "wait-members 2 240", "wait 25", "snapshot", "done"],
+                     ["title-wait 20", "team-start", "godmode", "wait-session 2 420",
+                      "wait-members 2 120", "wait 20", "snapshot", f"expect-map {CATHEDRAL_WARD}",
+                      "expect-others-shown 1", "expect-session 2"]],
+            "guest": ["team-accept", "team-ready", START, "wait-session 2 300",
+                      f"travel {CATHEDRAL_WARD_LAMP}", "wait-members 2 120", "wait 10",
+                      *LETHAL_FALL, "wait-vital down 30", "wait-vital dead 60",
+                      "wait-vital up 120", "godmode", "wait-solo 240", "wait 5", "snapshot",
+                      "wait-session 2 420", "wait-members 2 120", "wait 20", "snapshot",
+                      f"expect-map {CATHEDRAL_WARD}", "expect-others-shown 1",
+                      "expect-session 2"],
+        },
+        "allow": CRASH_CLEANUP,
+        "timeout": 900,
     },
     "team-menu-join": {
         "about": "in game, the host invites a guest playing alone; the guest joins the hunt from "
@@ -2983,7 +3179,9 @@ SCENARIOS = {
     # -190.1 -76.2 252.2); the guest steps off the ledge west of it where the player did (the
     # trace: dead about 16 m down, still falling). The void fades a character out (+0x20C, 1.0
     # while shown) and only a map load puts it back: once up again, the guest is faded in (on 1.1.2
-    # it stayed 0.0) and shown to the host.
+    # it stayed 0.0) and shown to the host. Player report 2026-10-23 (v1.1.9): the host's copy of
+    # the guest faded out in the void too and stayed so (expect-others-shown: "faded out fade
+    # 0.00"): it fades back in once the guest is up again.
     "void-fall-respawn": {
         "about": "in a session the guest steps off a Forbidden Woods cliff into the void while the "
                  "host stands at the lamp; it wakes at the lamp shown to itself and to the host",
@@ -2992,18 +3190,20 @@ SCENARIOS = {
                      "wait-session 2 300", "travel 2702950", "wait-members 2 120", "wait 10",
                      "expect-others-shown 1",
                      "wait-member-vital dead 60", "wait-member-vital up 60", "wait 15", "snapshot",
-                     "expect-others-shown 1", "expect-others-near 1 40",
+                     "expect-others-shown 1", "expect-others-near 1 40", "shot host-sees-guest",
                      "expect-session 2"],
             "guest": [START, f"set-flag {FORBIDDEN_WOODS_LAMP_LIT} 1", "wait-session 2 300",
                       "travel 2702950", "wait-members 2 120", "wait 10",
                       "teleport -211.0 -76.5 250.4 1.5708", "wait 2", "stick 128 0 2500",
-                      "wait-vital dead 30", "wait-vital up 60", "wait 15", "snapshot",
+                      "wait-vital dead 45", "wait-vital up 60", "wait 15", "snapshot",
                       "peek self 20c", "expect-others-shown 1", "expect-others-near 1 40",
                       "expect-session 2"],
         },
         "expect": {"guest": [r"party death: the death was a fall into the void",
                              r"travelling there \(reset=false, void fall=true\)",
-                             r"autoplay peek: 0x10044000 \+0x20c = 0x3f800000"]},
+                             r"autoplay peek: 0x10044000 \+0x20c = 0x3f800000"],
+                   "host": [r"presence: player 0x1004400\d faded out \(a fall into the void\) "
+                            r"and its member \w+ is up again: faded back in"]},
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "settings": PARTY_DEATH,
         "timeout": 300,
@@ -3320,6 +3520,79 @@ SCENARIOS["key-items-kept"] = {
     "forbid": {"host": SESSION_HOLDS,
                "guest": SESSION_HOLDS + [r"held-item flag \d+ cleared: this player has no "
                                          r"goods 4103"]},
+    "timeout": 600,
+}
+
+# An outside player on v1.1.4 (2026-10-23): a guest never learned Eileen's and Alfred's
+# gestures from their talks, the host did. A talk's gesture step skips while its flag is on
+# (talk-gesture does that step); Alfred's Pray is gesture 9 by flag 6749, Eileen's Shake off
+# Cape 4 by 6744.
+PRAY = "9 6749"
+SCENARIOS["gesture-own"] = {
+    "about": "each player learns an NPC's gesture from its own talk and keeps it: the host "
+             "learns Alfred's Pray, then the guest's own talk teaches the guest too, and the "
+             "guest still has it after a trip to the Dream and back; a gesture flag the guest's "
+             "save took from the host without the gesture (Shake off Cape) goes off",
+    "roles": {
+        "host": [START, "godmode", "expect-gesture 9 0", "wait-session 2 300",
+                 f"talk-gesture {PRAY}", "expect-gesture 9 1", "expect-flag 6749 1", "wait 30",
+                 "wait 30", "wait 30", "expect-gesture 9 1", "expect-session 2"],
+        "guest": [START, "godmode", "expect-gesture 9 0", "expect-gesture 4 0", "set-flag 6744 1",
+                  "wait-session 2 300", "wait 20", f"talk-gesture {PRAY}", "expect-gesture 9 1",
+                  "expect-flag 6749 1", "wait-flag 6744 0 20", f"travel {HUNTERS_DREAM}",
+                  "wait 15", "expect-gesture 9 1", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                  "expect-gesture 9 1", "expect-flag 6749 1", "expect-flag 6744 0",
+                  "expect-session 2"],
+    },
+    "expect": {"host": [r"talk gave gesture 9 \(flag 6749\)"],
+               "guest": [r"talk gave gesture 9 \(flag 6749\)",
+                         r"gesture flag 6744 cleared: this player has not learned gesture 4"]},
+    "forbid": {"host": SESSION_HOLDS + [r"talk gives no gesture"],
+               "guest": SESSION_HOLDS + [r"talk gives no gesture"]},
+    "timeout": 600,
+}
+
+# Kaniel 2026-10-23: a joining guest saw the game's "item received" popup ("Oedon Tomb Key 1 /
+# OK") for each of its own key items put in the phantom's list; with many it went on and on.
+SWORD_HUNTER_BADGE = "goods:4114"
+OEDON_TOMB_KEY = "goods:4000"
+SILENT_KEY_ITEMS = (OEDON_TOMB_KEY, SAW_HUNTER_BADGE, SWORD_HUNTER_BADGE)
+
+
+def held_key_items(timeout: int = 20) -> list[str]:
+    return [f"expect-held {item} 1 {timeout}" for item in SILENT_KEY_ITEMS]
+
+
+SCENARIOS["key-items-silent"] = {
+    "about": "a joining guest's own key items (Oedon Tomb Key and two hunter badges) go in the "
+             "phantom's key item list with no item-received popup, and it still holds each after "
+             "the join and after a lamp trip and back; a vial give before the join still queues "
+             "its popup (the detector works)",
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "wait 100", "expect-session 2"],
+        "guest": [START, "godmode",
+                  *[step for item in SILENT_KEY_ITEMS
+                    for step in (f"trade-stock {item} 0", f"trade-stock {item} 1")],
+                  *held_key_items(5), "trade-stock vials 0", "trade-stock vials 3", "wait 3",
+                  "wait-session 2 300", "wait 15", *held_key_items(),
+                  f"travel {HUNTERS_DREAM}", "wait 15", *held_key_items(),
+                  f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15", *held_key_items(),
+                  "expect-session 2"],
+    },
+    "expect": {"guest": [
+        # The detector: the give before the join queued its popup.
+        r"item-get popup goods \d+ x 3 queued",
+        # Each key item went in silently.
+        *[rf"item-get popup goods {goods} x 1 not shown \(a silent grant\)[^\n]*\n"
+          rf"(?:[^\n]*\n){{0,3}}[^\n]*1 x goods {goods} of the guest's own in the phantom's "
+          rf"key items" for goods in (4000, 4103, 4114)],
+    ]},
+    "forbid": {"host": SESSION_HOLDS,
+               "guest": SESSION_HOLDS + [
+                   # Once the first went in the phantom's list, none of them shows its popup.
+                   r"in the phantom's key items[\s\S]*item-get popup goods (?:4000|4103|4114) "
+                   r"x \d+ queued",
+                   r"held-item flag \d+ cleared: this player has no goods (?:4103|4114)"]},
     "timeout": 600,
 }
 
@@ -3873,4 +4146,72 @@ SCENARIOS["shop-own-weapons"] = {
     "syncs": {"shop-checked": {"chapter": "shop-own-weapons", "roles": ["host", "guest"]}},
     "forbid": {role: SESSION_HOLDS for role in ("host", "guest")},
     "timeout": 300,
+}
+
+
+# Kaniel's playtest 2026-10-22 (v1.1.7): the party of three (harder enemies x3) wiped fighting
+# Darkbeast Paarl (m23_00, entity 2300810, on map 0x17000000) and woke at a lamp on the next map
+# (0x1c000000, 2802952); walking back across the border, every game had Paarl at 0 HP and his
+# defeat event (12301700: it waits for him dead) gave the kill, the item and the echoes. Not
+# reproduced here yet: this checks he stands. In the rig the guests woke with his health bar still
+# up (a party death skipped the game's Failed_BossAreaMission): every game clears it.
+PAARL_LAMP_MAP = "0x1c000000"
+PAARL_LAMP = 2802952
+PAARL_MAP = "0x17000000"
+PAARL = "0x1000c05a"
+PAARL_DEFEATED = 12301700
+# Positions are each map's own. The tunnel from the lamp's map (Kaniel's trail): this side of the
+# border, then the other; a teleport from the lamp straight into the arena fell through the world.
+INTO_PAARL_MAP = ["teleport 164.1 -114.3 -99.0", "wait 3", "teleport 156.7 -115.4 -83.9",
+                  f"wait-map {PAARL_MAP} 20"]
+# Where Kaniel fell in the arena (his bloodstain).
+PAARL_SPOT = "109.6 -120.7 -56.3"
+# Everything his defeat sets, off (the rig's saves had his arena lamp to light mid-fight, Kaniel
+# 2026-10-22): 9454 (the boss down), 2301 (his lamp), 12301701 (after the defeat).
+PAARL_FRESH = [f"set-flag {flag} 0" for flag in (PAARL_DEFEATED, 12301701, 9454, 2301)]
+PAARL_START = [START, *PAARL_FRESH, f"travel {PAARL_LAMP}", "godmode",
+               f"expect-map {PAARL_LAMP_MAP}"]
+# His fight's flags (12304700 the fog entered, 12304702 and 12304704 his start): every load puts
+# them off, and the team's world set them again in the guests' games, so his fight started over
+# at the lamp (his health bar up for them, Kaniel watching 2026-10-23).
+PAARL_FIGHT_OFF = [f"expect-flag {flag} 0" for flag in (12304700, 12304702, 12304704)]
+PAARL_BACK = [f"ensure-map {PAARL_LAMP_MAP} {PAARL_LAMP} 60", "wait-members 2 120", "wait 15",
+              f"expect-flag {PAARL_DEFEATED} 0", *PAARL_FIGHT_OFF, *INTO_PAARL_MAP, "wait 10",
+              "census 80", f"expect-flag {PAARL_DEFEATED} 0", f"expect-hp {PAARL} > 0"]
+GUEST_TO_PAARL = [*PAARL_START, "wait-session 3 300", "wait 5", *INTO_PAARL_MAP, "wait 5"]
+# The guests stay by the border until the host has started the fight beside him, so the boss pick
+# (the nearest member) is the host's game, as in Kaniel's fight. A guest picked right after the
+# arena loaded did not take him while its vitals board was stale, and no game ran him (he stood
+# still, rig 2026-10-23).
+# Paarl's own attacks put each one down (Kaniel's party died to him): beside him with 1 HP.
+TO_PAARL_HITS = [f"approach {PAARL} 3 0", "hurt self 1"]
+GUEST_WIPE = ["sync pw-hurt", "godmode off", *TO_PAARL_HITS, "wait-vital down 90"]
+# Back up, godmode again: the lamp's enemies killed the guests a second time (Kaniel watching,
+# 2026-10-23).
+GUEST_BACK = ["wait-vital dead 90", "wait-vital up 150", "godmode",
+              f"ensure-map {PAARL_LAMP_MAP} {PAARL_LAMP} 60", "wait-members 3 120",
+              "sync pw-back", *PAARL_BACK[1:], "sync pw-checked", "expect-session 3"]
+SCENARIOS["paarl-after-wipe"] = {
+    "about": "Kaniel 2026-10-22: the party of three hurts Paarl and wipes on his map, wakes at the "
+             "lamp on the next map and walks back across the border: Paarl stands, his defeat "
+             "flag off",
+    "settings": {**PARTY_DEATH, "SHADPS4_BLOODBORNE_HARDER_ENEMIES": "3,3,1.5"},
+    "roles": {
+        "host": [*PAARL_START, "wait-session 3 300", "wait 5", *INTO_PAARL_MAP, "wait 5",
+                 f"teleport {PAARL_SPOT}", "wait 8", "census 40", f"hurt {PAARL} 9000",
+                 "wait 3", "census 40", f"expect-hp {PAARL} < 10000", "sync pw-hurt",
+                 "sync pw-guests-down", "godmode off", *TO_PAARL_HITS, "wait-vital dead 90",
+                 "wait-vital up 150", "godmode", f"ensure-map {PAARL_LAMP_MAP} {PAARL_LAMP} 60",
+                 "wait-members 3 120", "sync pw-back", *PAARL_BACK[1:], "sync pw-checked",
+                 "expect-session 3"],
+        "guest": [*GUEST_TO_PAARL, *GUEST_WIPE,
+                  "sync pw-guests-down", *GUEST_BACK],
+        "guest2": [*GUEST_TO_PAARL, *GUEST_WIPE,
+                   "sync pw-guests-down", *GUEST_BACK],
+    },
+    "syncs": {name: {"chapter": "paarl-after-wipe", "roles": ["host", "guest", "guest2"]}
+              for name in ("pw-hurt", "pw-guests-down", "pw-back", "pw-checked")},
+    "expect": {role: [rf"boss bars cleared: {PAARL}"] for role in ("guest", "guest2")},
+    "forbid": {role: SESSION_HOLDS for role in ("host", "guest", "guest2")},
+    "timeout": 900,
 }

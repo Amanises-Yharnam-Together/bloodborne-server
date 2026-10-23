@@ -262,6 +262,22 @@ std::vector<HeldGoods> OwnKeyItemsForPhantom(std::span<const HeldGoods> own,
     return put;
 }
 
+namespace {
+thread_local u32 silent_item_gets = 0;
+} // namespace
+
+SilentItemGets::SilentItemGets() {
+    ++silent_item_gets;
+}
+
+SilentItemGets::~SilentItemGets() {
+    --silent_item_gets;
+}
+
+bool ItemGetsSilent() {
+    return silent_item_gets > 0;
+}
+
 std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> first_look,
                                                  std::span<const HeldGoods> last_look,
                                                  std::span<const HeldGoods> home) {
@@ -291,9 +307,11 @@ std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> firs
 bool IsWorldFlag(s32 flag) {
     // A map item pickup is the character's, as the item it gave (Kaniel's play test 2026-10-18:
     // the Workshop Tool's chest opened again after the host's save took a world without it).
+    // A map's load-reset flags (FlagResetsOnLoad) neither: the team's world set Darkbeast Paarl's
+    // fight going again after the wipe's reload (Kaniel's playtest 2026-10-22).
     const FlagRule rule = RuleFor(flag);
     return (rule.owner == FlagOwner::Host || rule.owner == FlagOwner::Shared) &&
-           !rule.Has(FlagMapPickup);
+           !rule.Has(FlagMapPickup) && !rule.Has(FlagResetsOnLoad);
 }
 
 namespace {
@@ -527,6 +545,16 @@ std::vector<std::pair<s32, bool>> TeamStoryToFollow(const WorldFlags& before,
     add(before.on, after.on, false);
     std::ranges::sort(follow);
     return follow;
+}
+
+bool KeptChangeYieldsToTeam(s32 flag, std::optional<s64> kept_ms, s64 now_ms,
+                            std::span<const u32> team_blocks, u32 flags_per_block) {
+    if (flags_per_block == 0 || flag < 0 || !IsTeamStoryFlag(flag)) {
+        return false;
+    }
+    const u32 block = static_cast<u32>(flag) / flags_per_block;
+    return std::find(team_blocks.begin(), team_blocks.end(), block) != team_blocks.end() &&
+           (!kept_ms || now_ms - *kept_ms >= KeptChangeReportMs);
 }
 
 TeamJoin::Action TeamJoin::Tick(const Frame& frame) {

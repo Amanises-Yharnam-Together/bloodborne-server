@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <set>
 
+#include <thread>
+
 #include <gtest/gtest.h>
 
 #include "core/bloodborne_party.h"
@@ -369,6 +371,40 @@ TEST(TeamWorld, AGuestFollowsTheStoryStepsTheHostChanged) {
     EXPECT_TRUE(TeamStoryToFollow(before, other).empty());
 }
 
+// The 2026-10-23 gestures case (rig gesture-own): the host learned Alfred's Pray (flag 6749), and
+// a guest following the host's story steps took 6749, so its own talk skipped the gesture. A
+// gesture's flag is each player's own; a flag next to them without a row stays a story step.
+TEST(TeamWorld, AGuestKeepsItsOwnGestureFlags) {
+    WorldFlags before;
+    before.blocks = {1, 6, 70000};
+    before.on = {1100};
+    WorldFlags after = before;
+    after.on = {1100, 6744, 6748, 6749, 6770, 70000007};
+    EXPECT_EQ(TeamStoryToFollow(before, after), (std::vector<std::pair<s32, bool>>{{6748, true}}));
+    EXPECT_EQ(TeamStoryToFollow(after, before), (std::vector<std::pair<s32, bool>>{{6748, false}}));
+}
+
+// Kaniel's playtest 2026-10-22: a guest alone on a map saw NPCs the team's world has gone past (or
+// not reached). Each trip's load put its own game's story steps of the session over the team's
+// world while the map placed its characters; the arrival set the team's back only after. A kept
+// story step yields to the team's world once a report of it had time to carry it.
+TEST(TeamWorld, AKeptStoryStepYieldsToTheTeamsWorld) {
+    const std::vector<u32> blocks = {1, 7, 9, 1240};
+    constexpr s64 Now = 100'000;
+    EXPECT_TRUE(KeptChangeYieldsToTeam(7240, Now - 30'000, Now, blocks, 1000));
+    EXPECT_TRUE(KeptChangeYieldsToTeam(1205, std::nullopt, Now, blocks, 1000))
+        << "kept before this game started: older than any report";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(7240, Now - 5'000, Now, blocks, 1000))
+        << "newer than the reports: the host's may not have it yet";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(12404003, std::nullopt, Now, blocks, 1000))
+        << "a map's flag (bosses, doors): not a story step";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(52800170, std::nullopt, Now, blocks, 1000))
+        << "a pickup is the character's own";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(3500, std::nullopt, Now, blocks, 1000))
+        << "a block the team's world does not cover";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(1205, std::nullopt, Now, blocks, 0));
+}
+
 // Kaniel's playtest 2026-10-20: Lisara's game took the host's "light the Witch's Abode lamp"
 // request (72200201) as a story step, and her own lamp never lit. A lamp's light request is each
 // player's own; the lit lamp reaches the party by its active flags and the lamp lists.
@@ -522,6 +558,26 @@ TEST(PhantomKeyItems, TheGuestsOwnKeyItemsGoInThePhantomsList) {
         last_look.push_back(put);
     }
     EXPECT_TRUE(PhantomKeyItemsToGiveBack(phantom, last_look, own).empty());
+}
+
+// Kaniel 2026-10-23: a joining guest's own key items went into the phantom's list each with the
+// game's "item received" popup ("Oedon Tomb Key 1 / OK"), one after another. Those grants show
+// none: the popup's queue push is skipped while a SilentItemGets lives on this thread.
+TEST(SilentItemGets, OnlyWhileOneLivesOnThisThread) {
+    EXPECT_FALSE(ItemGetsSilent()) << "a pickup or trade: the popup";
+    {
+        const SilentItemGets silent;
+        EXPECT_TRUE(ItemGetsSilent());
+        {
+            const SilentItemGets nested;
+            EXPECT_TRUE(ItemGetsSilent());
+        }
+        EXPECT_TRUE(ItemGetsSilent()) << "the outer one still lives";
+        bool other_thread = true;
+        std::thread{[&] { other_thread = ItemGetsSilent(); }}.join();
+        EXPECT_FALSE(other_thread) << "another thread's gives keep their popup";
+    }
+    EXPECT_FALSE(ItemGetsSilent());
 }
 
 // Rig 2026-10-14 (host-crash-apart, team-world): the host's game gone, the guest's game set 4047

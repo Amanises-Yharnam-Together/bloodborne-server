@@ -842,6 +842,19 @@ bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 
 // 2026-10-18: a save that took the host's "holds the Sword Hunter Badge" from a team world never
 // got its own badge from the Cleric Beast.
 std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool holds);
+// A gesture's flag (GestureFlags) in a party goes off while this player has not learned the
+// gesture (a save that took the host's value from a team world never got it from the NPC's talk);
+// nothing else (a learned gesture's flag stays off: another talk may give it by its own flag).
+std::optional<bool> GestureFlagFix(bool party_configured, bool flag_on, bool learned);
+// A slot of the player's gesture list (PlayerGameData +0x5B8, 30 u32 at +0x10), as talk command
+// 66 reads it: bit 0 learned, bits 1-15 the gesture's row in the game's table (0x014EC980,
+// gesture + 1); none for an empty slot.
+struct GestureSlot {
+    s32 gesture;
+    bool learned;
+    bool operator==(const GestureSlot&) const = default;
+};
+std::optional<GestureSlot> DecodeGestureSlot(u32 entry);
 // Whether a weapon of OwnedWeaponFlags is in `held` (the inventory's weapon ids): any upgrade
 // level, its base id + 100 * level up to +10, as the common events check it.
 bool HoldsWeapon(u32 weapon, std::span<const u32> held);
@@ -1039,6 +1052,24 @@ std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp
 // What a member posts to the party's flag board from a change it saw: the SharedWithParty flags
 // that turned on.
 std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes);
+// What a guest running its map alone (no host there: its game runs the map's story) shares with
+// the team besides FlagsToShare: its changes to that map's own flags (TakesHostMapFlag, from
+// MapFlagBase(map)), sets and clears, as (flag, on). Kaniel's test 2026-10-23: the hag a lone guest
+// killed in Cathedral Ward was alive again for the host, a door it opened shut.
+std::vector<std::pair<s32, bool>> LoneGuestFlagsToShare(const FlagChanges& changes, u32 map);
+// Which of a lone guest's map changes go to the team (LoneGuestFlagsToShare): not the ones its
+// game's load sets up. Changes in the first LoadFlagsMs after a load are that map's load flags
+// (remembered for the session, a later visit sets them a moment later as well); after it every
+// other map change goes, at once (Kaniel's test 2026-10-23: the hag died 9 s after the load; with
+// no wait at all the boss's per-visit flags, 12414802..., went to the host too).
+class LoneGuestShares {
+public:
+    static constexpr s64 LoadFlagsMs = 8'000;
+    std::vector<std::pair<s32, bool>> Take(const FlagChanges& changes, u32 map, s64 since_load_ms);
+
+private:
+    std::map<u32, std::set<s32>> load_flags;
+};
 bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);
@@ -1834,6 +1865,10 @@ constexpr auto EnemyOwnerChangeSettles = std::chrono::seconds{5};
 // into the host's world, or a guest starting or ending its run of the map's enemies) or of its
 // own takeover or hand-back (`owner_changed_ms`).
 bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner_changed_ms);
+// Whether a settling character's death is still no kill: not when this player's own hit was its
+// last (Kaniel's test 2026-10-23: a lone guest killed the Cathedral Ward hag 9 s after a trip,
+// while its alone state had just changed; the kill was never posted and the host found her alive).
+bool SettlingHidesDeath(bool settling, std::optional<bool> last_hit_mine);
 // The world a lone guest's enemy claims (ClaimEnemiesWhenAlone) were made in: its map and the
 // local player's character. A load makes a new character, also on the same map (a join, a
 // respawn), and the claimed words go with the old world's memory (rig 2026-10-13: the hand-back
@@ -2204,6 +2239,13 @@ const std::vector<CodePatch>& QuietSummonBannerPatches();
 // chimes): the network banner (0x01BFFE80, message id in edi) shows none of them.
 constexpr std::array<u8, 8> ShowNetworkBannerPrologue{0x55, 0x48, 0x89, 0xE5,
                                                       0x41, 0x57, 0x41, 0x56};
+// Kaniel 2026-10-23: the item-received popup ("Oedon Tomb Key 1 / OK") and its pickup sound
+// (menu sound 300) come from one function: the give (GiveItems, 0x017D89F0) calls it for each
+// item it put in the inventory (0x017D9348) and each it sent to the storage (0x017D94C7) with
+// (queue [0x0553B1C0], &handle, category, id, count, to storage); it pushes the item on the
+// popup's queue. Its result is never read. Skipped while SilentItemGets lives (see there).
+constexpr u64 ItemGetQueuedOffset = 0x016D8850;
+constexpr std::array<u8, 8> ItemGetQueuedPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
 // Kaniel 2026-10-18: a guest whose connection dropped and came back (the party went on) still
 // had "Lost connection to the network. Returning to title menu." (FMG 204, 4701) with its OK
 // button over the game. The network script's OnLanCutError (0x01387130, a Lua C function: the
@@ -2747,6 +2789,14 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
 // Its game's ownership step gives its own player's enemies to it all the same: right after it, the
 // word such an enemy gets instead (the network's), or none (`hosting`: this game hosts).
 std::optional<u16> HostFollowerWord(EnemyRole role, bool hosting, u16 word);
+// Kaniel's test 2026-10-23: a guest alone on a map saw the characters its story hides (the
+// clinic's dog, every NPC the host's world hides). As the map loads they start loading ([control
+// +0x14] wanted, +0x10 applied), then the story hides them (+0x28); the host's game lets them go
+// (wanted and applied 0), a guest's game keeps them loaded with no host there to say otherwise, and
+// draws them. A lone guest (the owner of its map's enemies) switches such a one off; one it
+// switched off goes back on once it is no longer hidden or the guest no longer alone.
+bool LoneGuestSwitchesOff(bool lone_guest, bool hidden, bool disabled, s32 wanted, s32 applied);
+bool LoneGuestSwitchesBackOn(bool lone_guest, bool hidden);
 // Whether the activation pass wakes the enemies around the other players here (WakeAroundOthers):
 // on the owner, and on a host that follows (its copies by the owner take the owner's places, so
 // they stand there when it takes the map over).
@@ -3297,9 +3347,16 @@ struct Bloodstain {
     bool operator==(const Bloodstain&) const = default;
 };
 // This player's bloodstain from the game's record (GameDataMan +0x28 its mark; the record at
-// [GameDataMan +0x30]: +0x3C its map, +0x18 its position, +0x38 its echoes). The mark stays up
+// [GameDataMan +0x30]: +0x3C its map, +0x00 its position, +0x38 its echoes). The mark stays up
 // on an empty record (map -1, echoes -1), and a stain without echoes holds nothing: none then.
 std::optional<Bloodstain> BloodstainOf(bool has_mark, u32 map, const LampPosition& at, s32 echoes);
+// The same from the record's bytes (`record`, from its start; nothing from a shorter read). Player
+// report 2026-10-23: the record keeps two places, as UpDateBloodMark (0x013D2910) writes them:
+// +0x00 where the stain lies (the player's last safe ground, [player +0x400] +0x30, which the
+// stain's marker copies when the game shows it, 0x01868A50) and +0x18 where the player died (the
+// foot of a cliff it fell from). The stain is at the first.
+constexpr size_t BloodstainRecordSize = 0x40;
+std::optional<Bloodstain> BloodstainOfRecord(bool has_mark, std::span<const u8> record);
 struct MemberVitals {
     std::string member;
     u32 map = 0;
@@ -3354,6 +3411,23 @@ bool PresenceHides(s64 now_ms, s64 first_seen_ms, s64 unmatched_since_ms);
 std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
                                     std::span<const MemberVitals> board, std::string_view self,
                                     u32 map);
+// The board member (its index) each character shows by, as ShownOtherPlayers pairs them; none for
+// a character by no member, or with no position.
+std::vector<std::optional<size_t>> VouchingMembers(
+    std::span<const std::optional<LampPosition>> characters, std::span<const MemberVitals> board,
+    std::string_view self, u32 map);
+// Player report 2026-10-23 (v1.1.9): a player who fell into the void woke at the lamp seen by
+// itself (its respawn is a trip) but not by the others: their copy of it had faded out in the
+// void too (character +0x20C, 1.0 while shown) and only their own map load fades it back. Per
+// other character, each frame: once a member on this map died while it was faded out, it fades
+// back in (Tick says so, once) when the member it shows by is up again.
+class FadeBack {
+public:
+    bool Tick(float fade, bool someone_died, std::optional<Vital> member);
+
+private:
+    bool died = false;
+};
 std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body);
 // Kaniel's playtest 2026-10-19: one member can end up with two characters here (his old copy
 // kept after a crash, bound again to his new join). Both take his packets off one queue on two
@@ -3587,6 +3661,18 @@ bool SkipsHitReaction(bool down, u64 victim, u64 local_player);
 constexpr u64 EnemyBarDamageOffset = 0x016F9A50;
 constexpr std::array<u8, 8> EnemyBarDamageStart{0x45, 0x31, 0xC0, 0x48, 0x89, 0xF8, 0x31, 0xC9};
 bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies);
+// The boss bars: BossGaugeSlots at [0x05562878] +0x1658 (BossGaugesOffset), BossGaugeSize bytes
+// each: name id, the boss's handle (-1 for none), two numbers and a shown byte (+0x10). The game's
+// ClearBossGauge (0x01336D00, also inlined in Failed_BossAreaMission 0x0138B2D0) puts them back
+// to none; a summoned guest's death in a boss area runs Failed_BossAreaMission and the host's
+// death reload clears them. A party guest revived in the host's world runs neither (Kaniel's
+// playtest 2026-10-22: Paarl's bar stayed up at the lamp after a wipe), so a party death clears
+// them itself. Returns the handles of the bars that were up.
+constexpr u64 BossGaugesPointerOffset = 0x05562878;
+constexpr u64 BossGaugesOffset = 0x1658;
+constexpr std::size_t BossGaugeSlots = 3;
+constexpr std::size_t BossGaugeSize = 0x14;
+std::vector<u32> ClearBossGauges(std::span<u8> gauges);
 std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, std::string_view self,
                                          u32 map, const LampPosition& me);
 

@@ -441,6 +441,10 @@ void ForEachWorldCharacter(u64 world, Visit&& visit) {
     }
 }
 bool IsCharacterDisabled(u64 character);
+// A character's fade (float at +0x20C, 1.0 while shown): a fall into the void fades it out to 0.0,
+// which only a map load puts back (rig 2026-10-22). 1.0 if it is no character.
+constexpr u64 CharacterFadeOffset = 0x20C;
+float CharacterFade(u64 character);
 // The character's enable switch as event command 2004:5 sets it; false if it is no character.
 bool SetCharacterDisabled(u64 character, bool disabled);
 // A character's hits switch: bit 1 (2) of its model's flags ([+0x58]+0x114), set = no hits.
@@ -720,6 +724,8 @@ void TickEnemyOwner(bool in_session, u32 map);
 // This member's role and the owner it follows (its board name), as the last tick found them: for
 // the hooks (any thread).
 EnemyRole CurrentEnemyRole();
+// In a party session with the host away from this game's map (the map board fresh).
+bool HostAwayFromThisMap();
 std::string CurrentEnemyOwner();
 // The owner got another member's hit (0x15): the enemy step runs on the next frames, so the HP
 // it takes goes to the log at once.
@@ -871,6 +877,8 @@ void ApplyTeamWorldOnLoad(bool trip = false);
 // A team guest's copy of the team's world: its flags on (none for the team's host, or with no
 // world yet).
 std::vector<s32> TeamWorldFlagsOnForGuest();
+// The blocks the team's world covers, for a team guest (none otherwise).
+std::vector<u32> TeamWorldBlocksForGuest();
 // Puts lamps (entities, LampOfActiveFlag) on this character's lamp list, so they stay lit for it.
 void ListLamps(std::span<const s32> lamps);
 void TickTeamWorld(s64 now_ms);
