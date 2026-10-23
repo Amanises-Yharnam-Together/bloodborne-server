@@ -88,4 +88,27 @@ inline std::uint32_t SystemMemoryTypesNearVramLimit(bool discrete, std::span<con
     return types;
 }
 
+/// bbport (Supermedo a1235ee): integrated GPUs whose only device-local heap is small. AMD APUs on
+/// Windows report the BIOS's frame buffer (UMA, 256-512 MiB) as that heap and give the GPU the
+/// rest from shared system memory, the same RAM. Every image preferred the small heap, textures
+/// filled it, and a render target that needed it failed later in play (ErrorOutOfDeviceMemory
+/// after some minutes, 256 MiB, Ryzen 5600H). With a device-local heap under 1 GiB and a shared
+/// one beside it, textures (images never rendered to) prefer the shared heap and the small one
+/// stays for render targets. BB_IMAGES_PREFER_HOST=1 or 0 (when set and not empty) forces it.
+inline bool TexturesPreferHost(const char* env, std::span<const HeapUse> heaps) {
+    if (env && *env) {
+        return env[0] == '1';
+    }
+    std::uint64_t device_local = 0;
+    bool shared_heap = false;
+    for (const HeapUse& heap : heaps) {
+        if (heap.device_local) {
+            device_local += heap.size;
+        } else {
+            shared_heap = true;
+        }
+    }
+    return shared_heap && device_local < (1ull << 30);
+}
+
 } // namespace VideoCore

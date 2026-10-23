@@ -14,6 +14,7 @@ using VideoCore::GcImageState;
 using VideoCore::HeapUse;
 using VideoCore::ArenaReserveBytes;
 using VideoCore::SystemMemoryTypesNearVramLimit;
+using VideoCore::TexturesPreferHost;
 using VideoCore::VramPlacement;
 using VideoCore::VramPlacementFrom;
 
@@ -86,5 +87,24 @@ int main() {
                               .budget = 3100 * MiB},
                              full[1]};
     assert(SystemMemoryTypesNearVramLimit(true, small, type_heaps) == 0);
+
+    // Supermedo a1235ee: a Ryzen 5600H (Radeon Vega, 15 GB RAM) reports the BIOS's 256 MiB frame
+    // buffer as its only device-local heap, the rest is shared system memory. Textures filled the
+    // small heap and a render target failed later (ErrorOutOfDeviceMemory). There textures prefer
+    // the shared heap; discrete GPUs and bigger heaps are unchanged.
+    const HeapUse apu[] = {{.size = 256 * MiB, .device_local = true}, {.size = 7800 * MiB}};
+    assert(TexturesPreferHost(nullptr, apu));
+    const HeapUse apu_512[] = {{.size = 512 * MiB, .device_local = true}, {.size = 7800 * MiB}};
+    assert(TexturesPreferHost(nullptr, apu_512));
+    const HeapUse one_gib[] = {{.size = 1024 * MiB, .device_local = true}, {.size = 7800 * MiB}};
+    assert(!TexturesPreferHost(nullptr, one_gib));
+    assert(!TexturesPreferHost(nullptr, full));
+    // No shared heap beside it: nowhere else to go.
+    const HeapUse local_only[] = {{.size = 256 * MiB, .device_local = true}};
+    assert(!TexturesPreferHost(nullptr, local_only));
+    // BB_IMAGES_PREFER_HOST=1 or 0 forces the rule; empty leaves it.
+    assert(TexturesPreferHost("1", full));
+    assert(!TexturesPreferHost("0", apu));
+    assert(TexturesPreferHost("", apu));
     return 0;
 }

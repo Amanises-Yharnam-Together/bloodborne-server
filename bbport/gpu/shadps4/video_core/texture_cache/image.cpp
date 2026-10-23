@@ -16,6 +16,10 @@
 #include "bbport_settings.h"
 
 #include <vk_mem_alloc.h>
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <span>
 
 namespace VideoCore {
 
@@ -159,6 +163,67 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
                vk::to_string(vk::Result::eErrorOutOfDeviceMemory));
 }
 
+// This run's TexturesPreferHost, decided once from the device's heaps.
+static bool TexturesPreferHost(VmaAllocator allocator) {
+    static const bool prefer = [allocator] {
+        const VkPhysicalDeviceMemoryProperties* props = nullptr;
+        vmaGetMemoryProperties(allocator, &props);
+        std::array<HeapUse, VK_MAX_MEMORY_HEAPS> heaps{};
+        u64 device_local = 0;
+        for (u32 i = 0; i < props->memoryHeapCount; ++i) {
+            heaps[i].size = props->memoryHeaps[i].size;
+            heaps[i].device_local =
+                (props->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+            device_local += heaps[i].device_local ? heaps[i].size : 0;
+        }
+        const bool host = VideoCore::TexturesPreferHost(
+            std::getenv("BB_IMAGES_PREFER_HOST"),
+            std::span<const HeapUse>(heaps.data(), props->memoryHeapCount));
+        if (host) {
+            std::printf("GPU: device-local memory %llu MiB: textures in shared system memory, the "
+                        "device-local heap for render targets\n",
+                        (unsigned long long)(device_local >> 20));
+            std::fflush(stdout);
+        }
+        return host;
+    }();
+    return prefer;
+}
+
+// bbport (Supermedo a1235ee): what each memory heap holds and allows, for the log when an image
+// cannot be allocated.
+static void LogHeaps(VmaAllocator allocator, vk::Device device,
+                     const vk::ImageCreateInfo& image_ci) {
+    // The caller frees memory and tries again, often on 4 GB AMD cards: the first few only.
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) >= 8) {
+        return;
+    }
+    const VkPhysicalDeviceMemoryProperties* props = nullptr;
+    vmaGetMemoryProperties(allocator, &props);
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(allocator, budgets);
+    u32 type_bits = 0;
+    if (device) {
+        const vk::DeviceImageMemoryRequirements query{.pCreateInfo = &image_ci};
+        type_bits = device.getImageMemoryRequirements(query).memoryRequirements.memoryTypeBits;
+    }
+    std::printf("GPU: image %ux%u format %s usage %s could not be allocated (memory types %#x)\n",
+                image_ci.extent.width, image_ci.extent.height,
+                vk::to_string(image_ci.format).c_str(), vk::to_string(image_ci.usage).c_str(),
+                type_bits);
+    for (u32 i = 0; i < props->memoryHeapCount; ++i) {
+        std::printf("GPU: heap %u%s: %llu MiB, used %llu of budget %llu MiB\n", i,
+                    props->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT
+                        ? " (device-local)"
+                        : "",
+                    (unsigned long long)(props->memoryHeaps[i].size >> 20),
+                    (unsigned long long)(budgets[i].usage >> 20),
+                    (unsigned long long)(budgets[i].budget >> 20));
+    }
+    std::fflush(stdout);
+}
+
 bool UniqueImage::TryCreate(const vk::ImageCreateInfo& image_ci) {
     this->image_ci = image_ci;
     ASSERT(!image);
@@ -176,9 +241,12 @@ bool UniqueImage::TryCreate(const vk::ImageCreateInfo& image_ci) {
             dedicated = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
         }
     }
+    const bool texture = !(image_ci.usage & (vk::ImageUsageFlagBits::eColorAttachment |
+                                             vk::ImageUsageFlagBits::eDepthStencilAttachment));
     VmaAllocationCreateInfo alloc_ci = {
         .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | dedicated,
-        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+        .usage = texture && TexturesPreferHost(allocator) ? VMA_MEMORY_USAGE_AUTO_PREFER_HOST
+                                                          : VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
         .requiredFlags = 0,
         .preferredFlags = 0,
         .pool = VK_NULL_HANDLE,
@@ -214,6 +282,18 @@ bool UniqueImage::TryCreate(const vk::ImageCreateInfo& image_ci) {
         over_budget.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
         result = vmaCreateImage(allocator, &image_ci_unsafe, &over_budget, &unsafe_image,
                                 &allocation, &alloc_info);
+        if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY) {
+            // bbport (Supermedo a1235ee): the preferred heap is full: wherever the image may go
+            // instead.
+            over_budget.usage = alloc_ci.usage == VMA_MEMORY_USAGE_AUTO_PREFER_HOST
+                                    ? VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE
+                                    : VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+            result = vmaCreateImage(allocator, &image_ci_unsafe, &over_budget, &unsafe_image,
+                                    &allocation, &alloc_info);
+        }
+        if (result != VK_SUCCESS) {
+            LogHeaps(allocator, device, image_ci);
+        }
     }
     // bbport: out of memory past the budget too (AMD keeps render targets in VRAM only, so a
     // 4 GB card has no system memory to fall back on): the caller frees memory and tries again
