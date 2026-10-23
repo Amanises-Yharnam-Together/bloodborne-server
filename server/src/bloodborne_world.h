@@ -68,6 +68,17 @@ private:
 // The world key of a party: a hash of its key, safe as a folder name.
 QString PartyFolderName(const QByteArray& party);
 
+// Hosted (docs/HOSTED_SERVER.md): shadNet for players who do not know each other. A player's
+// names in the lobby and the party are its online id's (hex, as the games say them), a party hello
+// must be for the world its team plays, and the lobby goes out at most every lobby_interval_ms,
+// only to the players whose own state changed, listing few players (TeamLobby::SetHosted).
+struct HostedRules {
+    bool enabled = false;
+    size_t lobby_players = 32;
+    qint64 lobby_interval_ms = 250;
+    size_t worlds_per_player = 16;
+};
+
 class Service {
 public:
     // `folder`: where the worlds are kept (one folder per party); empty keeps them in memory only.
@@ -82,6 +93,8 @@ public:
         QList<Send> sends;
         QStringList log;
     };
+
+    void SetHosted(const HostedRules& rules);
 
     // Every party's world in the folder (shadNet's start).
     Result Load(qint64 now_ms);
@@ -161,6 +174,8 @@ private:
     struct Member {
         explicit Member(quint32 instance) : stream{"shadnet", instance} {}
         BloodborneCoop::CoopStream stream;
+        bool to_flush = false; // something to send since the last flush (Service::flush_now)
+        quint64 key = 0;       // its link's (Endpoint::Key)
         QByteArray online_id;
         QString party; // PartyFolderName, empty before its hello
         std::string name;
@@ -217,6 +232,9 @@ private:
     void SendEntries(PartyWorld& world, const std::vector<BloodborneCoop::WorldLogEntry>& entries,
                      qint64 now_ms);
     void Flush(qint64 now_ms, Result& result);
+    // Only the members sent something (or heard from) since the last flush: a datagram from one
+    // game must not walk every member's stream (O(n) a datagram was the limit past ~600 games).
+    void FlushSome(qint64 now_ms, Result& result);
     std::string Who(const Member& member) const;
     // The team lobby (phase 5): a player's sign-in and requests; every signed-in player's state
     // after a change, a TeamStart to those the outcome starts, the world list to disk.
@@ -254,7 +272,14 @@ private:
     std::map<QString, PartyWorld> worlds;
     std::map<quint64, Member> members; // by link (Endpoint::Key)
     std::map<quint64, ServerLink::Endpoint> endpoints;
+    std::vector<Member*> flush_now; // the members FlushSome flushes
+    // Hosted: whether a name a game says is its own (its online id in hex).
+    bool OwnName(const Member& member, const std::string& name) const;
+
     BloodborneCoop::TeamLobby lobby;
+    HostedRules hosted;
+    qint64 lobby_sent_ms = 0;
+    std::map<std::string, std::string> lobby_sent; // hosted: each player's last state, as sent
     bool lobby_changed = false; // a player's game went: states to send at the next tick
     // The listed worlds' folders by world id, for those not in PartyFolderName("world:<id>").
     std::map<std::string, QString> world_folders;

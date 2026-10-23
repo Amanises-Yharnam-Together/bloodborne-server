@@ -3,6 +3,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <QFile>
 #include <QRandomGenerator>
 #include <QtEndian>
 #include "link_server.h"
@@ -31,10 +32,64 @@ LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_
             return m_world.RoutesPacket(from, to, channel);
         });
     m_clock.start();
+    // Hosted (docs/HOSTED_SERVER.md): limits on who comes in, a fixed build, passwords checked on
+    // their own thread (a flood of new ids must not stop the games' relay).
+    if (shared && shared->config)
+        m_hosted = shared->config->GetHosted();
+    if (m_hosted.enabled) {
+        Admission::Limits limits;
+        limits.links_per_address = m_hosted.linksPerAddress;
+        limits.hellos_per_second = m_hosted.hellosPerSecond;
+        limits.new_accounts_per_hour = m_hosted.newAccountsPerHour;
+        limits.datagrams_per_second = m_hosted.datagramsPerSecond;
+        limits.datagram_burst = m_hosted.datagramsPerSecond * 2;
+        limits.bytes_per_second = m_hosted.bytesPerSecond;
+        limits.byte_burst = m_hosted.bytesPerSecond * 2.5;
+        m_guard = Admission::Guard{limits};
+        m_link.SetRequiredBuild(m_hosted.build.toUtf8());
+        BloodborneWorld::HostedRules rules;
+        rules.enabled = true;
+        rules.lobby_players = static_cast<size_t>(std::max(0, m_hosted.lobbyPlayers));
+        rules.lobby_interval_ms = m_hosted.lobbyIntervalMs;
+        rules.worlds_per_player = static_cast<size_t>(std::max(1, m_hosted.worldsPerPlayer));
+        m_world.SetHosted(rules);
+        // The password hashes on every core but the link's.
+        m_signInPool.setMaxThreadCount(std::max(1, QThread::idealThreadCount() - 1));
+        m_signInPool.setExpiryTimeout(-1);
+        LoadBanList();
+        m_banTimer = new QTimer(this);
+        connect(m_banTimer, &QTimer::timeout, this, &LinkServer::LoadBanList);
+        m_banTimer->start(30'000);
+        qInfo().noquote() << QStringLiteral(
+                                 "Hosted: %1 links an address, %2 hellos/s, %3 new accounts/h, "
+                                 "%4 datagrams/s and %5 bytes/s a link, build %6")
+                                 .arg(limits.links_per_address)
+                                 .arg(limits.hellos_per_second)
+                                 .arg(limits.new_accounts_per_hour)
+                                 .arg(limits.datagrams_per_second)
+                                 .arg(limits.bytes_per_second)
+                                 .arg(m_hosted.build.isEmpty() ? QStringLiteral("any")
+                                                               : m_hosted.build);
+    }
+    m_dbPath = db_path;
     m_linkTimer->start(500);
     // The worlds' clock is the wall clock: their journals keep it across restarts.
     Apply(m_world.Load(QDateTime::currentMSecsSinceEpoch()));
     m_worldTimer->start(50);
+}
+
+LinkServer::~LinkServer() {
+    m_signInPool.clear();
+    m_signInPool.waitForDone();
+}
+
+void LinkServer::LoadBanList() {
+    QFile file(m_hosted.banList);
+    QSet<quint32> addresses;
+    QSet<QByteArray> ids;
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text))
+        Admission::ParseBanList(QString::fromUtf8(file.readAll()), addresses, ids);
+    m_guard.SetBanned(addresses, ids);
 }
 
 bool LinkServer::Start(const QHostAddress& addr, uint16_t port) {
@@ -43,6 +98,10 @@ bool LinkServer::Start(const QHostAddress& addr, uint16_t port) {
                     << m_socket->errorString();
         return false;
     }
+    // Every game's datagrams come to this one socket: room for a burst while the thread is busy
+    // (the system's cap, net.core.rmem_max, may hold it lower).
+    m_socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, 16 << 20);
+    m_socket->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption, 16 << 20);
     qInfo().nospace().noquote() << "Link UDP listener on: " << addr.toString() << ":" << port;
     return true;
 }
@@ -71,7 +130,41 @@ void LinkServer::HandleLink(const QByteArray& datagram, const QHostAddress& send
     const quint32 address = sender.toIPv4Address(&ipv4);
     if (!ipv4)
         return;
-    Apply(m_link.Receive({address, senderPort}, datagram, m_clock.elapsed()));
+    const ServerLink::Endpoint from{address, senderPort};
+    if (m_hosted.enabled) {
+        const auto kind = ServerLink::KindOf(datagram);
+        if (!kind || !Admit(datagram, *kind, address, from))
+            return;
+    }
+    m_helloAddress = address;
+    Apply(m_link.Receive(from, datagram, m_clock.elapsed()));
+}
+
+bool LinkServer::Admit(const QByteArray& datagram, ServerLink::Kind kind, quint32 address,
+                       const ServerLink::Endpoint& from) {
+    const qint64 now = m_clock.elapsed();
+    // Game frames share 1200 bytes (coop/game_link.h); a large game packet goes alone, never this
+    // big.
+    if (datagram.size() > 16384 || m_guard.Banned(address, now))
+        return false;
+    const bool known = m_link.VirtualOf(from).has_value();
+    if (kind == ServerLink::Kind::Hello) {
+        if (!m_guard.AllowHello(address, now))
+            return false;
+        if (!known && !m_guard.AllowLink(address, m_addressLinks.value(address))) {
+            m_socket->writeDatagram(
+                ServerLink::Encode(ServerLink::Welcome{false, "too many games from your address"}),
+                QHostAddress(from.ipv4), from.port);
+            return false;
+        }
+        if (const auto hello = ServerLink::DecodeHello(datagram);
+            hello && m_guard.BannedId(hello->online_id)) {
+            return false;
+        }
+        return true;
+    }
+    // A link's datagrams within its rate (a datagram of no link the hub drops itself).
+    return !known || m_guard.AllowDatagram(from.Key(), address, datagram.size(), now);
 }
 
 void LinkServer::OnLinkTick() {
@@ -85,20 +178,81 @@ void LinkServer::OnWorldTick() {
         FlushRpc(*end);
 }
 
-bool LinkServer::SignIn(const QByteArray& online_id, const QByteArray& secret) {
+std::optional<bool> LinkServer::SignIn(const QByteArray& online_id, const QByteArray& secret) {
     // A hello comes again every second until it is welcomed, and after every outage: the
     // password's hash (100k rounds) only the first time.
     const QByteArray hash = QCryptographicHash::hash(secret, QCryptographicHash::Sha256);
     const auto known = m_signedIn.constFind(online_id);
     if (known != m_signedIn.constEnd())
         return *known == hash;
-    const bool make = !m_shared->config || m_shared->config->IsMakingAccountsAtSignIn();
-    const auto user =
-        m_db.SignIn(QString::fromUtf8(online_id), QString::fromUtf8(secret), {}, false, make);
-    if (!user)
+    bool make = !m_shared->config || m_shared->config->IsMakingAccountsAtSignIn();
+    if (!m_hosted.enabled) {
+        const auto user =
+            m_db.SignIn(QString::fromUtf8(online_id), QString::fromUtf8(secret), {}, false, make);
+        if (!user)
+            return false;
+        m_signedIn.insert(online_id, hash);
+        return true;
+    }
+    // Hosted: on the sign-in thread; the game's next hello hears the verdict.
+    const qint64 now = m_clock.elapsed();
+    if (const auto refused = m_signInRefused.constFind(online_id);
+        refused != m_signInRefused.constEnd() && refused->hash == hash && refused->until_ms > now)
         return false;
-    m_signedIn.insert(online_id, hash);
-    return true;
+    if (m_signInPending.contains(online_id))
+        return std::nullopt;
+    // A flood of new ids from many addresses: no more checks queued than the pool clears in a few
+    // seconds; the others' games say hello again in a second.
+    if (m_signInPending.size() >= 512)
+        return std::nullopt;
+    const quint32 address = m_helloAddress;
+    make = make && m_guard.MayMakeAccount(address, now);
+    if (make)
+        m_guard.Made(address, now); // counted now (checks run at once), given back if none is
+    m_signInPending.insert(online_id);
+    const QString db_path = m_dbPath;
+    m_signInPool.start([this, online_id, secret, hash, make, address, db_path] {
+        // Each sign-in thread's own connection to the accounts.
+        static thread_local std::unique_ptr<Database> db;
+        if (!db) {
+            db = std::make_unique<Database>(
+                QStringLiteral("link_sign_in_%1")
+                    .arg(reinterpret_cast<quintptr>(QThread::currentThreadId())));
+            if (!db->Open(db_path))
+                qCritical() << "Link: the sign-in thread's accounts did not open";
+        }
+        const QString id = QString::fromUtf8(online_id);
+        const bool existed = db->GetUserId(id).has_value();
+        const bool accepted =
+            db->SignIn(id, QString::fromUtf8(secret), {}, false, make).has_value();
+        const bool made = accepted && !existed;
+        QMetaObject::invokeMethod(
+            this,
+            [this, online_id, hash, accepted, made, address, make] {
+                SignedIn(online_id, hash, accepted, made, address, make);
+            },
+            Qt::QueuedConnection);
+    });
+    return std::nullopt;
+}
+
+void LinkServer::SignedIn(const QByteArray& online_id, const QByteArray& hash, bool accepted,
+                          bool made, quint32 address, bool counted) {
+    m_signInPending.remove(online_id);
+    const qint64 now = m_clock.elapsed();
+    if (accepted) {
+        m_signedIn.insert(online_id, hash);
+        m_signInRefused.remove(online_id);
+        if (counted && !made)
+            m_guard.Unmade(address);
+    } else {
+        if (counted)
+            m_guard.Unmade(address);
+        // A wrong password (or no account allowed) is not hashed again for 30 s.
+        if (m_signInRefused.size() > 100'000)
+            m_signInRefused.clear();
+        m_signInRefused.insert(online_id, Refused{hash, now + 30'000});
+    }
 }
 
 void LinkServer::OnRpc(const ServerLink::Endpoint& from, const QByteArray& online_id,
@@ -197,6 +351,14 @@ void LinkServer::Apply(const ServerLink::Hub::Result& result) {
         qInfo().noquote() << line;
     for (const auto& gone : result.gone) {
         m_world.Forget(gone);
+        if (const auto found = m_linkAddress.constFind(gone.Key());
+            found != m_linkAddress.constEnd()) {
+            const quint32 address = *found;
+            m_linkAddress.erase(found);
+            if (--m_addressLinks[address] <= 0)
+                m_addressLinks.remove(address);
+        }
+        m_guard.Forget(gone.Key());
         // A game gone (or moved to another address): its connection to the TCP port is over.
         for (auto it = m_rpc.begin(); it != m_rpc.end();) {
             if (it->second->to == gone) {
@@ -210,6 +372,10 @@ void LinkServer::Apply(const ServerLink::Hub::Result& result) {
     // Phase 7: a linked game's address for the rooms and signaling is its virtual one, known from
     // its hello.
     for (const auto& linked : result.linked) {
+        if (!m_linkAddress.contains(linked.endpoint.Key())) {
+            m_linkAddress.insert(linked.endpoint.Key(), linked.endpoint.ipv4);
+            ++m_addressLinks[linked.endpoint.ipv4];
+        }
         QWriteLocker lk(&m_shared->matching.udpLock);
         m_shared->matching.udpExt[QString::fromUtf8(linked.online_id)] = {
             QHostAddress(linked.virtual_endpoint.ipv4).toString(), linked.virtual_endpoint.port};

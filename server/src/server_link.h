@@ -135,6 +135,7 @@ public:
         struct Linked {
             QByteArray online_id;
             Endpoint virtual_endpoint;
+            Endpoint endpoint;
         };
         QList<Linked> linked;
     };
@@ -162,9 +163,17 @@ public:
     }
 
     // Phase 11: whether a hello's player id and secret sign in. Without it every hello does.
-    using SignIn = std::function<bool(const QByteArray& online_id, const QByteArray& secret)>;
+    // Hosted (docs/HOSTED_SERVER.md): nothing yet while the password is checked on another thread;
+    // the hello gets no answer and the game's next one (a second later) gets the verdict.
+    using SignIn =
+        std::function<std::optional<bool>(const QByteArray& online_id, const QByteArray& secret)>;
     void SetSignIn(SignIn sign_in) {
         this->sign_in = std::move(sign_in);
+    }
+
+    // Hosted: the build every game must say (empty: the first linked game's, as before).
+    void SetRequiredBuild(QByteArray build) {
+        required_build = std::move(build);
     }
 
     int Members() const {
@@ -217,6 +226,7 @@ private:
     PartyOf party_of;
     PacketRoutes packet_routes;
     SignIn sign_in;
+    QByteArray required_build;
 };
 
 } // namespace ServerLink

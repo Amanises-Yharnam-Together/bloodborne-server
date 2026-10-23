@@ -104,6 +104,8 @@ set(SOURCES
     src/cmd_matching.cpp
     src/link_server.h
     src/link_server.cpp
+    src/admission.h
+    src/admission.cpp
     # The games' one link to the server (co-op phase 2)
     src/server_link.h
     src/server_link.cpp
@@ -143,7 +145,28 @@ set(SOURCES
     src/stats_server.cpp
 )
 
+# The HTTP services (WebAPI, the game's backend, the stats page) need Qt 6.8's QHttpServer; with an
+# older Qt (Ubuntu 24.04's 6.4) shadNet builds without them: the link, the worlds and the lobby
+# only, enough for a load test (docs/HOSTED_SERVER.md).
+set(SHADNET_HTTP_SOURCES
+    src/webapi_server.cpp
+    src/webapi_routes_bloodborne.cpp
+    src/webapi_routes_session.cpp
+    src/bloodborne_backend_server.cpp
+    src/stats_server.cpp
+    src/webapi_server.h
+    src/bloodborne_backend_server.h
+    src/stats_server.h
+)
+if(Qt6_VERSION VERSION_LESS 6.8)
+    message(WARNING "Qt ${Qt6_VERSION} < 6.8: shadnet builds without its HTTP services")
+    list(REMOVE_ITEM SOURCES ${SHADNET_HTTP_SOURCES})
+endif()
+
 add_executable(shadnet ${SOURCES})
+if(Qt6_VERSION VERSION_LESS 6.8)
+    target_compile_definitions(shadnet PRIVATE SHADNET_NO_HTTP)
+endif()
 
 # The ss.info template the game's online check reads; the Python backend reads the same file.
 set(BLOODBORNE_SS_INFO_TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/../backend/ss_info_template.xml"
@@ -255,6 +278,11 @@ if(BUILD_TESTING)
     target_link_libraries(test_bloodborne_world PRIVATE Qt6::Core libprotobuf)
     add_test(NAME bloodborne_world COMMAND test_bloodborne_world)
 
+    add_executable(test_admission EXCLUDE_FROM_ALL tests/test_admission.cpp src/admission.cpp)
+    target_include_directories(test_admission PRIVATE src)
+    target_link_libraries(test_admission PRIVATE Qt6::Core Qt6::Network)
+    add_test(NAME admission COMMAND test_admission)
+
     add_executable(test_team_lobby EXCLUDE_FROM_ALL
         tests/test_team_lobby.cpp
         ${COOP_SOURCES}
@@ -300,6 +328,20 @@ if(BUILD_TESTING)
             ENVIRONMENT "SHADNET_EXE=$<TARGET_FILE:shadnet>")
     endif()
 endif()
+
+# Simulated players for a load test (loadtest/bbload.cpp, docs/HOSTED_SERVER.md).
+add_executable(bbload EXCLUDE_FROM_ALL
+    loadtest/bbload.cpp
+    src/server_link.cpp
+    ${COOP_SOURCES}
+)
+target_include_directories(bbload PRIVATE
+    src
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${PROTO_OUT}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+)
+target_link_libraries(bbload PRIVATE Qt6::Core Qt6::Network libprotobuf)
 
 add_custom_command(TARGET shadnet POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

@@ -5,11 +5,15 @@
 #include <QDebug>
 #include <QDir>
 #include <QLoggingCategory>
+#ifndef SHADNET_NO_HTTP
 #include "bloodborne_backend_server.h"
+#endif
 #include "config.h"
 #include "server.h"
 #include "watchdog.h"
+#ifndef SHADNET_NO_HTTP
 #include "webapi_server.h"
+#endif
 
 const QString versionString = QStringLiteral("0.0.13");
 
@@ -52,6 +56,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+#ifndef SHADNET_NO_HTTP
     // Start the HTTP/JSON WebAPI listener alongside the binary protocol.
     WebApiServer webapi;
     if (!webapi.Start(&config, "db/shadnet.db", &server.Shared())) {
@@ -64,6 +69,9 @@ int main(int argc, char* argv[]) {
     if (config.GetBackend().enabled && !backend.Start(&config)) {
         qWarning() << "Backend failed to start; continuing without it";
     }
+#else
+    qWarning() << "Built without the HTTP services (Qt older than 6.8)";
+#endif
 
     return app.exec();
 }

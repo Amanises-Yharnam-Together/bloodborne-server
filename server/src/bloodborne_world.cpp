@@ -422,6 +422,10 @@ void Service::ResetMap(PartyWorld& world, std::uint32_t map, qint64 now_ms) {
 
 void Service::SendTo(Member& member, const bbcoop::Envelope& envelope, qint64 now_ms) {
     member.stream.Send(EncodeEnvelope(envelope), now_ms);
+    if (!member.to_flush) {
+        member.to_flush = true;
+        flush_now.push_back(&member);
+    }
 }
 
 void Service::SendEntries(PartyWorld& world, const std::vector<WorldLogEntry>& entries,
@@ -445,6 +449,15 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
                          ", this server speaks " + std::to_string(CoopProtocol));
     } else if (party.indexOf(':') <= 0 || hello.member().empty()) {
         welcome.set_text("no party key or member name");
+    } else if (hosted.enabled && !OwnName(member, hello.member())) {
+        welcome.set_text("the member name is not this player's");
+    } else if (hosted.enabled) {
+        // Hosted: only the world the player's team plays.
+        const bbcoop::Team* team = lobby.TeamOf(hello.member());
+        if (!party.startsWith("world:") || !team ||
+            QByteArray::fromStdString(team->party()) != party) {
+            welcome.set_text("not in the team that plays this world");
+        }
     }
     if (!welcome.text().empty()) {
         SendTo(member, answer, now_ms);
@@ -1057,6 +1070,7 @@ Service::Result Service::Receive(const ServerLink::Endpoint& from, const QByteAr
     auto [found, added] =
         members.try_emplace(from.Key(), QRandomGenerator::global()->generate() | 1u);
     Member& member = found->second;
+    member.key = from.Key();
     endpoints[from.Key()] = from;
     member.online_id = online_id;
     const auto bytes =
@@ -1073,11 +1087,30 @@ Service::Result Service::Receive(const ServerLink::Endpoint& from, const QByteAr
             Take(member, *envelope, now_ms, result);
         }
     }
-    Flush(now_ms, result);
+    // Its acks, and whatever its messages made the server send.
+    if (!member.to_flush) {
+        member.to_flush = true;
+        flush_now.push_back(&member);
+    }
+    FlushSome(now_ms, result);
     return result;
 }
 
+void Service::FlushSome(qint64 now_ms, Result& result) {
+    for (Member* member : std::exchange(flush_now, {})) {
+        member->to_flush = false;
+        for (const std::vector<u8>& body : member->stream.Flush(now_ms)) {
+            result.sends.append(
+                {endpoints.at(member->key), QByteArray(reinterpret_cast<const char*>(body.data()),
+                                                       static_cast<qsizetype>(body.size()))});
+        }
+    }
+}
+
 void Service::Flush(qint64 now_ms, Result& result) {
+    for (Member* member : std::exchange(flush_now, {})) {
+        member->to_flush = false;
+    }
     for (auto& [key, member] : members) {
         for (const std::vector<u8>& body : member.stream.Flush(now_ms)) {
             result.sends.append(
@@ -1094,7 +1127,7 @@ Service::Result Service::Tick(qint64 now_ms) {
                               .arg(OfflineGraceMs / 60000));
         Settle(expired, now_ms, result);
     }
-    if (lobby_changed) {
+    if (lobby_changed && (!hosted.enabled || now_ms - lobby_sent_ms >= hosted.lobby_interval_ms)) {
         SendLobby(now_ms);
     }
     for (auto& [name, world] : worlds) {
@@ -1156,8 +1189,12 @@ void Service::Forget(const ServerLink::Endpoint& link) {
         });
         if (!elsewhere) {
             lobby.Leave(name);
+            lobby_sent.erase(name);
             lobby_changed = true;
         }
+    }
+    if (found != members.end()) {
+        std::erase(flush_now, &found->second);
     }
     members.erase(link.Key());
     endpoints.erase(link.Key());
@@ -1300,6 +1337,15 @@ void Service::OnLobbyHello(Member& member, const bbcoop::LobbyHello& hello, qint
                                    QString::fromStdString(answer.lobby_state().notice())));
         return;
     }
+    if (hosted.enabled && !OwnName(member, hello.member())) {
+        bbcoop::Envelope answer;
+        answer.mutable_lobby_state()->set_notice("the member name is not this player's");
+        SendTo(member, answer, now_ms);
+        result.log.append(
+            QStringLiteral("team lobby: refused %1: another player's name %2")
+                .arg(QString::fromStdString(Who(member)), QString::fromStdString(hello.member())));
+        return;
+    }
     const bool arrived = member.lobby.empty();
     member.lobby = hello.member();
     if (arrived) {
@@ -1406,7 +1452,11 @@ void Service::ForgetMember(PartyWorld& world, const std::string& name, qint64 no
 
 void Service::Settle(const TeamLobby::Outcome& outcome, qint64 now_ms, Result& result) {
     if (outcome.changed) {
-        SendLobby(now_ms);
+        if (hosted.enabled) {
+            lobby_changed = true; // hosted: with the others at the next tick past the interval
+        } else {
+            SendLobby(now_ms);
+        }
     }
     for (const std::string& name : outcome.starts) {
         bbcoop::TeamStart start = lobby.StartFor(name);
@@ -1434,13 +1484,34 @@ void Service::Settle(const TeamLobby::Outcome& outcome, qint64 now_ms, Result& r
 
 void Service::SendLobby(qint64 now_ms) {
     lobby_changed = false;
+    lobby_sent_ms = now_ms;
     for (auto& [key, member] : members) {
         if (!member.lobby.empty()) {
             bbcoop::Envelope envelope;
             *envelope.mutable_lobby_state() = lobby.StateFor(member.lobby);
+            if (hosted.enabled) {
+                // Only to the players whose own state changed.
+                std::string bytes = envelope.lobby_state().SerializeAsString();
+                std::string& sent = lobby_sent[member.lobby];
+                if (sent == bytes) {
+                    continue;
+                }
+                sent = std::move(bytes);
+            }
             SendTo(member, envelope, now_ms);
         }
     }
+}
+
+void Service::SetHosted(const HostedRules& rules) {
+    hosted = rules;
+    if (rules.enabled) {
+        lobby.SetHosted(rules.lobby_players, rules.worlds_per_player);
+    }
+}
+
+bool Service::OwnName(const Member& member, const std::string& name) const {
+    return name == member.online_id.toHex().toStdString();
 }
 
 QString Service::FolderOf(const QByteArray& party) const {

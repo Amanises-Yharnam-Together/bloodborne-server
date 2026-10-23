@@ -80,6 +80,9 @@ bool Database::Open(const QString& path) {
     }
     Exec("PRAGMA journal_mode=WAL");
     Exec("PRAGMA foreign_keys=ON");
+    // Connections on other threads (the TCP sessions', the link's sign-in pool) write too: wait for
+    // one another's writes instead of failing at once.
+    Exec("PRAGMA busy_timeout=5000");
     return Migrate();
 }
 

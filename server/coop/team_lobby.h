@@ -43,6 +43,20 @@ public:
     // `make_id` names a new team or world (random on the server, counted in the tests).
     explicit TeamLobby(std::function<std::string()> make_id);
 
+    // Hosted (docs/HOSTED_SERVER.md): players who do not know each other. A world is its players'
+    // (TeamWorldInfo.members: those of the teams that played it), listed to them only, a
+    // player's last `worlds_per_player`, and forgotten only by them (for themselves; a world
+    // nobody keeps goes). A player's lobby lists its team, its invites and at most
+    // `lobby_players` others not in a team (the server's whole list for everyone was O(n^2)).
+    void SetHosted(size_t lobby_players, size_t worlds_per_player) {
+        hosted = true;
+        this->lobby_players = lobby_players;
+        this->worlds_per_player = worlds_per_player;
+    }
+    bool Hosted() const {
+        return hosted;
+    }
+
     // Kaniel 2026-10-16 (the team menu in game): a member out of a team, removed by its leader or
     // gone itself; the server takes it out of that team's world too.
     struct Departure {
@@ -119,6 +133,18 @@ private:
     static void GiveSigns(bbcoop::Team& team);
     // A started team nobody plays in any more is not started.
     void Settle();
+
+    // Who is in which team (an index for StateFor), made again after any change.
+    void Index() const;
+    void Changed() const {
+        indexed = false;
+    }
+
+    bool hosted = false;
+    size_t lobby_players = 0;
+    size_t worlds_per_player = 0;
+    mutable bool indexed = false;
+    mutable std::map<std::string, size_t> team_index; // member -> its team's place in `teams`
 
     std::function<std::string()> make_id;
     std::map<std::string, Player> players; // signed in

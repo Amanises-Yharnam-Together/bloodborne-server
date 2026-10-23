@@ -508,6 +508,9 @@ message TeamWorldInfo {
     int64 created_ms = 7;
     repeated string characters = 8;
     string played_by = 9;
+    // Hosted (docs/HOSTED_SERVER.md): the players (board names) whose world it is: those of the
+    // teams that played it. Only they see it in their lists; never sent to the games.
+    repeated string members = 10;
 }
 
 message Team {

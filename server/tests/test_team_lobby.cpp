@@ -667,6 +667,90 @@ int AWorldsLampsAreCounted() {
   return 0;
 }
 
+
+// Hosted (docs/HOSTED_SERVER.md): a world is its players'; a lobby lists few
+// others.
+static std::string PlayAWorld(TeamLobby &lobby, const std::string &leader,
+                              const std::string &guest) {
+  lobby.Request(leader, Request(Action::CREATE));
+  lobby.Request(leader, Request(Action::INVITE, guest));
+  lobby.Request(guest, Request(Action::ACCEPT, {}, lobby.TeamOf(leader)->id()));
+  lobby.Request(leader, Request(Action::READY, {}, {}, 0));
+  lobby.Request(guest, Request(Action::READY, {}, {}, 1));
+  lobby.Request(leader, Request(Action::START));
+  return lobby.TeamOf(leader)->world();
+}
+
+static int HostedWorldsAreTheirPlayersOnly() {
+  TeamLobby lobby = NewLobby();
+  lobby.SetHosted(2, 16);
+  for (const char *m : {"a", "b", "c", "d", "e"}) {
+    lobby.Arrive(m, m, false);
+  }
+  const std::string world = PlayAWorld(lobby, "a", "b");
+  CHECK(!world.empty());
+  CHECK(lobby.StateFor("a").worlds_size() == 1);
+  CHECK(lobby.StateFor("b").worlds_size() == 1);
+  CHECK(lobby.StateFor("c").worlds_size() == 0); // not c's
+  CHECK(lobby.StateFor("a").worlds(0).members_size() == 0); // never sent
+  // c can neither pick it nor forget it.
+  lobby.Request("c", Request(Action::CREATE));
+  bbcoop::TeamRequest pick = Request(Action::WORLD);
+  pick.set_world(world);
+  CHECK(!lobby.Request("c", pick).notice.empty());
+  lobby.Request("c", Request(Action::LEAVE));
+  bbcoop::TeamRequest forget = Request(Action::FORGET_WORLD);
+  forget.set_world(world);
+  CHECK(!lobby.Request("c", forget).notice.empty());
+  // Its players forget it each for themselves; the last one's goes.
+  lobby.Request("a", Request(Action::LEAVE));
+  lobby.Request("b", Request(Action::LEAVE));
+  const TeamLobby::Outcome first = lobby.Request("a", forget);
+  CHECK(first.notice.empty() && first.forgotten.empty());
+  CHECK(lobby.StateFor("a").worlds_size() == 0);
+  CHECK(lobby.StateFor("b").worlds_size() == 1);
+  const TeamLobby::Outcome last = lobby.Request("b", forget);
+  CHECK(last.forgotten == std::vector<std::string>{world});
+  CHECK(lobby.Worlds().empty());
+  return 0;
+}
+
+static int HostedServersKeepEveryPlayersWorlds() {
+  TeamLobby lobby = NewLobby();
+  lobby.SetHosted(32, 16);
+  for (int pair = 0; pair < 20; ++pair) {
+    const std::string a = "a" + std::to_string(pair);
+    const std::string b = "b" + std::to_string(pair);
+    lobby.Arrive(a, a, false);
+    lobby.Arrive(b, b, false);
+    PlayAWorld(lobby, a, b);
+  }
+  CHECK(lobby.Worlds().size() == 20); // no server-wide cap of MaxWorlds
+  return 0;
+}
+
+static int AHostedLobbyListsFewOthers() {
+  TeamLobby lobby = NewLobby();
+  lobby.SetHosted(3, 16);
+  for (int n = 0; n < 50; ++n) {
+    lobby.Arrive("p" + std::to_string(n), "P" + std::to_string(n), false);
+  }
+  CHECK(lobby.StateFor("p0").players_size() == 3);
+  // Its teammates and the players its team invited are always listed.
+  lobby.Request("p0", Request(Action::CREATE));
+  lobby.Request("p0", Request(Action::INVITE, "p40"));
+  const bbcoop::LobbyState state = lobby.StateFor("p0");
+  CHECK(std::ranges::any_of(state.players(), [](const auto &p) {
+    return p.member() == "p40";
+  }));
+  // And the leader who invited a player is listed to it.
+  const bbcoop::LobbyState invited = lobby.StateFor("p40");
+  CHECK(std::ranges::any_of(invited.players(), [](const auto &p) {
+    return p.member() == "p0";
+  }));
+  return 0;
+}
+
 int main() {
   int failed = 0;
   failed |= PlayersAreSeenByTheirCharactersName();
@@ -688,6 +772,9 @@ int main() {
   failed |= AWorldsLineSaysWhoPlayedItAndWhenItWasMade();
   failed |= AWorldPlayedNowSaysByWhichTeam();
   failed |= APickBeforeATeamGoesIntoTheTeam();
+  failed |= HostedWorldsAreTheirPlayersOnly();
+  failed |= HostedServersKeepEveryPlayersWorlds();
+  failed |= AHostedLobbyListsFewOthers();
   if (failed == 0) {
     std::cout << "team lobby: all checks passed\n";
   }

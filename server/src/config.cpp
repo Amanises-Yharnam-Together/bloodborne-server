@@ -62,6 +62,17 @@ void ConfigManager::Parse(const QString& path) {
     m_backend.lanternTtlMinutes = str("BackendLanternTtlMinutes", "10").toInt();
     m_backend.tombCap = str("BackendTombCap", "100").toInt();
     m_backend.summonPoll = str("BackendSummonPoll", "5").toInt();
+    m_hosted.enabled = boolean("Hosted", false);
+    m_hosted.build = str("HostedBuild", "").trimmed();
+    m_hosted.banList = str("HostedBanList", "banned.txt");
+    m_hosted.linksPerAddress = str("HostedLinksPerAddress", "8").toInt();
+    m_hosted.hellosPerSecond = str("HostedHellosPerSecond", "4").toDouble();
+    m_hosted.newAccountsPerHour = str("HostedNewAccountsPerHour", "5").toInt();
+    m_hosted.datagramsPerSecond = str("HostedDatagramsPerSecond", "1500").toDouble();
+    m_hosted.bytesPerSecond = str("HostedBytesPerSecond", "400000").toDouble();
+    m_hosted.lobbyPlayers = str("HostedLobbyPlayers", "32").toInt();
+    m_hosted.lobbyIntervalMs = str("HostedLobbyIntervalMs", "250").toInt();
+    m_hosted.worldsPerPlayer = str("HostedWorldsPerPlayer", "16").toInt();
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");
     m_bloodborneWorldPath = str("BloodborneWorldPath", "bloodborne_worlds");

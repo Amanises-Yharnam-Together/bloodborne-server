@@ -359,7 +359,11 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
     if (hello->version != LinkVersion) {
         refusal = "link version " + QByteArray::number(hello->version) + ", this server speaks " +
                   QByteArray::number(LinkVersion);
-    } else if (!hello->build.isEmpty()) {
+    } else if (!required_build.isEmpty() && !hello->build.isEmpty() &&
+               hello->build != required_build) {
+        refusal = "another build: everyone needs the same release (this game runs " + hello->build +
+                  ", the server needs " + required_build + ")";
+    } else if (!hello->build.isEmpty() && required_build.isEmpty()) {
         // Every other linked game's build (a game saying hello again is not one). Phase 11: a game
         // signs in before its co-op code says the build; none said holds nothing, either way.
         for (const Link& link : std::as_const(members)) {
@@ -370,8 +374,14 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
             }
         }
     }
-    if (refusal.isEmpty() && sign_in && !sign_in(hello->online_id, hello->secret)) {
-        refusal = "sign-in refused: another player has this id (" + hello->online_id + ")";
+    if (refusal.isEmpty() && sign_in) {
+        const std::optional<bool> signed_in = sign_in(hello->online_id, hello->secret);
+        if (!signed_in) {
+            return; // still checking: the next hello hears
+        }
+        if (!*signed_in) {
+            refusal = "sign-in refused: another player has this id (" + hello->online_id + ")";
+        }
     }
     const Endpoint virtual_endpoint = VirtualEndpointOf(hello->online_id);
     if (refusal.isEmpty()) {
@@ -418,7 +428,7 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
     link.last_heard_ms = now_ms;
     link.quiet = false;
     result.sends.append({from, Encode(Welcome{true, {}})});
-    result.linked.append({link.online_id, link.virtual_endpoint});
+    result.linked.append({link.online_id, link.virtual_endpoint, link.endpoint});
     result.log.append(
         QStringLiteral("server link: %1 %2, build %3, %4 linked")
             .arg(again ? "hello again from" : "linked", Name(link), QString::fromUtf8(link.build))

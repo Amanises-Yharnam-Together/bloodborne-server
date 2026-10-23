@@ -7,8 +7,11 @@
 #include <QHostAddress>
 #include <QObject>
 #include <QTcpSocket>
+#include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QUdpSocket>
+#include "admission.h"
 #include "bloodborne_world.h"
 #include "client_session.h"
 #include "coop/rpc_tunnel.h"
@@ -24,6 +27,7 @@ class LinkServer : public QObject {
 public:
     explicit LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_port,
                         QObject* parent = nullptr);
+    ~LinkServer() override;
     bool Start(const QHostAddress& addr, uint16_t port);
 
 private slots:
@@ -36,7 +40,15 @@ private:
     void HandleLink(const QByteArray& datagram, const QHostAddress& sender, uint16_t senderPort);
     void Apply(const ServerLink::Hub::Result& result);
     void Apply(const BloodborneWorld::Service::Result& result);
-    bool SignIn(const QByteArray& online_id, const QByteArray& secret);
+    std::optional<bool> SignIn(const QByteArray& online_id, const QByteArray& secret);
+    // Hosted: a password checked on the sign-in thread (its account made if it may be).
+    // `counted`: it counted as an account made when it was queued (Admission::Guard::Made).
+    void SignedIn(const QByteArray& online_id, const QByteArray& hash, bool accepted, bool made,
+                  quint32 address, bool counted);
+    void LoadBanList();
+    // Hosted (docs/HOSTED_SERVER.md): whether a datagram from `sender` goes on to the hub.
+    bool Admit(const QByteArray& datagram, ServerLink::Kind kind, quint32 address,
+               const ServerLink::Endpoint& from);
 
     // A game's end of its Rpc tunnel here: the connection to shadNet's TCP port it stands for.
     struct RpcEnd {
@@ -64,5 +76,21 @@ private:
     quint16 m_tcpPort;
     quint32 m_rpcInstance;
     QHash<QByteArray, QByteArray> m_signedIn; // player id -> its secret's hash, once signed in
+    // Hosted: who may come in (admission.h), the sign-in thread and its checks under way, the
+    // passwords refused lately (not hashed again for a while), the links of each address.
+    HostedConfig m_hosted;
+    Admission::Guard m_guard;
+    QThreadPool m_signInPool;
+    QSet<QByteArray> m_signInPending;
+    struct Refused {
+        QByteArray hash;
+        qint64 until_ms = 0;
+    };
+    QHash<QByteArray, Refused> m_signInRefused;
+    quint32 m_helloAddress = 0;            // the address of the hello the hub is reading
+    QHash<quint64, quint32> m_linkAddress; // link (Endpoint::Key) -> its address
+    QHash<quint32, int> m_addressLinks;    // address -> its links
+    QTimer* m_banTimer = nullptr;
+    QString m_dbPath;
     std::map<QByteArray, std::unique_ptr<RpcEnd>> m_rpc; // by player id
 };

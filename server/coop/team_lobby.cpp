@@ -5,11 +5,18 @@
 
 #include <algorithm>
 #include <array>
+#include <set>
 #include <vector>
 
 namespace BloodborneCoop {
 
 namespace {
+
+// Whether a repeated string field holds `value`.
+template <typename Field>
+bool Lists(const Field& field, const std::string& value) {
+    return std::ranges::find(field, value) != field.end();
+}
 
 bool AnyPlays(const bbcoop::Team& team, const std::function<bool(const std::string&)>& plays) {
     return std::any_of(team.members().begin(), team.members().end(),
@@ -56,7 +63,21 @@ bbcoop::Team* TeamLobby::FindTeam(const std::string& id) {
     return nullptr;
 }
 
+void TeamLobby::Index() const {
+    team_index.clear();
+    for (size_t at = 0; at < teams.size(); ++at) {
+        for (const bbcoop::TeamMember& m : teams[at].members()) {
+            team_index.emplace(m.member(), at);
+        }
+    }
+    indexed = true;
+}
+
 const bbcoop::Team* TeamLobby::TeamOf(const std::string& member) const {
+    if (indexed) {
+        const auto found = team_index.find(member);
+        return found == team_index.end() ? nullptr : &teams[found->second];
+    }
     for (const bbcoop::Team& team : teams) {
         for (const bbcoop::TeamMember& m : team.members()) {
             if (m.member() == member) {
@@ -107,6 +128,9 @@ void TeamLobby::PickWorld(bbcoop::Team& team, const std::string& world) {
 
 void TeamLobby::KeepLastWorlds(std::vector<std::string>& forgotten) {
     std::ranges::stable_sort(worlds, LaterFirst);
+    if (hosted) {
+        return; // each player's list is its own worlds (StateFor), none crowds out another's
+    }
     const auto picked = [this](const std::string& id) {
         return std::ranges::any_of(teams, [&](const bbcoop::Team& t) { return t.world() == id; });
     };
@@ -206,6 +230,7 @@ void TeamLobby::Settle() {
 
 TeamLobby::Outcome TeamLobby::Arrive(const std::string& member, const std::string& name,
                                      bool playing) {
+    Changed();
     const bool arrived = !players.contains(member);
     gone_since.erase(member);
     Player& player = players[member];
@@ -254,6 +279,7 @@ TeamLobby::Outcome TeamLobby::Arrive(const std::string& member, const std::strin
 }
 
 TeamLobby::Outcome TeamLobby::Leave(const std::string& member) {
+    Changed();
     if (players.erase(member) == 0) {
         return {};
     }
@@ -279,6 +305,7 @@ TeamLobby::Outcome TeamLobby::Leave(const std::string& member) {
 }
 
 TeamLobby::Outcome TeamLobby::Expire(s64 now_ms) {
+    Changed();
     std::vector<std::string> expired;
     for (const bbcoop::Team& team : teams) {
         for (const bbcoop::TeamMember& m : team.members()) {
@@ -306,6 +333,7 @@ TeamLobby::Outcome TeamLobby::Expire(s64 now_ms) {
 
 TeamLobby::Outcome TeamLobby::Request(const std::string& member,
                                       const bbcoop::TeamRequest& request) {
+    Changed();
     const auto refuse = [](std::string why) { return Outcome{.notice = std::move(why)}; };
     if (!players.contains(member)) {
         return refuse("not signed in to the lobby");
@@ -446,6 +474,10 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
         if (!request.world().empty() && !FindWorld(request.world())) {
             return refuse("the server has no such world");
         }
+        if (hosted && !request.world().empty() &&
+            !Lists(FindWorld(request.world())->members(), member)) {
+            return refuse("the server has no such world");
+        }
         if (!request.world().empty() && PlayedBy(request.world(), mine)) {
             return refuse("another team plays that world now");
         }
@@ -465,6 +497,27 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
         }
         if (PlayedBy(request.world(), nullptr)) {
             return refuse("a team plays that world now");
+        }
+        if (hosted) {
+            // Only its players forget it, each for itself; the last one's goes.
+            auto& keepers = *FindWorld(request.world())->mutable_members();
+            const auto mine = std::ranges::find(keepers, member);
+            if (mine == keepers.end()) {
+                return refuse("the server has no such world");
+            }
+            keepers.erase(mine);
+            if (!keepers.empty()) {
+                for (bbcoop::Team& team : teams) {
+                    if (team.world() == request.world() && team.leader() == member) {
+                        PickWorld(team, {});
+                    }
+                }
+                if (const auto player = players.find(member);
+                    player != players.end() && player->second.world == request.world()) {
+                    player->second.world.clear();
+                }
+                return {.changed = true, .worlds_changed = true};
+            }
         }
         std::erase_if(worlds, [&](const auto& w) { return w.id() == request.world(); });
         for (bbcoop::Team& team : teams) {
@@ -509,6 +562,9 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
             world.set_played_ms(latest + 1);
             for (const bbcoop::TeamMember& m : mine->members()) {
                 AddCharacter(world, m.character()); // each hunter's, as it readied
+                if (hosted && !Lists(world.members(), m.member())) {
+                    world.add_members(m.member()); // hosted: it is theirs now
+                }
             }
             KeepLastWorlds(outcome.forgotten);
         }
@@ -526,10 +582,14 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
 }
 
 bbcoop::LobbyState TeamLobby::StateFor(const std::string& member) const {
+    if (!indexed) {
+        Index();
+    }
     bbcoop::LobbyState state;
-    if (const bbcoop::Team* team = TeamOf(member)) {
+    const bbcoop::Team* mine = TeamOf(member);
+    if (mine) {
         bbcoop::Team& out = *state.mutable_team();
-        out = *team;
+        out = *mine;
         for (bbcoop::TeamMember& m : *out.mutable_members()) {
             m.set_state(StateOf(m.member()));
         }
@@ -539,10 +599,7 @@ bbcoop::LobbyState TeamLobby::StateFor(const std::string& member) const {
             *state.add_invites() = invite;
         }
     }
-    for (const auto& [other, player] : players) {
-        if (other == member) {
-            continue;
-        }
+    const auto add_player = [&](const std::string& other, const Player& player) {
         bbcoop::LobbyPlayer& out = *state.add_players();
         out.set_member(other);
         out.set_name(player.name);
@@ -550,10 +607,62 @@ bbcoop::LobbyState TeamLobby::StateFor(const std::string& member) const {
         if (const bbcoop::Team* team = TeamOf(other)) {
             out.set_team(team->id());
         }
+    };
+    if (!hosted) {
+        for (const auto& [other, player] : players) {
+            if (other != member) {
+                add_player(other, player);
+            }
+        }
+    } else {
+        // Its teammates, those who invited it and those its team invited, then players in no team
+        // (to invite) up to lobby_players.
+        std::set<std::string> listed{member};
+        const auto list = [&](const std::string& other) {
+            if (const auto player = players.find(other);
+                player != players.end() && listed.insert(other).second) {
+                add_player(other, player->second);
+            }
+        };
+        if (mine) {
+            for (const bbcoop::TeamMember& m : mine->members()) {
+                list(m.member());
+            }
+        }
+        for (const bbcoop::TeamInvite& invite : state.invites()) {
+            list(invite.from());
+        }
+        if (mine) {
+            for (const auto& [invited, list_of] : invites) {
+                for (const bbcoop::TeamInvite& invite : list_of) {
+                    if (invite.team() == mine->id()) {
+                        list(invited);
+                    }
+                }
+            }
+        }
+        size_t others = 0;
+        for (const auto& [other, player] : players) {
+            if (others >= lobby_players) {
+                break;
+            }
+            if (!listed.contains(other) && !TeamOf(other)) {
+                list(other);
+                ++others;
+            }
+        }
     }
+    size_t worlds_listed = 0;
     for (const bbcoop::TeamWorldInfo& world : worlds) {
+        if (hosted) {
+            if (worlds_listed >= worlds_per_player || !Lists(world.members(), member)) {
+                continue;
+            }
+            ++worlds_listed;
+        }
         bbcoop::TeamWorldInfo& out = *state.add_worlds();
         out = world;
+        out.clear_members();
         if (const bbcoop::Team* team = PlayedBy(world.id(), nullptr)) {
             out.set_played_by(team->id());
         }

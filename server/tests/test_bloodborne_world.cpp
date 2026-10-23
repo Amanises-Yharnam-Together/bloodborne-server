@@ -246,6 +246,7 @@ struct Game {
   u32 run = 0x1001;
   u32 number = 0;
   bool online = true; // false: its datagrams are lost
+  QByteArray online_id; // its link's player id (empty: its name)
 };
 
 // Datagrams both ways until nothing moves (the service's sends go to the game
@@ -261,7 +262,9 @@ void Pump(Service &service, const std::vector<Game *> &games, qint64 now_ms) {
         }
         moved = true;
         const auto result = service.Receive(
-            game->endpoint, QByteArray::fromStdString(game->name),
+            game->endpoint,
+            game->online_id.isEmpty() ? QByteArray::fromStdString(game->name)
+                                      : game->online_id,
             QByteArray(reinterpret_cast<const char *>(body.data()),
                        static_cast<qsizetype>(body.size())),
             now_ms);
@@ -2164,9 +2167,77 @@ int ARemovedMemberIsOutOfTheTeamsWorld() {
   return 0;
 }
 
+
+// Hosted (docs/HOSTED_SERVER.md): a player's names are its own id's, and a
+// party hello is only for the world its team plays.
+int HostedPartiesAreTheirTeamsOnly() {
+  Service service{{}};
+  BloodborneWorld::HostedRules rules;
+  rules.enabled = true;
+  service.SetHosted(rules);
+  const auto hex = [](const char *id) {
+    return QByteArray(id).toHex().toStdString();
+  };
+  Game leader{1000, hex("Kaniel"), 11};
+  leader.online_id = "Kaniel";
+  leader.claims_host = true;
+  Game guest{1001, hex("Ada"), 12};
+  guest.online_id = "Ada";
+  Game thief{1002, hex("Mallory"), 13};
+  thief.online_id = "Mallory";
+  Game fake{1003, hex("Kaniel"), 14}; // Mallory's second game, in Kaniel's name
+  fake.online_id = "Mallory";
+  const std::vector<Game *> games{&leader, &guest, &thief, &fake};
+  qint64 now = 1'000'000;
+  const auto step = [&] {
+    now += 300; // past the lobby's interval
+    Pump(service, games, now);
+  };
+  for (Game *game : games) {
+    game->LobbyHello(false, now);
+  }
+  step();
+  CHECK(!fake.lobby.notice().empty()); // not its name
+  CHECK(thief.lobby.notice().empty());
+  leader.Team(bbcoop::TeamRequest::CREATE, now);
+  step();
+  leader.Team(bbcoop::TeamRequest::INVITE, now, guest.name);
+  step();
+  CHECK(guest.lobby.invites_size() == 1);
+  guest.Team(bbcoop::TeamRequest::ACCEPT, now, {},
+             guest.lobby.invites(0).team());
+  step();
+  leader.Team(bbcoop::TeamRequest::READY, now, {}, {}, 0, "Hunter");
+  guest.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1, "Doll");
+  step();
+  leader.Team(bbcoop::TeamRequest::START, now);
+  step();
+  CHECK(!leader.starts.empty());
+  const QByteArray party =
+      QByteArray::fromStdString(leader.starts.back().party());
+  CHECK(party.startsWith("world:"));
+  leader.Hello(now, party);
+  guest.Hello(now, party);
+  thief.Hello(now, party); // not in the team that plays it
+  step();
+  CHECK(leader.welcome && leader.welcome->accepted());
+  CHECK(guest.welcome && guest.welcome->accepted());
+  CHECK(thief.welcome && !thief.welcome->accepted());
+  // Nor a party of its own making.
+  thief.welcome.reset();
+  thief.Hello(now, "mallory:anything");
+  step();
+  CHECK(thief.welcome && !thief.welcome->accepted());
+  // The thief's world list does not show the team's world.
+  CHECK(thief.lobby.worlds_size() == 0);
+  CHECK(leader.lobby.worlds_size() == 1);
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
+      {"HostedPartiesAreTheirTeamsOnly", HostedPartiesAreTheirTeamsOnly},
       {"ATeamEndsWhenEveryMembersGameIsGone",
        ATeamEndsWhenEveryMembersGameIsGone},
       {"TheWorldsOfTheOldTeamsAreOnTheList",

@@ -23,6 +23,22 @@ struct BackendConfig {
     int summonPoll = 5;
 };
 
+// A hosted server (docs/HOSTED_SERVER.md): shadNet on the internet for players who do not know each
+// other. Off (the default) it is a host's server for its friends, as before.
+struct HostedConfig {
+    bool enabled = false;
+    QString build; // the build every game must say (empty: the first linked game's, as before)
+    QString banList = QStringLiteral("banned.txt");
+    int linksPerAddress = 8;
+    double hellosPerSecond = 4.0;
+    int newAccountsPerHour = 5;
+    double datagramsPerSecond = 1500.0;
+    double bytesPerSecond = 400000.0;
+    int lobbyPlayers = 32;     // players listed to each player besides its team and invites
+    int lobbyIntervalMs = 250; // lobby states go out at most this often
+    int worldsPerPlayer = 16;  // worlds listed to a player (the ones it played in)
+};
+
 class ConfigManager {
 public:
     bool Load(const QString& path = "shadnet.cfg");
@@ -72,6 +88,11 @@ public:
     bool IsBloodborneSeamlessCoopEnabled() const {
         QReadLocker lk(&m_lock);
         return m_bloodborneSeamlessCoop;
+    }
+
+    HostedConfig GetHosted() const {
+        QReadLocker lk(&m_lock);
+        return m_hosted;
     }
 
     BackendConfig GetBackend() const {
@@ -146,6 +167,7 @@ private:
     bool m_matching2Enabled = true;
     bool m_bloodborneSeamlessCoop = false;
     BackendConfig m_backend;
+    HostedConfig m_hosted;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";
     QString m_bloodborneWorldPath = "bloodborne_worlds";

@@ -81,6 +81,7 @@ bool ShadNetServer::Start(ConfigManager* config) {
         qInfo() << "Matching2 disabled; the games' link (UDP) not started";
     }
 
+#ifndef SHADNET_NO_HTTP
     // Read-only stats HTTP server (live usage + public leaderboards), own port.
     if (config->IsStatsEnabled()) {
         m_statsServer = std::make_unique<StatsServer>(this);
@@ -89,6 +90,7 @@ bool ShadNetServer::Start(ConfigManager* config) {
             m_statsServer.reset();
         }
     }
+#endif
 
     return true;
 }
