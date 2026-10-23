@@ -18,7 +18,7 @@ namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
 // bbport: past both histories (port 11/7/6, upstream 0.20.1 port 10/8/6): caches of either are
 // rebuilt.
-static constexpr u32 ShaderBinaryVersion = 14u;
+static constexpr u32 ShaderBinaryVersion = 15u;
 static constexpr u32 ShaderMetaVersion = 8u;
 static constexpr u32 PipelineKeyVersion = 7u;
 } // namespace Serialization

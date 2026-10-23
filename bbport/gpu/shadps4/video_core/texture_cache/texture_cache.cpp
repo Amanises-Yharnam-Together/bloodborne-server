@@ -435,7 +435,6 @@ void TextureCache::MarkAsMaybeGpuDirty(VAddr addr, size_t size) {
             // An unavailable baseline keeps the conservative GC behavior.
             image.gpu_hash = BbMemory::HashBacking(image.info.guest_address, image.info.guest_size);
         }
-        image.flags |= ImageFlagBits::MaybeGpuDirty;
     });
 }
 
@@ -779,9 +778,6 @@ ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     const bool src_has_gpu_data = src_image.HasGpuValidData();
 
     RefreshImage(new_image);
-    if (src_has_gpu_data) {
-        runtime.CopyImage(&src_image, &new_image);
-    }
 
     if (src_image.binding.is_bound || src_image.binding.is_target) {
         src_image.binding.needs_rebind = 1u;
@@ -790,7 +786,8 @@ ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     TrackImage(new_image_id);
     new_image.flags &= ~ImageFlagBits::Dirty;
     if (src_has_gpu_data) {
-        new_image.flags |= ImageFlagBits::GpuModified;
+        // As upstream (#5484): the copy carries GpuModified over.
+        runtime.CopyImage(&src_image, &new_image);
     }
     FreeImage(image_id);
 
@@ -1381,6 +1378,9 @@ void TextureCache::TrackImage(ImageId image_id) {
     }
     image.track_addr = image_begin;
     image.track_addr_end = image_end;
+    MarkDirtyIfEdgesModified(image);
+    image.head_hash = 0;
+    image.tail_hash = 0;
 }
 
 void TextureCache::UntrackImage(ImageId image_id) {
@@ -1405,6 +1405,7 @@ void TextureCache::UntrackImageHead(ImageId image_id) {
     }
     const auto addr = page_manager.GetNextPageAddr(image_begin);
     const auto size = addr - image_begin;
+    image.head_hash = BbMemory::HashBacking(image_begin, size);
     page_manager.UpdatePageWatchers(image_begin, size, PageOp::Untrack);
 
     image.track_addr = addr;
@@ -1425,6 +1426,7 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
     ASSERT(image.track_addr_end != 0);
     const auto addr = page_manager.GetPageAddr(image_end);
     const auto size = image_end - addr;
+    image.tail_hash = BbMemory::HashBacking(addr, size);
     image.track_addr_end = addr;
     if (image.track_addr == image.track_addr_end) {
         // This image spans only 2 pages and both are modified,
@@ -1433,6 +1435,23 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
         MarkAsMaybeDirty(image_id, image);
     }
     page_manager.UpdatePageWatchers(addr, size, PageOp::Untrack);
+}
+
+void TextureCache::MarkDirtyIfEdgesModified(Image& image) {
+    const auto image_begin = image.info.guest_address;
+    const auto image_end = image.info.guest_address + image.info.guest_size;
+    if (image.head_hash != 0) {
+        const auto head_end = page_manager.GetNextPageAddr(image_begin);
+        if (BbMemory::HashBacking(image_begin, head_end - image_begin) != image.head_hash) {
+            image.flags |= ImageFlagBits::CpuDirty;
+        }
+    }
+    if (image.tail_hash != 0) {
+        const auto tail_begin = page_manager.GetPageAddr(image_end);
+        if (BbMemory::HashBacking(tail_begin, image_end - tail_begin) != image.tail_hash) {
+            image.flags |= ImageFlagBits::CpuDirty;
+        }
+    }
 }
 
 void TextureCache::GarbageCollectImages() {
@@ -1546,6 +1565,9 @@ void TextureCache::GarbageCollectImages() {
             return true;
         }
         const auto image_id = slot_images.GetSlotId(image);
+        // As upstream (#5450): an edge write means the guest reused the memory, so the image is
+        // freed without a write-back.
+        MarkDirtyIfEdgesModified(image);
         constexpr auto CpuWritten = ImageFlagBits::MaybeCpuDirty | ImageFlagBits::CpuDirty;
         // `tiled` is "cannot be written back" (gc_policy.h): since shadPS4 0.20.1 tiled images
         // are written back too (CanBeDownloaded); multisampled ones, ones with stencil or in a
@@ -1579,7 +1601,7 @@ void TextureCache::GarbageCollectImages() {
         --num_deletions;
         if (action == GcAction::WriteBackAndEvict) {
             bool write_back = true;
-            if (True(image.flags & ImageFlagBits::MaybeGpuDirty)) {
+            if (image.gpu_hash != 0) {
                 // As upstream: a buffer bound for writing overlapped the image since its last
                 // use. Its contents are read back first; the image holds the current data only
                 // while guest memory still matches what it held then.
@@ -1700,7 +1722,6 @@ void TextureCache::RunGarbageCollector() {
 
 void TextureCache::TouchImage(Image& image) {
     // Image is still valid (upstream: a use clears the maybe-GPU-dirty state)
-    image.flags &= ~ImageFlagBits::MaybeGpuDirty;
     image.gpu_hash = 0;
     // bbport: skips the LRU list (a cache miss) when already touched in this GC period.
     if (image.lru_touched_tick == gc_tick) {

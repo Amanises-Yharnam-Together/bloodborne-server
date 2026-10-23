@@ -854,7 +854,11 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                 download_end = Common::AlignUp(device_addr + size, BYTES_PER_PAGE);
             }
         }
-        DownloadMemory(arena, download_start, download_end - download_start, is_write, async);
+        DownloadMemory(arena, download_start, download_end - download_start, async);
+        // As upstream (#5473): only the faulting range is CPU-modified, not the whole window.
+        if (is_write) {
+            memory_tracker->MarkRegionAsCpuModified(device_addr, size);
+        }
     };
     if (assume_locks) {
         flush_request();
@@ -929,7 +933,7 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
     layer_read_trapped.Subtract(from, block_size);
 }
 
-void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size, bool is_write,
+void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size,
                                  [[maybe_unused]] bool async) {
     boost::container::small_vector<vk::BufferCopy, 1> copies;
     u64 total_size_bytes = 0;
@@ -1020,9 +1024,6 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     }
     // The readback queue and the staging copy above are both waited for: `async` is not used.
     memory_tracker->UnmarkRegionAsGpuModified(device_addr, size, false);
-    if (is_write) {
-        memory_tracker->MarkRegionAsCpuModified(device_addr, size);
-    }
     if (auto* log = Readbacks()) {
         const auto now = std::chrono::steady_clock::now();
         std::scoped_lock lk{log->mutex};
