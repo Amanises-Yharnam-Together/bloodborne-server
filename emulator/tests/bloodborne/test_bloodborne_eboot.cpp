@@ -192,6 +192,31 @@ TEST_F(BloodborneEboot, TheNamedGameFunctionsStartThere) {
     }
 }
 
+// Talk command 66 (an NPC's gesture, rig talk-gesture and the gesture flags' fix read the list the
+// same way): the dispatcher's case 66 (table 0x020442E0) goes to 0x02041691; its body takes the
+// local PlayerGameData ([GameDataMan] +8) +0x5B8, looks at its 30 slots from +0x10 and sets the
+// found one's bit 0. The gesture table (0x014EC980) has rows 0 to 30.
+TEST_F(BloodborneEboot, TalkCommand66SetsTheGestureSlotsBit) {
+    constexpr u64 Table = 0x020442E0;
+    s32 case66 = 0;
+    std::memcpy(&case66, Bytes(Table + 66 * 4, 4).data(), 4);
+    EXPECT_EQ(Table + case66, 0x02041691u);
+    EXPECT_EQ(Bytes(0x02040004, 3), (std::vector<u8>{0x83, 0xF8, 0x57})) << "88 commands";
+    s32 manager = 0;
+    std::memcpy(&manager, Bytes(0x02042AD1 + 3, 4).data(), 4);
+    EXPECT_EQ(Bytes(0x02042AD1, 3), (std::vector<u8>{0x48, 0x8D, 0x05})); // lea rax, [rip + x]
+    EXPECT_EQ(0x02042AD8 + manager, 0x0553B130) << "GameDataMan";
+    EXPECT_EQ(Bytes(0x02042ADB, 4), (std::vector<u8>{0x48, 0x8B, 0x40, 0x08})); // [rax + 8]
+    EXPECT_EQ(Bytes(0x02042AE8, 7),
+              (std::vector<u8>{0x4C, 0x8B, 0xA0, 0xB8, 0x05, 0x00, 0x00})); // [rax + 0x5B8]
+    EXPECT_EQ(Bytes(0x02042B01, 5),
+              (std::vector<u8>{0x41, 0x8B, 0x44, 0x9C, 0x10})); // [r12 + rbx * 4 + 0x10]
+    EXPECT_EQ(Bytes(0x02042B5C, 3), (std::vector<u8>{0x83, 0xFB, 0x1E})) << "30 slots";
+    EXPECT_EQ(Bytes(0x02043E9E, 6), (std::vector<u8>{0x41, 0x80, 0x4C, 0x9C, 0x10, 0x01}))
+        << "or byte [slot], 1";
+    EXPECT_EQ(Bytes(0x014ECE3B, 3), (std::vector<u8>{0x83, 0xFB, 0x1E})) << "rows 0 to 30";
+}
+
 // The downed banner is the game's SetTextEffect (the event binding that queues the HUD's big
 // banners, ids 1 to 17): `lea eax, [rsi - 1]; cmp eax, 0x10`, and the Lua table registers it.
 TEST_F(BloodborneEboot, TheDownedBannerIsQueuedBySetTextEffect) {

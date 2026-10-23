@@ -561,6 +561,66 @@ TEST(BloodborneFlagRules, HeldItemFlagFollowsThePlayersItems) {
     EXPECT_EQ(HeldItemFlagFix(false, false, true), std::nullopt);
 }
 
+// An outside player on v1.1.4 (2026-10-23): a party guest never learned Eileen's and Alfred's
+// gestures, the host did. Each talk's "gesture get" step (talk scripts 01.09) skips its gesture
+// while its flag is on and sets it with the gesture; as world flags, the guest's copy was the
+// host's. Each of them is the player's own, kept for its own world.
+TEST(BloodborneFlagRules, GestureFlagsAreEachPlayersOwn) {
+    // Every talk's gesture step: (gesture, its flag).
+    const std::vector<std::pair<s32, s32>> talks{
+        {4, 6744},  {5, 6745},  {6, 6746},  {7, 6747},  {7, 70000007}, {9, 6749},
+        {10, 6750}, {11, 6751}, {13, 6753}, {14, 6754}, {15, 6755},    {16, 6756},
+        {17, 6757}, {18, 6758}, {19, 6759}, {20, 6760}, {22, 6770},
+    };
+    std::vector<std::pair<s32, s32>> table;
+    for (const GestureFlag& gesture : GestureFlags) {
+        table.emplace_back(gesture.gesture, gesture.flag);
+    }
+    EXPECT_EQ(table, talks);
+    for (const GestureFlag& gesture : GestureFlags) {
+        EXPECT_EQ(RuleFor(gesture.flag).owner, FlagOwner::PerPlayer) << gesture.flag;
+        EXPECT_TRUE(KeepsLocalFlag(true, gesture.flag)) << gesture.flag;
+        EXPECT_TRUE(CarriesToGuestWorld(gesture.flag)) << gesture.flag;
+        EXPECT_FALSE(TakesHostMapFlag(gesture.flag)) << gesture.flag;
+        EXPECT_FALSE(SharedWithParty(gesture.flag)) << gesture.flag;
+    }
+    // The flags around them stay the host's.
+    for (const s32 flag : {6743, 6748, 6752, 6761, 6769, 6771, 70000006, 70000008}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Host) << flag;
+    }
+}
+
+// A gesture's flag says this player learned it: on without the gesture (a save that took the
+// host's value from a team world), it goes off, so the NPC's talk gives the gesture again. A
+// gesture learned with its flag off stays so: two talks give Church Bow (Female), each by its own
+// flag, and the other one's step must still run.
+TEST(BloodborneFlagRules, GestureFlagGoesOffWithoutTheGesture) {
+    EXPECT_EQ(GestureFlagFix(true, true, false), std::optional<bool>{false});
+    EXPECT_EQ(GestureFlagFix(true, false, true), std::nullopt);
+    EXPECT_EQ(GestureFlagFix(true, true, true), std::nullopt);
+    EXPECT_EQ(GestureFlagFix(true, false, false), std::nullopt);
+    EXPECT_EQ(GestureFlagFix(false, true, false), std::nullopt);
+}
+
+// The gesture list's slots (PlayerGameData +0x5B8, 30 at +0x10), as talk command 66 (0x02042AD1)
+// reads them: bit 0 learned, the bits above it a row of the gesture table (0x014EC980: row 0 is
+// none, row k gesture k - 1, its goods 800 + k - 1).
+TEST(BloodborneFlagRules, GestureSlotsAsTheTalkReadsThem) {
+    EXPECT_EQ(DecodeGestureSlot(0x14), (GestureSlot{9, false})) << "Pray, row 10";
+    EXPECT_EQ(DecodeGestureSlot(0x15), (GestureSlot{9, true}));
+    EXPECT_EQ(DecodeGestureSlot(0x02), (GestureSlot{0, false}));
+    EXPECT_EQ(DecodeGestureSlot(0x2F), (GestureSlot{22, true})) << "League Oath, row 23";
+    EXPECT_EQ(DecodeGestureSlot(0x3D), (GestureSlot{29, true})) << "the last row, 30";
+    EXPECT_EQ(DecodeGestureSlot(0x00010015), (GestureSlot{9, true})) << "the high half aside";
+    EXPECT_EQ(DecodeGestureSlot(0x00), std::nullopt) << "row 0";
+    EXPECT_EQ(DecodeGestureSlot(0x01), std::nullopt);
+    EXPECT_EQ(DecodeGestureSlot(0x3E), std::nullopt) << "past the table";
+    EXPECT_EQ(DecodeGestureSlot(0x8000), std::nullopt) << "a negative row";
+    EXPECT_EQ(DecodeGestureSlot(0xFFFFFFFF), std::nullopt);
+    EXPECT_EQ(DecodeGestureSlot(0xFFFF0014), std::nullopt);
+    EXPECT_EQ(DecodeGestureSlot(0x0000FFFE), std::nullopt);
+}
+
 // Team altars (Kaniel 2026-10-17): a ritual at any member's altar puts its dungeon on every
 // member's altar. Ritual altar k keeps its dungeon in event flags 94k00000-94k05999 (8-bit values
 // packed into the flags, and switches such as "a chalice on it", 94k05001): those are the party's,

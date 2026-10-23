@@ -842,6 +842,19 @@ bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 
 // 2026-10-18: a save that took the host's "holds the Sword Hunter Badge" from a team world never
 // got its own badge from the Cleric Beast.
 std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool holds);
+// A gesture's flag (GestureFlags) in a party goes off while this player has not learned the
+// gesture (a save that took the host's value from a team world never got it from the NPC's talk);
+// nothing else (a learned gesture's flag stays off: another talk may give it by its own flag).
+std::optional<bool> GestureFlagFix(bool party_configured, bool flag_on, bool learned);
+// A slot of the player's gesture list (PlayerGameData +0x5B8, 30 u32 at +0x10), as talk command
+// 66 reads it: bit 0 learned, bits 1-15 the gesture's row in the game's table (0x014EC980,
+// gesture + 1); none for an empty slot.
+struct GestureSlot {
+    s32 gesture;
+    bool learned;
+    bool operator==(const GestureSlot&) const = default;
+};
+std::optional<GestureSlot> DecodeGestureSlot(u32 entry);
 // Whether a weapon of OwnedWeaponFlags is in `held` (the inventory's weapon ids): any upgrade
 // level, its base id + 100 * level up to +10, as the common events check it.
 bool HoldsWeapon(u32 weapon, std::span<const u32> held);

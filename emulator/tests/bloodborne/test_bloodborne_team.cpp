@@ -371,6 +371,19 @@ TEST(TeamWorld, AGuestFollowsTheStoryStepsTheHostChanged) {
     EXPECT_TRUE(TeamStoryToFollow(before, other).empty());
 }
 
+// The 2026-10-23 gestures case (rig gesture-own): the host learned Alfred's Pray (flag 6749), and
+// a guest following the host's story steps took 6749, so its own talk skipped the gesture. A
+// gesture's flag is each player's own; a flag next to them without a row stays a story step.
+TEST(TeamWorld, AGuestKeepsItsOwnGestureFlags) {
+    WorldFlags before;
+    before.blocks = {1, 6, 70000};
+    before.on = {1100};
+    WorldFlags after = before;
+    after.on = {1100, 6744, 6748, 6749, 6770, 70000007};
+    EXPECT_EQ(TeamStoryToFollow(before, after), (std::vector<std::pair<s32, bool>>{{6748, true}}));
+    EXPECT_EQ(TeamStoryToFollow(after, before), (std::vector<std::pair<s32, bool>>{{6748, false}}));
+}
+
 // Kaniel's playtest 2026-10-22: a guest alone on a map saw NPCs the team's world has gone past (or
 // not reached). Each trip's load put its own game's story steps of the session over the team's
 // world while the map placed its characters; the arrival set the team's back only after. A kept

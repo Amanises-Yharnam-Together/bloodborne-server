@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "coop/trade.h"
+#include "core/bloodborne_party.h"
 
 namespace Core::Bloodborne::Coop {
 
@@ -41,6 +42,11 @@ u64 KeyItemList();
 std::vector<HeldGoods> HeldKeyGoods();
 // The weapon ids (with their upgrade level) in the player's inventory, not the storage.
 std::vector<u32> HeldWeaponIds();
+// The player's gestures (PlayerGameData +0x5B8, see DecodeGestureSlot), learned or not; none when
+// there is no data. LearnGesture does what talk command 66 does: the gesture's slot learned
+// (false when the list has no slot for it).
+std::vector<GestureSlot> PlayerGestures();
+bool LearnGesture(s32 gesture);
 bool TakeTradeItems(std::span<TradeItem> items, u32 handle = 0);
 // Whether a give shows the game's item-received popup (Silent: see SilentItemGets).
 enum class ItemPopup { Shown, Silent };
