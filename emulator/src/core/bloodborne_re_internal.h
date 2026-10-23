@@ -441,6 +441,10 @@ void ForEachWorldCharacter(u64 world, Visit&& visit) {
     }
 }
 bool IsCharacterDisabled(u64 character);
+// A character's fade (float at +0x20C, 1.0 while shown): a fall into the void fades it out to 0.0,
+// which only a map load puts back (rig 2026-10-22). 1.0 if it is no character.
+constexpr u64 CharacterFadeOffset = 0x20C;
+float CharacterFade(u64 character);
 // The character's enable switch as event command 2004:5 sets it; false if it is no character.
 bool SetCharacterDisabled(u64 character, bool disabled);
 // A character's hits switch: bit 1 (2) of its model's flags ([+0x58]+0x114), set = no hits.
