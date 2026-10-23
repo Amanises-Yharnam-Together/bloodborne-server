@@ -109,6 +109,12 @@ the players' processes take cores from the server; teams of 3):
 | 300 | hosted | 300/300 | 0.4 / 7 ms | 0.4% | 21% | 18 Mbit/s out |
 | 1000 | hosted | 1002/1002 | 0.5-0.8 / 10-18 ms | 0 | 65-70% | steady state; ~50 Mbit/s out; 38 MB of memory |
 
+With every hardening item merged (caps, writer thread, HTTP gate, address check), 300 players: relay
+0.4 / 11 ms, 0.2% lost. 1002 players arriving over a minute and playing 2 minutes: all in, link
+thread 66% on average with peaks at 99%, relay p50 0.8 ms but p99 ~170 ms, 6% lost; the first
+prototype build gives the same numbers in that run, so it is the box's limit, not a regression.
+One process on one core tops out around 1000 players: plan for fewer per process.
+
 At 1000 the join rush (1000 new accounts within 10 s) takes up to 30-35 s; players arriving over
 minutes would not see it. "Lost" counts gaps in each sender's numbers on one map; packets the
 server keeps from a player on another map (by design) are not losses. Without the FlushSome fix 1000 players saturated the
