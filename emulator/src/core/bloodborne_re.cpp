@@ -720,6 +720,7 @@ void ReconcileMemberPresence() {
     static std::unordered_set<u64> hidden;
     static std::unordered_map<u64, s64> first_seen;
     static std::unordered_set<u64> stale_hidden;
+    static std::unordered_map<u64, FadeBack> fade_back;
     using SetDisabled = void PS4_SYSV_ABI (*)(u64, bool);
     const auto set_disabled =
         reinterpret_cast<SetDisabled>(image_base + SetCharacterDisabledOffset);
@@ -734,6 +735,7 @@ void ReconcileMemberPresence() {
                   [&](const auto& entry) { return !present.contains(entry.first); });
     std::erase_if(first_seen, [&](const auto& entry) { return !present.contains(entry.first); });
     std::erase_if(stale_hidden, [&](u64 character) { return !present.contains(character); });
+    std::erase_if(fade_back, [&](const auto& entry) { return !present.contains(entry.first); });
     // Kaniel's playtest 2026-10-19: two copies of one member take his packets off one queue on two
     // threads (a double free in everyone's game when he joined back). All but his newest copy
     // stay hidden (a hidden copy's update, the one that takes them, does not run).
@@ -795,13 +797,29 @@ void ReconcileMemberPresence() {
     for (const OtherPlayer& other : others) {
         positions.push_back(other.at);
     }
-    const std::vector<bool> shown = ShownOtherPlayers(positions, board, self, map);
+    const std::vector<std::optional<size_t>> vouching =
+        VouchingMembers(positions, board, self, map);
+    const bool someone_died = std::ranges::any_of(board, [&](const MemberVitals& member) {
+        return member.member != self && member.map == map && member.vital == Vital::Dead;
+    });
     for (size_t i = 0; i < others.size(); ++i) {
         const u64 character = others[i].character;
         if (stale_hidden.contains(character)) {
             continue;
         }
-        if (shown[i]) {
+        const std::optional<size_t> member = vouching[i];
+        if (fade_back[character].Tick(CharacterFade(character), someone_died,
+                                      member ? std::optional{board[*member].vital}
+                                             : std::nullopt) &&
+            HasMemoryAccess(character + CharacterFadeOffset, sizeof(float), MemoryProt::CpuWrite)) {
+            WriteValue(character, CharacterFadeOffset, 1.0f);
+            LOG_INFO(Debug,
+                     "Bloodborne presence: player {:#x} faded out (a fall into the void) and its "
+                     "member {} is up again: faded back in",
+                     ReadValue<u32>(character, 0x08), board[*member].member);
+        }
+        const bool shown = !others[i].at || member.has_value();
+        if (shown) {
             unmatched_since.erase(character);
             if (hidden.erase(character) > 0 && IsCharacterDisabled(character)) {
                 set_disabled(character, false);
@@ -870,6 +888,13 @@ u64 MemberIdentityOf(u64 character) {
 bool IsCharacterDisabled(u64 character) {
     const u64 control = ReadValue<u64>(character, 0x18);
     return control >= 0x10000 && (ReadValue<u8>(control, 0x20) & 1) != 0;
+}
+
+float CharacterFade(u64 character) {
+    return character >= 0x10000 && HasMemoryAccess(character + CharacterFadeOffset, sizeof(float),
+                                                   MemoryProt::CpuRead)
+               ? ReadValue<float>(character, CharacterFadeOffset)
+               : 1.0f;
 }
 
 bool CharacterHitsOff(u64 character) {

@@ -3411,6 +3411,23 @@ bool PresenceHides(s64 now_ms, s64 first_seen_ms, s64 unmatched_since_ms);
 std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
                                     std::span<const MemberVitals> board, std::string_view self,
                                     u32 map);
+// The board member (its index) each character shows by, as ShownOtherPlayers pairs them; none for
+// a character by no member, or with no position.
+std::vector<std::optional<size_t>> VouchingMembers(
+    std::span<const std::optional<LampPosition>> characters, std::span<const MemberVitals> board,
+    std::string_view self, u32 map);
+// Player report 2026-10-23 (v1.1.9): a player who fell into the void woke at the lamp seen by
+// itself (its respawn is a trip) but not by the others: their copy of it had faded out in the
+// void too (character +0x20C, 1.0 while shown) and only their own map load fades it back. Per
+// other character, each frame: once a member on this map died while it was faded out, it fades
+// back in (Tick says so, once) when the member it shows by is up again.
+class FadeBack {
+public:
+    bool Tick(float fade, bool someone_died, std::optional<Vital> member);
+
+private:
+    bool died = false;
+};
 std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body);
 // Kaniel's playtest 2026-10-19: one member can end up with two characters here (his old copy
 // kept after a crash, bound again to his new join). Both take his packets off one queue on two

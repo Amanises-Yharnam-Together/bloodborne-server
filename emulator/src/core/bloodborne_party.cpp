@@ -6281,10 +6281,22 @@ bool PresenceHides(s64 now_ms, s64 first_seen_ms, s64 unmatched_since_ms) {
 std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
                                     std::span<const MemberVitals> board, std::string_view self,
                                     u32 map) {
+    const std::vector<std::optional<size_t>> members =
+        VouchingMembers(characters, board, self, map);
+    std::vector<bool> shown(characters.size(), false);
+    for (size_t c = 0; c < characters.size(); ++c) {
+        shown[c] = !characters[c] || members[c].has_value();
+    }
+    return shown;
+}
+
+std::vector<std::optional<size_t>> VouchingMembers(
+    std::span<const std::optional<LampPosition>> characters, std::span<const MemberVitals> board,
+    std::string_view self, u32 map) {
     // Kaniel's playtest 2026-10-16: krolebord's copy stayed by the lantern after his Dream trip,
     // kept shown by Lisara standing 16 m away. Each member on this map vouches for one character
     // only: the nearest pairs first.
-    std::vector<bool> shown(characters.size(), false);
+    std::vector<std::optional<size_t>> vouched_by(characters.size());
     struct Pair {
         float distance;
         size_t character;
@@ -6294,7 +6306,6 @@ std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>>
     for (size_t c = 0; c < characters.size(); ++c) {
         const std::optional<LampPosition>& at = characters[c];
         if (!at) {
-            shown[c] = true;
             continue;
         }
         for (size_t m = 0; m < board.size(); ++m) {
@@ -6314,12 +6325,25 @@ std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>>
     std::ranges::sort(pairs, {}, &Pair::distance);
     std::vector<bool> vouched(board.size(), false);
     for (const Pair& pair : pairs) {
-        if (!shown[pair.character] && !vouched[pair.member]) {
-            shown[pair.character] = true;
+        if (!vouched_by[pair.character] && !vouched[pair.member]) {
+            vouched_by[pair.character] = pair.member;
             vouched[pair.member] = true;
         }
     }
-    return shown;
+    return vouched_by;
+}
+
+bool FadeBack::Tick(float fade, bool someone_died, std::optional<Vital> member) {
+    if (fade >= 1.0f) {
+        died = false;
+        return false;
+    }
+    died = died || someone_died;
+    if (!died || member != Vital::Up) {
+        return false;
+    }
+    died = false;
+    return true;
 }
 
 std::vector<bool> StaleDuplicatePlayers(std::span<const u64> identities,
