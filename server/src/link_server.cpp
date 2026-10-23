@@ -9,6 +9,18 @@
 #include <QtEndian>
 #include "link_server.h"
 
+namespace {
+
+// What a refused hello's game hears when its id got no account for a reason the player can act on.
+QByteArray RefusalOf(DbError why) {
+    if (why == DbError::ExistingAddress)
+        return "address taken: another account's game has this id's virtual address; the launcher "
+               "needs a new id";
+    return {};
+}
+
+} // namespace
+
 LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_port,
                        QObject* parent)
     : QObject(parent), m_socket(new QUdpSocket(this)), m_shared(shared),
@@ -187,27 +199,29 @@ void LinkServer::OnWorldTick() {
         FlushRpc(*end);
 }
 
-std::optional<bool> LinkServer::SignIn(const QByteArray& online_id, const QByteArray& secret) {
+std::optional<ServerLink::SignInVerdict> LinkServer::SignIn(const QByteArray& online_id,
+                                                            const QByteArray& secret) {
     // A hello comes again every second until it is welcomed, and after every outage: the
     // password's hash (100k rounds) only the first time.
     const QByteArray hash = QCryptographicHash::hash(secret, QCryptographicHash::Sha256);
     const auto known = m_signedIn.constFind(online_id);
     if (known != m_signedIn.constEnd())
-        return *known == hash;
+        return ServerLink::SignInVerdict{*known == hash, {}};
     bool make = !m_shared->config || m_shared->config->IsMakingAccountsAtSignIn();
     if (!m_hosted.enabled) {
-        const auto user =
-            m_db.SignIn(QString::fromUtf8(online_id), QString::fromUtf8(secret), {}, false, make);
+        DbError why = DbError::None;
+        const auto user = m_db.SignIn(QString::fromUtf8(online_id), QString::fromUtf8(secret), {},
+                                      false, make, &why);
         if (!user)
-            return false;
+            return ServerLink::SignInVerdict{false, RefusalOf(why)};
         m_signedIn.insert(online_id, hash);
-        return true;
+        return ServerLink::SignInVerdict{true, {}};
     }
     // Hosted: on the sign-in thread; the game's next hello hears the verdict.
     const qint64 now = m_clock.elapsed();
     if (const auto refused = m_signInRefused.constFind(online_id);
         refused != m_signInRefused.constEnd() && refused->hash == hash && refused->until_ms > now)
-        return false;
+        return ServerLink::SignInVerdict{false, refused->refusal};
     if (m_signInPending.contains(online_id))
         return std::nullopt;
     // A flood of new ids from many addresses: no more checks queued than the pool clears in a few
@@ -232,13 +246,15 @@ std::optional<bool> LinkServer::SignIn(const QByteArray& online_id, const QByteA
         }
         const QString id = QString::fromUtf8(online_id);
         const bool existed = db->GetUserId(id).has_value();
+        DbError why = DbError::None;
         const bool accepted =
-            db->SignIn(id, QString::fromUtf8(secret), {}, false, make).has_value();
+            db->SignIn(id, QString::fromUtf8(secret), {}, false, make, &why).has_value();
         const bool made = accepted && !existed;
+        const QByteArray refusal = accepted ? QByteArray{} : RefusalOf(why);
         QMetaObject::invokeMethod(
             this,
-            [this, online_id, hash, accepted, made, address, make] {
-                SignedIn(online_id, hash, accepted, made, address, make);
+            [this, online_id, hash, accepted, made, address, make, refusal] {
+                SignedIn(online_id, hash, accepted, made, address, make, refusal);
             },
             Qt::QueuedConnection);
     });
@@ -246,7 +262,7 @@ std::optional<bool> LinkServer::SignIn(const QByteArray& online_id, const QByteA
 }
 
 void LinkServer::SignedIn(const QByteArray& online_id, const QByteArray& hash, bool accepted,
-                          bool made, quint32 address, bool counted) {
+                          bool made, quint32 address, bool counted, const QByteArray& refusal) {
     m_signInPending.remove(online_id);
     const qint64 now = m_clock.elapsed();
     if (accepted) {
@@ -260,7 +276,7 @@ void LinkServer::SignedIn(const QByteArray& online_id, const QByteArray& hash, b
         // A wrong password (or no account allowed) is not hashed again for 30 s.
         if (m_signInRefused.size() > 100'000)
             m_signInRefused.clear();
-        m_signInRefused.insert(online_id, Refused{hash, now + 30'000});
+        m_signInRefused.insert(online_id, Refused{hash, now + 30'000, refusal});
     }
 }
 

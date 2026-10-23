@@ -40,11 +40,12 @@ private:
     void HandleLink(const QByteArray& datagram, const QHostAddress& sender, uint16_t senderPort);
     void Apply(const ServerLink::Hub::Result& result);
     void Apply(const BloodborneWorld::Service::Result& result);
-    std::optional<bool> SignIn(const QByteArray& online_id, const QByteArray& secret);
+    std::optional<ServerLink::SignInVerdict> SignIn(const QByteArray& online_id,
+                                                    const QByteArray& secret);
     // Hosted: a password checked on the sign-in thread (its account made if it may be).
     // `counted`: it counted as an account made when it was queued (Admission::Guard::Made).
     void SignedIn(const QByteArray& online_id, const QByteArray& hash, bool accepted, bool made,
-                  quint32 address, bool counted);
+                  quint32 address, bool counted, const QByteArray& refusal);
     void LoadBanList();
     // Hosted (docs/HOSTED_SERVER.md): whether a datagram from `sender` goes on to the hub.
     bool Admit(const QByteArray& datagram, ServerLink::Kind kind, quint32 address,
@@ -92,6 +93,7 @@ private:
     struct Refused {
         QByteArray hash;
         qint64 until_ms = 0;
+        QByteArray refusal;
     };
     QHash<QByteArray, Refused> m_signInRefused;
     quint32 m_helloAddress = 0;            // the address of the hello the hub is reading

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <QtEndian>
 #include "coop/packet_routes.h"
+#include "virtual_address.h"
 
 namespace ServerLink {
 
@@ -110,15 +111,7 @@ quint16 Vport(const QByteArray& frame, int at) {
 } // namespace
 
 Endpoint VirtualEndpointOf(const QByteArray& online_id) {
-    quint32 hash = 2166136261u; // FNV-1a
-    for (const char c : online_id) {
-        hash = (hash ^ static_cast<quint8>(c)) * 16777619u;
-    }
-    quint32 host = hash & 0xFFFFFF;
-    if ((host & 0xFF) == 0 || (host & 0xFF) == 0xFF) {
-        host ^= 0x01; // no .0 or .255
-    }
-    return {(10u << 24) | host, VirtualPort};
+    return {VirtualAddressOf(online_id), VirtualPort};
 }
 
 QString Endpoint::Text() const {
@@ -375,12 +368,15 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
         }
     }
     if (refusal.isEmpty() && sign_in) {
-        const std::optional<bool> signed_in = sign_in(hello->online_id, hello->secret);
+        const std::optional<SignInVerdict> signed_in = sign_in(hello->online_id, hello->secret);
         if (!signed_in) {
             return; // still checking: the next hello hears
         }
-        if (!*signed_in) {
-            refusal = "sign-in refused: another player has this id (" + hello->online_id + ")";
+        if (!signed_in->accepted) {
+            refusal =
+                !signed_in->refusal.isEmpty()
+                    ? signed_in->refusal
+                    : "sign-in refused: another player has this id (" + hello->online_id + ")";
         }
     }
     const Endpoint virtual_endpoint = VirtualEndpointOf(hello->online_id);

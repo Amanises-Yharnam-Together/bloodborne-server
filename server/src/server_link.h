@@ -65,6 +65,12 @@ struct Endpoint {
 constexpr quint16 VirtualPort = 3658;
 Endpoint VirtualEndpointOf(const QByteArray& online_id);
 
+// Phase 11: whether a hello signed in, and when not, the text its game hears (empty: the usual).
+struct SignInVerdict {
+    bool accepted = false;
+    QByteArray refusal;
+};
+
 struct Hello {
     quint8 version = LinkVersion;
     QByteArray online_id;
@@ -165,8 +171,9 @@ public:
     // Phase 11: whether a hello's player id and secret sign in. Without it every hello does.
     // Hosted (docs/HOSTED_SERVER.md): nothing yet while the password is checked on another thread;
     // the hello gets no answer and the game's next one (a second later) gets the verdict.
-    using SignIn =
-        std::function<std::optional<bool>(const QByteArray& online_id, const QByteArray& secret)>;
+    // A refusal may say why (a new id on another account's address: the launcher makes another).
+    using SignIn = std::function<std::optional<SignInVerdict>(const QByteArray& online_id,
+                                                              const QByteArray& secret)>;
     void SetSignIn(SignIn sign_in) {
         this->sign_in = std::move(sign_in);
     }
