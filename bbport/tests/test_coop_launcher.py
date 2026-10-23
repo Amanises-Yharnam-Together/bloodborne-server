@@ -5,6 +5,7 @@ import os
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -659,6 +660,35 @@ class UpdateTests(unittest.TestCase):
     def test_the_setup_starts_the_launcher_again_after_a_silent_update(self):
         iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8')
         self.assertRegex(iss, r'Filename: "\{app\}\\BLauncher\.exe";[^\n]*Flags: nowait skipifnotsilent')
+
+
+class LogRotationTests(unittest.TestCase):
+    """Kaniel's playtest 2026-10-22: two starts after the host's stuck rejoin, its .prev logs were
+    another run's. The last few runs' logs stay in user\\log\\older, named by when each ended."""
+
+    def test_the_last_runs_logs_are_kept_by_their_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'user' / 'log'
+            log.mkdir(parents=True)
+            for run in range(coop.KEPT_RUN_LOGS + 2):
+                for name in ('shad_log', 'console'):
+                    path = log / f'{name}.txt'
+                    path.write_text(f'{name} run {run}', encoding='utf-8')
+                    os.utime(path, (1792698000 + 60 * run, 1792698000 + 60 * run))
+                coop.rotate_logs(tmp)
+            self.assertEqual((log / 'shad_log.prev.txt').read_text(encoding='utf-8'),
+                             f'shad_log run {coop.KEPT_RUN_LOGS + 1}')
+            kept = sorted(path.name for path in (log / 'older').iterdir())
+            self.assertEqual(len(kept), 2 * coop.KEPT_RUN_LOGS)
+            first = time.strftime('%Y%m%d-%H%M%S', time.localtime(1792698000 + 120))
+            self.assertEqual(kept[0], f'{first}-console.txt')
+            self.assertEqual((log / 'older' / kept[-1]).read_text(encoding='utf-8'),
+                             f'shad_log run {coop.KEPT_RUN_LOGS + 1}')
+
+    def test_no_logs_yet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            coop.rotate_logs(tmp)
+            self.assertFalse((Path(tmp) / 'user' / 'log' / 'older').exists())
 
 
 if __name__ == '__main__':
