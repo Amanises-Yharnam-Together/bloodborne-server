@@ -2437,6 +2437,106 @@ int TheWorldsInMemoryAreCapped() {
   return 0;
 }
 
+// A world collected while nobody is in it keeps where its guests stood: a
+// guest's next run resumes there as before.
+int ACollectedWorldKeepsItsPlaces() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  Service service{folder.path()};
+  BloodborneWorld::Limits limits;
+  limits.idle_world_ms = 60'000;
+  service.SetLimits(limits);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope vitals = VitalsOf(0x18010000, 1);
+  vitals.mutable_vitals()->mutable_at()->set_x(-215.5f);
+  vitals.mutable_vitals()->mutable_at()->set_z(172.25f);
+  guest.Send(vitals, now + 10);
+  Pump(service, {&host, &guest}, now + 10);
+  service.Forget(host.endpoint);
+  service.Forget(guest.endpoint);
+  service.Tick(now + 1000);
+  service.Tick(now + 70'000);
+  CHECK(service.Parties() == 0);
+  Game host_again{1002, "host", 21};
+  Game guest_again{1003, "guest", 22};
+  host_again.run = guest_again.run = 0x2002;
+  host_again.Hello(now + 80'000);
+  guest_again.Hello(now + 80'000);
+  Pump(service, {&host_again, &guest_again}, now + 80'000);
+  CHECK(guest_again.welcome && guest_again.welcome->accepted());
+  CHECK(guest_again.resume_at.has_value());
+  CHECK(guest_again.resume_at->map() == 0x18010000);
+  CHECK(guest_again.resume_at->at().x() == -215.5f);
+  return 0;
+}
+
+// At the cap a new party's world takes the place of a few of the oldest worlds
+// nobody is in, not of all of them (each is written whole first).
+int AtTheCapOnlyAFewWorldsAreCollected() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  Service service{folder.path()};
+  BloodborneWorld::Limits limits;
+  limits.party_worlds = 20;
+  service.SetLimits(limits);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  for (int i = 0; i < 20; ++i) {
+    Game game{static_cast<quint32>(1000 + i), "g" + std::to_string(i),
+              static_cast<quint32>(11 + i)};
+    game.Hello(now, QByteArray("p:") + QByteArray::number(i));
+    Pump(service, {&game}, now);
+    CHECK(game.welcome && game.welcome->accepted());
+    service.Forget(game.endpoint);
+  }
+  CHECK(service.Parties() == 20);
+  Game late{2000, "late", 99};
+  late.Hello(now + 10, "late:1");
+  Pump(service, {&late}, now + 10);
+  CHECK(late.welcome && late.welcome->accepted());
+  CHECK(service.Parties() > 10);
+  CHECK(service.Parties() <= 20);
+  return 0;
+}
+
+// A game started again on the same link (a new stream, no new link) hears its
+// lobby state when it says its lobby hello, as a new game does.
+int ARestartedGameHearsItsLobby() {
+  for (const bool hosted : {false, true}) {
+    Service service{{}};
+    if (hosted) {
+      BloodborneWorld::HostedRules rules;
+      rules.enabled = true;
+      service.SetHosted(rules);
+    }
+    const std::string name =
+        hosted ? QByteArray("Kaniel").toHex().toStdString() : std::string("aa");
+    qint64 now = 1'000'000;
+    Game a{1000, name, 11};
+    a.online_id = "Kaniel";
+    a.LobbyHello(false, now);
+    Pump(service, {&a}, now);
+    now += 1000;
+    Pump(service, {&a}, now);
+    CHECK(a.lobby_states >= 1);
+    Game again{1000, name, 21};
+    again.online_id = "Kaniel";
+    now += 1000;
+    again.LobbyHello(false, now);
+    Pump(service, {&again}, now);
+    now += 1000;
+    Pump(service, {&again}, now);
+    CHECK(again.lobby_states >= 1);
+  }
+  return 0;
+}
+
 // Hosted: a trade only between members of one started team.
 int HostedTradesAreWithinAStartedTeam() {
   Service service{{}};
@@ -2595,6 +2695,10 @@ int main() {
       {"AMessagePastAFieldsLimitIsDropped", AMessagePastAFieldsLimitIsDropped},
       {"AnEmptyPartyWorldIsCollected", AnEmptyPartyWorldIsCollected},
       {"TheWorldsInMemoryAreCapped", TheWorldsInMemoryAreCapped},
+      {"ACollectedWorldKeepsItsPlaces", ACollectedWorldKeepsItsPlaces},
+      {"AtTheCapOnlyAFewWorldsAreCollected",
+       AtTheCapOnlyAFewWorldsAreCollected},
+      {"ARestartedGameHearsItsLobby", ARestartedGameHearsItsLobby},
       {"HostedTradesAreWithinAStartedTeam", HostedTradesAreWithinAStartedTeam},
       {"HostedFriendsJoinByTheTeamsCode", HostedFriendsJoinByTheTeamsCode},
       {"ATeamEndsWhenEveryMembersGameIsGone",

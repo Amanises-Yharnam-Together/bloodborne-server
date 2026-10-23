@@ -26,6 +26,7 @@ Off by default: a host's own server behaves as before. On (`shadnet.cfg`):
 | Party worlds in memory: at most `HostedPartyWorlds` (2048) | `bloodborne_world.h` `Limits` | every team's world on one machine |
 | The operator's commands on a UNIX-domain socket only the server's user opens (`HostedAdminSocket`, never a network port; `server/hosting/admin.sh`): list players, kick, ban/unban by id or address with an optional end (written to `banned.txt`, so restarts keep them), list worlds (members, last played, bytes on disk) and those put aside, restore one, stats (players, worlds, link thread load, refusals) | `admin.h`, `link_server.cpp` | only `banned.txt` and a restart before; a forgotten world could only come back by hand |
 | Worlds nobody started for `HostedRetireDays` days (0, the default: never) are put aside once a day, as a forgotten world's folder (writer thread, logged, never deleted); a world put aside keeps its line beside it (`kept_world.pb`), so `restore` gives it back to its players | `bloodborne_world.cpp` `Service::Retire` | every world ever played stays on disk and on its players' lists |
+| A summon request (create, get, delete, request) must name its player (`UserId`) | `webapi_routes_bloodborne.cpp` `Refused` | one naming nobody passed the gate and could remove or claim another player's sign by its `SessionId` |
 
 Two fixes are on for everyone: a TCP packet size under its header no longer loops the session for
 ever (`client_session.cpp`), and a datagram from one game no longer walks every member's stream
@@ -48,7 +49,7 @@ above what a game sends, so only a broken or hostile one meets it):
 | An Rpc message (the game's bridge reads 16 KiB) | 64 KiB | the tunnel is dropped; the game connects again | `link_server.h` |
 | Rpc bytes before the TCP port answers / shadNet's answers not acked | 1 MiB / 9 MiB | the connection ends | `link_server.cpp` |
 | Message fields: names 64 bytes, characters 96, party key 256, portrait 128x128 RGB, join data 4 KiB, map state 1250 bytes, 4096 shown characters, HP enemies, flag events and echoes, 32768 kills, 250,000 team world flags, 64 trade items, trophies, revive hits | | the message is dropped (logged) | `Service::Oversized` |
-| Party worlds in memory | 1024 (hosted: `HostedPartyWorlds`); one nobody is in for 5 min goes back to disk only, and a new hello reads it again | a hello for a new world is refused | `Service::Collect` |
+| Party worlds in memory | 1024 (hosted: `HostedPartyWorlds`); one nobody is in for 5 min goes back to disk only (where its members stood is kept for when a new hello reads it again); at the cap the 4 oldest such go | a hello for a new world is refused | `Service::Collect` |
 
 Also for everyone: a summon removal touches only its party's signs, the summon broker keeps at most
 4096 signs, and an address sends at most 20 crash reports, then one a minute. A host can turn the

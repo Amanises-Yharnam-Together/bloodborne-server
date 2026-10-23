@@ -91,6 +91,8 @@ public:
     void Move(const QString& parent, const QString& name, const QString& to);
     // Whether a Move of the folder `parent`/`name` is queued (what is in it is not known yet).
     bool Moving(const QString& parent, const QString& name) const;
+    // Whether writes in `folder` (a world's) are queued.
+    bool Pending(const QString& folder) const;
     // Returns when everything queued before it is on disk.
     void Drain();
     // Stops at once, writing nothing more and fsyncing nothing (a crash, for the tests).
@@ -283,6 +285,13 @@ private:
         std::string team_world_id;
         std::optional<qint64> empty_since_ms; // nobody in it since (Collect)
     };
+    // What a world collected while nobody was in it keeps until it is read again.
+    struct Kept {
+        std::map<std::string, PartyWorld::Place> places;
+        PartyBoards boards;
+    };
+    // The worlds Collect takes out at once for room (each is written whole).
+    static constexpr size_t CollectAtOnce = 4;
     struct Member {
         Member(quint32 instance, BloodborneCoop::CoopStream::Limits limits)
             : stream{"shadnet", instance, limits} {}
@@ -297,8 +306,9 @@ private:
         // Runs phase 4's enemy owners (its hello says): on an area another member owns its new
         // kills and its HP reports do not count.
         bool enemy_owner = false;
-        std::string lobby;     // its name in the team lobby, empty before its lobby hello
-        std::uint32_t map = 0; // the map it last said (0: loading, or none yet)
+        std::string lobby;        // its name in the team lobby, empty before its lobby hello
+        bool lobby_again = false; // its game started over: its next lobby hello is a first one
+        std::uint32_t map = 0;    // the map it last said (0: loading, or none yet)
         // Kaniel 2026-10-16: the team world it was taken out of (removed from the team, or left
         // it): no game packet goes between it and that party until its next hello.
         QString cut_from;
@@ -398,6 +408,7 @@ private:
     int compact_records;
     qint64 compact_ms;
     std::map<QString, PartyWorld> worlds;
+    std::map<QString, Kept> kept;      // by world (Collect)
     std::map<quint64, Member> members; // by link (Endpoint::Key)
     std::map<quint64, ServerLink::Endpoint> endpoints;
     std::vector<Member*> flush_now; // the members FlushSome flushes
