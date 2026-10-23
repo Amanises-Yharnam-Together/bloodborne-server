@@ -313,6 +313,28 @@ TEST(BloodborneFlagRules, AnAmbushAGuestWokeRisesForTheHost) {
     EXPECT_FALSE(SharedWithParty(12204011)); // the ambush armed: the host's Insight decides
 }
 
+// Kaniel's playtest 2026-10-22: the party wiped in Darkbeast Paarl's fight; the host's reload
+// put his fight flags (a map's 4xxx and 5xxx flags: 12304700 the fog entered, 12304702 and 12304704
+// his start) off, as every load does, but the team's world and the guests' kept changes still had
+// them on, so each guest's trip load set them again and his fight started over at the lamp (his
+// health bar up, rig 2026-10-23). A map's load-reset flags are no world flags: the team's world
+// leaves them out, a guest does not keep them, and a guest loading the host's map does not take
+// them; the fog's entry is still shared with the party while it holds.
+TEST(BloodborneFlagRules, AMapsLoadResetFlagsStayOutOfTheWorld) {
+    for (const s32 flag :
+         {12304700, 12304702, 12304704, 12304732, 12305021, 12305701, 12805465, 12805676}) {
+        EXPECT_FALSE(IsWorldFlag(flag)) << flag;
+        EXPECT_FALSE(CarriesToGuestWorld(flag)) << flag;
+        EXPECT_FALSE(TakesHostMapFlag(flag)) << flag;
+    }
+    EXPECT_TRUE(IsBossFogEntryFlag(12304700));
+    EXPECT_TRUE(SharedWithParty(12304700)) << "a guest entering the fog starts the boss";
+    for (const s32 flag : {12301700, 12301702, 12300100, 12303999, 12306000, 12204000}) {
+        EXPECT_TRUE(IsWorldFlag(flag)) << flag;
+        EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
+    }
+}
+
 TEST(BloodborneFlagRules, BossFoundFlagsArePerPlayer) {
     std::set<s32> found;
     for (const EncounterInsight& boss : EncounterInsights()) {

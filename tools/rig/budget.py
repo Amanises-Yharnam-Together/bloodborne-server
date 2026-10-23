@@ -41,6 +41,7 @@ LONG = {
     "npc-progress-after-trip": "the 10-19 playtest case #269: a join, two trips",
     "wipe-one-map": "the 10-19 playtest case #270: three games, a death and a wake",
     "boss-hp-after-wipe": "the 10-19 playtest case #272: a wipe and a wake",
+    "paarl-after-wipe": "Kaniel's playtest 2026-10-22: three games, a wipe, a wake and a walk back",
     "kill-reaches-arrival": "the 10-19 playtest case #278: three games, two trips",
     "soak": "a long session by design",
     "chalice-team": "two rituals and two dungeon loads, measured 313 s",

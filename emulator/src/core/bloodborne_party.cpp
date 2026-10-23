@@ -5836,6 +5836,27 @@ std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
     return current;
 }
 
+std::vector<u32> ClearBossGauges(std::span<u8> gauges) {
+    std::vector<u32> up;
+    for (std::size_t slot = 0; slot < BossGaugeSlots; ++slot) {
+        if ((slot + 1) * BossGaugeSize > gauges.size()) {
+            break;
+        }
+        u8* gauge = gauges.data() + slot * BossGaugeSize;
+        s32 handle = 0;
+        std::memcpy(&handle, gauge + 4, sizeof(handle));
+        if (handle != -1) {
+            up.push_back(static_cast<u32>(handle));
+        }
+        constexpr s32 None = -1;
+        std::memcpy(gauge, &None, sizeof(None));
+        std::memcpy(gauge + 4, &None, sizeof(None));
+        std::memset(gauge + 8, 0, 8);
+        gauge[0x10] = 0;
+    }
+    return up;
+}
+
 bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies) {
     return std::ranges::find(downed_bodies, handle) != downed_bodies.end();
 }

@@ -4073,3 +4073,71 @@ SCENARIOS["shop-own-weapons"] = {
     "forbid": {role: SESSION_HOLDS for role in ("host", "guest")},
     "timeout": 300,
 }
+
+
+# Kaniel's playtest 2026-10-22 (v1.1.7): the party of three (harder enemies x3) wiped fighting
+# Darkbeast Paarl (m23_00, entity 2300810, on map 0x17000000) and woke at a lamp on the next map
+# (0x1c000000, 2802952); walking back across the border, every game had Paarl at 0 HP and his
+# defeat event (12301700: it waits for him dead) gave the kill, the item and the echoes. Not
+# reproduced here yet: this checks he stands. In the rig the guests woke with his health bar still
+# up (a party death skipped the game's Failed_BossAreaMission): every game clears it.
+PAARL_LAMP_MAP = "0x1c000000"
+PAARL_LAMP = 2802952
+PAARL_MAP = "0x17000000"
+PAARL = "0x1000c05a"
+PAARL_DEFEATED = 12301700
+# Positions are each map's own. The tunnel from the lamp's map (Kaniel's trail): this side of the
+# border, then the other; a teleport from the lamp straight into the arena fell through the world.
+INTO_PAARL_MAP = ["teleport 164.1 -114.3 -99.0", "wait 3", "teleport 156.7 -115.4 -83.9",
+                  f"wait-map {PAARL_MAP} 20"]
+# Where Kaniel fell in the arena (his bloodstain).
+PAARL_SPOT = "109.6 -120.7 -56.3"
+# Everything his defeat sets, off (the rig's saves had his arena lamp to light mid-fight, Kaniel
+# 2026-10-22): 9454 (the boss down), 2301 (his lamp), 12301701 (after the defeat).
+PAARL_FRESH = [f"set-flag {flag} 0" for flag in (PAARL_DEFEATED, 12301701, 9454, 2301)]
+PAARL_START = [START, *PAARL_FRESH, f"travel {PAARL_LAMP}", "godmode",
+               f"expect-map {PAARL_LAMP_MAP}"]
+# His fight's flags (12304700 the fog entered, 12304702 and 12304704 his start): every load puts
+# them off, and the team's world set them again in the guests' games, so his fight started over
+# at the lamp (his health bar up for them, Kaniel watching 2026-10-23).
+PAARL_FIGHT_OFF = [f"expect-flag {flag} 0" for flag in (12304700, 12304702, 12304704)]
+PAARL_BACK = [f"ensure-map {PAARL_LAMP_MAP} {PAARL_LAMP} 60", "wait-members 2 120", "wait 15",
+              f"expect-flag {PAARL_DEFEATED} 0", *PAARL_FIGHT_OFF, *INTO_PAARL_MAP, "wait 10",
+              "census 80", f"expect-flag {PAARL_DEFEATED} 0", f"expect-hp {PAARL} > 0"]
+GUEST_TO_PAARL = [*PAARL_START, "wait-session 3 300", "wait 5", *INTO_PAARL_MAP, "wait 5"]
+# The guests stay by the border until the host has started the fight beside him, so the boss pick
+# (the nearest member) is the host's game, as in Kaniel's fight. A guest picked right after the
+# arena loaded did not take him while its vitals board was stale, and no game ran him (he stood
+# still, rig 2026-10-23).
+# Paarl's own attacks put each one down (Kaniel's party died to him): beside him with 1 HP.
+TO_PAARL_HITS = [f"approach {PAARL} 3 0", "hurt self 1"]
+GUEST_WIPE = ["sync pw-hurt", "godmode off", *TO_PAARL_HITS, "wait-vital down 90"]
+# Back up, godmode again: the lamp's enemies killed the guests a second time (Kaniel watching,
+# 2026-10-23).
+GUEST_BACK = ["wait-vital dead 90", "wait-vital up 150", "godmode",
+              f"ensure-map {PAARL_LAMP_MAP} {PAARL_LAMP} 60", "wait-members 3 120",
+              "sync pw-back", *PAARL_BACK[1:], "sync pw-checked", "expect-session 3"]
+SCENARIOS["paarl-after-wipe"] = {
+    "about": "Kaniel 2026-10-22: the party of three hurts Paarl and wipes on his map, wakes at the "
+             "lamp on the next map and walks back across the border: Paarl stands, his defeat "
+             "flag off",
+    "settings": {**PARTY_DEATH, "SHADPS4_BLOODBORNE_HARDER_ENEMIES": "3,3,1.5"},
+    "roles": {
+        "host": [*PAARL_START, "wait-session 3 300", "wait 5", *INTO_PAARL_MAP, "wait 5",
+                 f"teleport {PAARL_SPOT}", "wait 8", "census 40", f"hurt {PAARL} 9000",
+                 "wait 3", "census 40", f"expect-hp {PAARL} < 10000", "sync pw-hurt",
+                 "sync pw-guests-down", "godmode off", *TO_PAARL_HITS, "wait-vital dead 90",
+                 "wait-vital up 150", "godmode", f"ensure-map {PAARL_LAMP_MAP} {PAARL_LAMP} 60",
+                 "wait-members 3 120", "sync pw-back", *PAARL_BACK[1:], "sync pw-checked",
+                 "expect-session 3"],
+        "guest": [*GUEST_TO_PAARL, *GUEST_WIPE,
+                  "sync pw-guests-down", *GUEST_BACK],
+        "guest2": [*GUEST_TO_PAARL, *GUEST_WIPE,
+                   "sync pw-guests-down", *GUEST_BACK],
+    },
+    "syncs": {name: {"chapter": "paarl-after-wipe", "roles": ["host", "guest", "guest2"]}
+              for name in ("pw-hurt", "pw-guests-down", "pw-back", "pw-checked")},
+    "expect": {role: [rf"boss bars cleared: {PAARL}"] for role in ("guest", "guest2")},
+    "forbid": {role: SESSION_HOLDS for role in ("host", "guest", "guest2")},
+    "timeout": 900,
+}

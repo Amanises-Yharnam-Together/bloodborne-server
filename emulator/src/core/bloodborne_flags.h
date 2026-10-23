@@ -47,6 +47,10 @@ enum FlagBehaviour : u32 {
     FlagShopLine = 1u << 7,
     // A Shared flag's clears go to the party too, not only its sets (FlagsToShare).
     FlagSharesClears = 1u << 8,
+    // Every load of its map puts it back off (a map's 4xxx and 5xxx flags: a boss fight's
+    // progress): no world flag (IsWorldFlag), so the team's world never sets it again after a
+    // reload (Kaniel's playtest 2026-10-22, Darkbeast Paarl's fight after a wipe).
+    FlagResetsOnLoad = 1u << 9,
 };
 
 struct FlagRule {
@@ -368,6 +372,17 @@ inline constexpr std::array LastRows{
                      "lamps 0-19) and the one after: the game does not sync them"},
     Range(70000007, 70000007, FlagOwner::PerPlayer, FlagCarriesHome,
           "an NPC's gesture given (GestureFlags: t240339's Church Bow (Female))"),
+    FlagRange{.first = 12004000,
+              .last = 13999999,
+              .period = 10000,
+              .low = 4000,
+              .high = 5999,
+              .rule = {FlagOwner::Host, FlagResetsOnLoad},
+              .why = "a map's 4xxx and 5xxx flags (1AAB4xxx, 1AAB5xxx: a boss fight's progress, "
+                     "its fog, the map's events of one visit): every load of the map puts them "
+                     "off (the host's reload after a wipe cleared Darkbeast Paarl's 12304700, "
+                     "12304702, 12304704, Kaniel's playtest 2026-10-22), so no game keeps or "
+                     "takes them from another"},
     Range(12000000, 13999999, FlagOwner::Host, FlagCarriesHome | FlagTakesHostMap,
           "the maps' flags (1AABxxxx: switches, bosses, enemies; doors are DoorFlags): the host's "
           "world"),
@@ -424,7 +439,7 @@ constexpr std::array<FlagRange, BossFogEntryFlags.size() * 2> BossFogRows() {
     for (size_t index = 0; index < BossFogEntryFlags.size(); ++index) {
         const s32 flag = BossFogEntryFlags[index];
         rows[index * 2] =
-            Range(flag, flag, FlagOwner::Shared, FlagBossFogEntry,
+            Range(flag, flag, FlagOwner::Shared, FlagBossFogEntry | FlagResetsOnLoad,
                   "a boss fog's \"host entered\" flag: a guest's (unsynced) fog event sets it "
                   "to start the boss; holds for one map visit");
         rows[index * 2 + 1] = Range(flag + 1, flag + 1, FlagOwner::Session, 0,

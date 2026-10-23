@@ -1475,3 +1475,38 @@ TEST(BloodbornePartyDeath, OnlyBossesAreHandedOut) {
     EXPECT_TRUE(HandsOutBoss(std::nullopt, true)) << "its row unread: the boss size";
     EXPECT_FALSE(HandsOutBoss(std::nullopt, false));
 }
+
+// Kaniel's playtest 2026-10-22: after a party wipe in Darkbeast Paarl's fight the guests woke at
+// the lamp with his health bar still up. A summoned guest's death in a boss area runs the game's
+// Failed_BossAreaMission, which clears the boss bars (as the host's death reload does); a guest
+// revived in the host's world never runs it, so its party death clears them itself: each slot's
+// name and handle -1, its numbers 0, not shown.
+TEST(BloodbornePartyDeath, APartyDeathClearsTheBossBars) {
+    std::array<u8, BossGaugeSlots * BossGaugeSize> gauges{};
+    const auto put = [&](std::size_t slot, std::size_t field, s32 value) {
+        std::memcpy(gauges.data() + slot * BossGaugeSize + field, &value, sizeof(value));
+    };
+    const auto get = [&](std::size_t slot, std::size_t field) {
+        s32 value = 0;
+        std::memcpy(&value, gauges.data() + slot * BossGaugeSize + field, sizeof(value));
+        return value;
+    };
+    for (std::size_t slot = 0; slot < BossGaugeSlots; ++slot) {
+        put(slot, 0x0, -1);
+        put(slot, 0x4, -1);
+    }
+    put(1, 0x0, 900000); // a name id
+    put(1, 0x4, 0x1000c05a);
+    put(1, 0x8, 1013);
+    put(1, 0xC, 77);
+    gauges[BossGaugeSize + 0x10] = 1;
+    EXPECT_EQ(ClearBossGauges(gauges), std::vector<u32>{0x1000c05a});
+    for (std::size_t slot = 0; slot < BossGaugeSlots; ++slot) {
+        EXPECT_EQ(get(slot, 0x0), -1) << slot;
+        EXPECT_EQ(get(slot, 0x4), -1) << slot;
+        EXPECT_EQ(get(slot, 0x8), 0) << slot;
+        EXPECT_EQ(get(slot, 0xC), 0) << slot;
+        EXPECT_EQ(gauges[slot * BossGaugeSize + 0x10], 0) << slot;
+    }
+    EXPECT_TRUE(ClearBossGauges(gauges).empty()) << "no bar up";
+}

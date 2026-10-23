@@ -307,9 +307,11 @@ std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> firs
 bool IsWorldFlag(s32 flag) {
     // A map item pickup is the character's, as the item it gave (Kaniel's play test 2026-10-18:
     // the Workshop Tool's chest opened again after the host's save took a world without it).
+    // A map's load-reset flags (FlagResetsOnLoad) neither: the team's world set Darkbeast Paarl's
+    // fight going again after the wipe's reload (Kaniel's playtest 2026-10-22).
     const FlagRule rule = RuleFor(flag);
     return (rule.owner == FlagOwner::Host || rule.owner == FlagOwner::Shared) &&
-           !rule.Has(FlagMapPickup);
+           !rule.Has(FlagMapPickup) && !rule.Has(FlagResetsOnLoad);
 }
 
 namespace {

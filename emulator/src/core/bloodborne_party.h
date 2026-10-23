@@ -3644,6 +3644,18 @@ bool SkipsHitReaction(bool down, u64 victim, u64 local_player);
 constexpr u64 EnemyBarDamageOffset = 0x016F9A50;
 constexpr std::array<u8, 8> EnemyBarDamageStart{0x45, 0x31, 0xC0, 0x48, 0x89, 0xF8, 0x31, 0xC9};
 bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies);
+// The boss bars: BossGaugeSlots at [0x05562878] +0x1658 (BossGaugesOffset), BossGaugeSize bytes
+// each: name id, the boss's handle (-1 for none), two numbers and a shown byte (+0x10). The game's
+// ClearBossGauge (0x01336D00, also inlined in Failed_BossAreaMission 0x0138B2D0) puts them back
+// to none; a summoned guest's death in a boss area runs Failed_BossAreaMission and the host's
+// death reload clears them. A party guest revived in the host's world runs neither (Kaniel's
+// playtest 2026-10-22: Paarl's bar stayed up at the lamp after a wipe), so a party death clears
+// them itself. Returns the handles of the bars that were up.
+constexpr u64 BossGaugesPointerOffset = 0x05562878;
+constexpr u64 BossGaugesOffset = 0x1658;
+constexpr std::size_t BossGaugeSlots = 3;
+constexpr std::size_t BossGaugeSize = 0x14;
+std::vector<u32> ClearBossGauges(std::span<u8> gauges);
 std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, std::string_view self,
                                          u32 map, const LampPosition& me);
 

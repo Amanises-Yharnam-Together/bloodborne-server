@@ -348,6 +348,29 @@ s32 PartyDeathPoint(s32 own_point) {
 
 } // namespace
 
+namespace {
+
+// See ClearBossGauges: a party death's own Failed_BossAreaMission for the boss bars.
+void ClearBossBarsAfterDeath() {
+    const u64 holder = ReadValue<u64>(image_base + BossGaugesPointerOffset, 0);
+    constexpr std::size_t Size = BossGaugeSlots * BossGaugeSize;
+    if (holder < 0x10000 ||
+        !HasMemoryAccess(holder + BossGaugesOffset, Size, MemoryProt::CpuWrite)) {
+        return;
+    }
+    const std::vector<u32> up =
+        ClearBossGauges({reinterpret_cast<u8*>(holder + BossGaugesOffset), Size});
+    if (!up.empty()) {
+        std::string which;
+        for (const u32 handle : up) {
+            which += fmt::format(" {:#x}", handle);
+        }
+        LOG_INFO(Debug, "Bloodborne party death: boss bars cleared:{}", which);
+    }
+}
+
+} // namespace
+
 namespace Coop {
 
 // The lamp a death respawns the player at: resting at a lamp stores its respawn point id in
@@ -366,6 +389,9 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     const DeathReset call =
         arriving_from_trip ? DeathReset::None : party_death_reset.TakeAtRespawn();
     const bool reset = call != DeathReset::None;
+    if (!arriving_from_trip) {
+        ClearBossBarsAfterDeath();
+    }
     if (call == DeathReset::OwnMap) {
         LOG_INFO(Debug, "Bloodborne party death: another member stood when this member died: this "
                         "death is no party wipe (the party's kills stay, but on its own map "
