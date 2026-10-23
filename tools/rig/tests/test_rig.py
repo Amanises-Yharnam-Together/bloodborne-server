@@ -44,6 +44,7 @@ VERBS = {
     "menu-invite", "menu-kick", "menu-join", "menu-leave",  # the team menu in game
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
     "trade-socket", "expect-socketed",
+    "talk-gesture", "expect-gesture",  # an NPC talk's gesture step
     "cut-link",  # phase 7: a dropped connection
     "watch-unseen",  # a story NPC never drawn after a load
 }

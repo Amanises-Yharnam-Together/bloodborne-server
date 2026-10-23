@@ -3323,6 +3323,35 @@ SCENARIOS["key-items-kept"] = {
     "timeout": 600,
 }
 
+# An outside player on v1.1.4 (2026-10-23): a guest never learned Eileen's and Alfred's
+# gestures from their talks, the host did. A talk's gesture step skips while its flag is on
+# (talk-gesture does that step); Alfred's Pray is gesture 9 by flag 6749, Eileen's Shake off
+# Cape 4 by 6744.
+PRAY = "9 6749"
+SCENARIOS["gesture-own"] = {
+    "about": "each player learns an NPC's gesture from its own talk and keeps it: the host "
+             "learns Alfred's Pray, then the guest's own talk teaches the guest too, and the "
+             "guest still has it after a trip to the Dream and back; a gesture flag the guest's "
+             "save took from the host without the gesture (Shake off Cape) goes off",
+    "roles": {
+        "host": [START, "godmode", "expect-gesture 9 0", "wait-session 2 300",
+                 f"talk-gesture {PRAY}", "expect-gesture 9 1", "expect-flag 6749 1", "wait 30",
+                 "wait 30", "wait 30", "expect-gesture 9 1", "expect-session 2"],
+        "guest": [START, "godmode", "expect-gesture 9 0", "expect-gesture 4 0", "set-flag 6744 1",
+                  "wait-session 2 300", "wait 20", f"talk-gesture {PRAY}", "expect-gesture 9 1",
+                  "expect-flag 6749 1", "wait-flag 6744 0 20", f"travel {HUNTERS_DREAM}",
+                  "wait 15", "expect-gesture 9 1", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15",
+                  "expect-gesture 9 1", "expect-flag 6749 1", "expect-flag 6744 0",
+                  "expect-session 2"],
+    },
+    "expect": {"host": [r"talk gave gesture 9 \(flag 6749\)"],
+               "guest": [r"talk gave gesture 9 \(flag 6749\)",
+                         r"gesture flag 6744 cleared: this player has not learned gesture 4"]},
+    "forbid": {"host": SESSION_HOLDS + [r"talk gives no gesture"],
+               "guest": SESSION_HOLDS + [r"talk gives no gesture"]},
+    "timeout": 600,
+}
+
 # A world flag in Cathedral Ward's block (not the block of the map anyone stands on): the team's
 # progress there (krolebord's Ward gate, #266) and NPC steps (#269) live in blocks like it.
 WARD_BLOCK_FLAG = 12400999

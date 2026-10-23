@@ -47,6 +47,8 @@ constexpr u64 PlayerGameDataOffset = 0x08;
 constexpr u64 EchoesOffset = 0x94;
 constexpr u64 EquipGameDataOffset = 0x1D0;
 constexpr u64 InventoryOffset = 0x328;
+constexpr u64 GestureListOffset = 0x5B8;
+constexpr u32 GestureListSlots = 30; // u32 slots from +0x10 (talk command 66's loop, 0x02042B5C)
 constexpr u64 InventoryFindOffset = 0x014D9F60;
 constexpr u64 InventoryChangeCountOffset = 0x014D0BE0;
 constexpr u64 GiveItemsOffset = 0x017D89F0;
@@ -319,6 +321,42 @@ std::vector<u32> HeldWeaponIds() {
         }
     }
     return held;
+}
+
+// The gesture list's slot addresses, none without a list.
+std::vector<u64> GestureSlotAddresses() {
+    std::vector<u64> slots;
+    const u64 data = PlayerGameData();
+    const u64 list = data >= 0x10000 ? ReadValue<u64>(data, GestureListOffset) : 0;
+    if (list < 0x10000 ||
+        !HasMemoryAccess(list + 0x10, GestureListSlots * 4, MemoryProt::CpuRead)) {
+        return slots;
+    }
+    for (u32 slot = 0; slot < GestureListSlots; ++slot) {
+        slots.push_back(list + 0x10 + slot * 4);
+    }
+    return slots;
+}
+
+std::vector<GestureSlot> PlayerGestures() {
+    std::vector<GestureSlot> gestures;
+    for (const u64 slot : GestureSlotAddresses()) {
+        if (const auto gesture = DecodeGestureSlot(ReadValue<u32>(slot, 0))) {
+            gestures.push_back(*gesture);
+        }
+    }
+    return gestures;
+}
+
+bool LearnGesture(s32 gesture) {
+    for (const u64 slot : GestureSlotAddresses()) {
+        const auto found = DecodeGestureSlot(ReadValue<u32>(slot, 0));
+        if (found && found->gesture == gesture) {
+            WriteValue(slot, 0, static_cast<u8>(ReadValue<u8>(slot, 0) | 1)); // 0x02043E9E
+            return true;
+        }
+    }
+    return false;
 }
 
 // What the player holds of an item: its echoes, or the goods in its inventory (not the storage).

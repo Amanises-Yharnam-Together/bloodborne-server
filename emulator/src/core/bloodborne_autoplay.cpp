@@ -1931,6 +1931,55 @@ bool AutoplayWaitTrade(const AutoplayStep& step) {
     return TradeNoticesSeen(found->second) > 0 || step.WaitedOut(step.Number(1, 60));
 }
 
+// The gestures this player has learned, for the log.
+std::string LearnedGesturesText() {
+    std::vector<s32> learned;
+    for (const GestureSlot& gesture : PlayerGestures()) {
+        if (gesture.learned) {
+            learned.push_back(gesture.gesture);
+        }
+    }
+    return fmt::format("{}", fmt::join(learned, " "));
+}
+
+// talk-gesture <gesture> <flag>: an NPC talk's "gesture get" step (talk scripts 01.09, e.g.
+// Alfred's t240333 gives Pray, 9, by 6749): nothing while the flag is on, else the gesture learned
+// (talk command 66) and the flag set (11), as in this player's own talk.
+bool AutoplayTalkGesture(const AutoplayStep& step) {
+    const s32 gesture = static_cast<s32>(step.Number(0, 0));
+    const s32 flag = static_cast<s32>(step.Number(1, 0));
+    if (EventFlagOn(flag)) {
+        LOG_INFO(Debug, "Bloodborne autoplay: talk gives no gesture {}: its flag {} is on", gesture,
+                 flag);
+        return true;
+    }
+    if (!LearnGesture(gesture)) {
+        step.failure = "no slot for the gesture";
+        return false;
+    }
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, bool)>(
+        image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+    LOG_INFO(Debug, "Bloodborne autoplay: talk gave gesture {} (flag {}); learned: {}", gesture,
+             flag, LearnedGesturesText());
+    return true;
+}
+
+// expect-gesture <gesture> <0|1> [<timeout>]: whether this player has learned the gesture.
+bool AutoplayExpectGesture(const AutoplayStep& step) {
+    const s32 gesture = static_cast<s32>(step.Number(0, 0));
+    const auto gestures = PlayerGestures();
+    const bool learned = std::ranges::any_of(
+        gestures, [&](const GestureSlot& slot) { return slot.learned && slot.gesture == gesture; });
+    if (learned == (step.Number(1, 1) != 0)) {
+        return true;
+    }
+    if (step.elapsed > step.Number(2, 0)) {
+        step.failure = fmt::format("gesture {} {}learned ({} slots; learned: {})", gesture,
+                                   learned ? "" : "not ", gestures.size(), LearnedGesturesText());
+    }
+    return false;
+}
+
 // The script's verbs (tools/rig/tests/test_rig.py keeps the same list for the scenarios).
 using AutoplayVerb = bool (*)(const AutoplayStep& step);
 constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, AutoplayVerb>>({
@@ -1962,6 +2011,8 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"set-flag", AutoplaySetFlag},
     {"return-point", AutoplayReturnPoint},
     {"expect-flag", AutoplayExpectOrWaitFlag},
+    {"talk-gesture", AutoplayTalkGesture},
+    {"expect-gesture", AutoplayExpectGesture},
     {"wait-flag", AutoplayExpectOrWaitFlag},
     {"godmode", AutoplayGodmode},
     {"snapshot", AutoplaySnapshot},

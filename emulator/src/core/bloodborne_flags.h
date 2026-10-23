@@ -176,6 +176,34 @@ inline constexpr std::array HeldItemFlags{
     HeldItemFlag{6649, 4117}, // Cainhurst Badge
 };
 
+// The NPCs' gestures (talk scripts 01.09): a talk's "gesture get" step (its debug string
+// ジェスチャー取得判定) skips while the flag is on, else shows the gesture (talk command 65),
+// learns it (66) and sets the flag (11). Church Bow (Female) has two givers, each with its own
+// flag.
+struct GestureFlag {
+    s32 gesture;
+    s32 flag;
+};
+inline constexpr std::array GestureFlags{
+    GestureFlag{4, 6744},     // Shake off Cape: Eileen (t240325, t241325)
+    GestureFlag{5, 6745},     // Church Bow (Male): t240343
+    GestureFlag{6, 6746},     // Curtsy: t240318
+    GestureFlag{7, 6747},     // Church Bow (Female): t240322
+    GestureFlag{7, 70000007}, // Church Bow (Female): t240339
+    GestureFlag{9, 6749},     // Pray: Alfred (t240333)
+    GestureFlag{10, 6750},    // Wait: Eileen (t240342)
+    GestureFlag{11, 6751},    // Shh!: Eileen (t240325)
+    GestureFlag{13, 6753},    // Triumph: t240312, t240504
+    GestureFlag{14, 6754},    // Approval: Eileen (t241325)
+    GestureFlag{15, 6755},    // Roar: t250324
+    GestureFlag{16, 6756},    // Beg for Life: t320329
+    GestureFlag{17, 6757},    // Brush off Dust: Djura (t230323)
+    GestureFlag{18, 6758},    // Respect: t250307
+    GestureFlag{19, 6759},    // Deep Respect: t250307
+    GestureFlag{20, 6760},    // Make Contact: t242480
+    GestureFlag{22, 6770},    // League Oath: Valtr (t270503)
+};
+
 // The Bath messengers' shop sells a weapon once the player has had it (ShopLineupParam's
 // visibility flag, 01.09): a chalice dungeon weapon's item lot flag (ItemLotParam getItemFlagId
 // 5100-5282), or a flag a common event sets once the weapon (any upgrade, base id + 100 * level)
@@ -273,6 +301,16 @@ inline constexpr std::array FirstRows{
     Range(6680, 6697, FlagOwner::PerPlayer, FlagCarriesHome,
           "had a weapon the Bath shop then sells (OwnedWeaponFlags, common events 6680-6697: "
           "Ludwig's Holy Blade, the DLC weapons): this player's own"),
+    Range(6744, 6747, FlagOwner::PerPlayer, FlagCarriesHome,
+          "an NPC's gesture given (GestureFlags; its talk skips the gesture while it is on): "
+          "this player's own, as the host's a guest never learned Eileen's or Alfred's gestures "
+          "(an outside player on v1.1.4, 2026-10-23)"),
+    Range(6749, 6751, FlagOwner::PerPlayer, FlagCarriesHome,
+          "an NPC's gesture given (GestureFlags)"),
+    Range(6753, 6760, FlagOwner::PerPlayer, FlagCarriesHome,
+          "an NPC's gesture given (GestureFlags)"),
+    Range(6770, 6770, FlagOwner::PerPlayer, FlagCarriesHome,
+          "an NPC's gesture given (GestureFlags)"),
     Range(9180, 9199, FlagOwner::Session, 0,
           "the bell's bookkeeping (common events 9181-9198), not progress; kept for the "
           "guest's world it gave Insight again"),
@@ -328,6 +366,8 @@ inline constexpr std::array LastRows{
               .rule = {FlagOwner::Shared, FlagCarriesHome | FlagTakesHostMap},
               .why = "a lamp's active flag (10007810 + map * 10000 + lamp * 20, maps 210-399, "
                      "lamps 0-19) and the one after: the game does not sync them"},
+    Range(70000007, 70000007, FlagOwner::PerPlayer, FlagCarriesHome,
+          "an NPC's gesture given (GestureFlags: t240339's Church Bow (Female))"),
     Range(12000000, 13999999, FlagOwner::Host, FlagCarriesHome | FlagTakesHostMap,
           "the maps' flags (1AABxxxx: switches, bosses, enemies; doors are DoorFlags): the host's "
           "world"),

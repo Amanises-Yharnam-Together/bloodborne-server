@@ -1027,6 +1027,26 @@ std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool ho
     return holds;
 }
 
+std::optional<bool> GestureFlagFix(bool party_configured, bool flag_on, bool learned) {
+    if (!party_configured || !flag_on || learned) {
+        return std::nullopt;
+    }
+    return false;
+}
+
+std::optional<GestureSlot> DecodeGestureSlot(u32 entry) {
+    // 0x02042B01: above 0xFFFEFFFF, or 0xFFFE / 0xFFFF in the low half, is no gesture.
+    if (entry > 0xFFFEFFFF || (entry & 0xFFFE) == 0xFFFE) {
+        return std::nullopt;
+    }
+    // The gesture table's row (0x014EC980: 31 rows, row 0 none, row k gesture k - 1).
+    const s32 row = static_cast<s16>(entry & 0xFFFF) >> 1;
+    if (row < 1 || row > 30) {
+        return std::nullopt;
+    }
+    return GestureSlot{row - 1, (entry & 1) != 0};
+}
+
 bool HoldsWeapon(u32 weapon, std::span<const u32> held) {
     return std::ranges::any_of(held, [&](u32 id) {
         return id >= weapon && id - weapon <= 1000 && (id - weapon) % 100 == 0;
