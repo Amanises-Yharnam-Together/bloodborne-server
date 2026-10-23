@@ -57,6 +57,16 @@ public:
         return hosted;
     }
 
+    // A friend the lobby does not list joins by its team's code or is invited by its name. Wrong
+    // codes and names a player tries are counted: past LookupTries in LookupWindowMs every lookup
+    // of it is refused until the oldest is a window old (codes cannot be guessed).
+    static constexpr size_t LookupTries = 5;
+    static constexpr s64 LookupWindowMs = 60 * 1000;
+    // Where team codes come from (random on the server; a test's own).
+    void SetCodeSource(std::function<std::string()> source) {
+        make_code = std::move(source);
+    }
+
     // Kaniel 2026-10-16 (the team menu in game): a member out of a team, removed by its leader or
     // gone itself; the server takes it out of that team's world too.
     struct Departure {
@@ -83,7 +93,8 @@ public:
     // Members gone for OfflineGraceMs leave their teams. The clock of a member starts at the first
     // call that finds it gone.
     Outcome Expire(s64 now_ms);
-    Outcome Request(const std::string& member, const bbcoop::TeamRequest& request);
+    // `now_ms` counts wrong lookups (JOIN_CODE, INVITE_NAME).
+    Outcome Request(const std::string& member, const bbcoop::TeamRequest& request, s64 now_ms = 0);
 
     // What `member` sees.
     bbcoop::LobbyState StateFor(const std::string& member) const;
@@ -133,6 +144,12 @@ private:
     static void GiveSigns(bbcoop::Team& team);
     // A started team nobody plays in any more is not started.
     void Settle();
+    // A code no team has.
+    std::string NewCode();
+    // Whether `member` may look up a code or a name now; a wrong one is noted.
+    bool MayLookUp(const std::string& member, s64 now_ms);
+    void WrongLookup(const std::string& member, s64 now_ms);
+    void AddMember(bbcoop::Team& team, const std::string& member);
 
     // Who is in which team (an index for StateFor), made again after any change.
     void Index() const;
@@ -147,7 +164,9 @@ private:
     mutable std::map<std::string, size_t> team_index; // member -> its team's place in `teams`
 
     std::function<std::string()> make_id;
-    std::map<std::string, Player> players; // signed in
+    std::function<std::string()> make_code;
+    std::map<std::string, std::vector<s64>> wrong_lookups; // by player, the last window's
+    std::map<std::string, Player> players;                 // signed in
     std::vector<bbcoop::Team> teams;
     std::vector<bbcoop::TeamWorldInfo> worlds;                      // the last played first
     std::map<std::string, std::vector<bbcoop::TeamInvite>> invites; // by invited member

@@ -3,10 +3,12 @@
 // The team lobby's rules (coop/team_lobby.h): teams, invites, Ready and Start,
 // and the server's worlds.
 #include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <string>
 #include <vector>
 
+#include "coop/team_code.h"
 #include "coop/team_lobby.h"
 
 using namespace BloodborneCoop;
@@ -751,6 +753,163 @@ static int AHostedLobbyListsFewOthers() {
   return 0;
 }
 
+// A friend the lobby does not list joins by the team's code: the leader handed
+// it out (its invite), the friend typed it (its accept).
+static int AFriendJoinsByTheTeamsCode() {
+  TeamLobby lobby = NewLobby();
+  lobby.SetHosted(1, 16);
+  for (const char *m : {"a", "b", "c", "d", "e", "f"}) {
+    lobby.Arrive(m, m, false);
+  }
+  lobby.Request("a", Request(Action::CREATE));
+  const std::string code = lobby.StateFor("a").team().code();
+  CHECK(NormalizeTeamCode(code) == code);
+  bbcoop::TeamRequest join = Request(Action::JOIN_CODE);
+  // Typed in lower case with a dash in the middle.
+  std::string typed = code.substr(0, 3) + "-" + code.substr(3);
+  std::ranges::transform(typed, typed.begin(), [](char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  join.set_code(typed);
+  const TeamLobby::Outcome joined = lobby.Request("e", join);
+  CHECK(joined.changed && joined.notice.empty());
+  CHECK(lobby.TeamOf("e") == lobby.TeamOf("a"));
+  // Only the leader sees the code.
+  CHECK(lobby.StateFor("e").team().code().empty());
+  CHECK(lobby.StateFor("a").team().code() == code);
+  // In a team already: refused.
+  CHECK(!lobby.Request("e", join).notice.empty());
+  // A wrong code is refused.
+  bbcoop::TeamRequest wrong = Request(Action::JOIN_CODE);
+  wrong.set_code(code == "222222" ? "333333" : "222222");
+  CHECK(!lobby.Request("b", wrong).notice.empty());
+  CHECK(!lobby.TeamOf("b"));
+  // A full team is refused.
+  join.set_code(code);
+  CHECK(lobby.Request("b", join).notice.empty());
+  CHECK(lobby.Request("c", join).notice.empty());
+  CHECK(!lobby.Request("d", join).notice.empty());
+  CHECK(!lobby.TeamOf("d"));
+  // Only the leader makes a new code; the old one joins no more.
+  CHECK(!lobby.Request("b", Request(Action::NEW_CODE)).notice.empty());
+  lobby.Request("c", Request(Action::LEAVE));
+  CHECK(lobby.Request("a", Request(Action::NEW_CODE)).changed);
+  const std::string fresh = lobby.StateFor("a").team().code();
+  CHECK(fresh != code && NormalizeTeamCode(fresh) == fresh);
+  CHECK(!lobby.Request("d", join).notice.empty());
+  join.set_code(fresh);
+  CHECK(lobby.Request("d", join).notice.empty());
+  CHECK(lobby.TeamOf("d") == lobby.TeamOf("a"));
+  return 0;
+}
+
+static int TeamCodesAreUnique() {
+  TeamLobby lobby = NewLobby();
+  // A source that repeats itself: the second team does not get the first's.
+  lobby.SetCodeSource([n = 0]() mutable {
+    ++n;
+    return n <= 3 ? std::string{"AAAAAA"} : std::string{"BBBBBB"};
+  });
+  lobby.Arrive("a", "a", false);
+  lobby.Arrive("b", "b", false);
+  lobby.Request("a", Request(Action::CREATE));
+  lobby.Request("b", Request(Action::CREATE));
+  CHECK(lobby.StateFor("a").team().code() == "AAAAAA");
+  CHECK(lobby.StateFor("b").team().code() == "BBBBBB");
+  // A new code is never the team's own again.
+  lobby.SetCodeSource([n = 0]() mutable {
+    ++n;
+    return n <= 2 ? std::string{"BBBBBB"} : std::string{"CCCCCC"};
+  });
+  lobby.Request("b", Request(Action::NEW_CODE));
+  CHECK(lobby.StateFor("b").team().code() == "CCCCCC");
+  // The server's own source gives codes in the alphabet.
+  TeamLobby real = NewLobby();
+  real.Arrive("a", "a", false);
+  real.Request("a", Request(Action::CREATE));
+  const std::string code = real.StateFor("a").team().code();
+  CHECK(code.size() == TeamCodeLength && NormalizeTeamCode(code) == code);
+  return 0;
+}
+
+// Wrong codes and names are counted per player: past LookupTries a minute,
+// even a right one waits (guessing 2^30 codes at 5 a minute takes centuries).
+static int WrongLookupsAreLimited() {
+  for (const bool hosted : {false, true}) {
+    TeamLobby lobby = NewLobby();
+    if (hosted) {
+      lobby.SetHosted(32, 16);
+    }
+    lobby.Arrive("a", "Kaniel", false);
+    lobby.Arrive("b", "Ada", false);
+    lobby.Request("a", Request(Action::CREATE));
+    const std::string code = lobby.StateFor("a").team().code();
+    bbcoop::TeamRequest wrong = Request(Action::JOIN_CODE);
+    wrong.set_code(code == "222222" ? "333333" : "222222");
+    for (size_t n = 0; n < TeamLobby::LookupTries; ++n) {
+      CHECK(!lobby.Request("b", wrong, 1000 + static_cast<s64>(n))
+                 .notice.empty());
+    }
+    bbcoop::TeamRequest right = Request(Action::JOIN_CODE);
+    right.set_code(code);
+    const TeamLobby::Outcome held = lobby.Request("b", right, 2000);
+    CHECK(held.notice.find("too many") != std::string::npos);
+    CHECK(!lobby.TeamOf("b"));
+    // Names looked up in vain count too (each player its own).
+    bbcoop::TeamRequest by_name = Request(Action::INVITE_NAME);
+    by_name.set_name("Gehrman");
+    for (size_t n = 0; n < TeamLobby::LookupTries; ++n) {
+      CHECK(lobby.Request("a", by_name, 1000).notice.find("too many") ==
+            std::string::npos);
+    }
+    by_name.set_name("Ada");
+    CHECK(lobby.Request("a", by_name, 2000).notice.find("too many") !=
+          std::string::npos);
+    // A minute after the first wrong tries, it is let in.
+    CHECK(lobby.Request("b", right, 1000 + TeamLobby::LookupWindowMs)
+              .notice.empty());
+    CHECK(lobby.TeamOf("b") == lobby.TeamOf("a"));
+  }
+  return 0;
+}
+
+// A friend not listed (hosted: 32 others) is invited by the name the lobby
+// shows; the invited player is then listed to its inviter.
+static int AFriendIsInvitedByName() {
+  TeamLobby lobby = NewLobby();
+  lobby.SetHosted(3, 16);
+  for (int n = 0; n < 50; ++n) {
+    lobby.Arrive("p" + std::to_string(n), "P" + std::to_string(n), false);
+  }
+  lobby.Arrive("h1", "", false); // "Hunter"
+  lobby.Arrive("h2", "", false); // "Hunter"
+  bbcoop::TeamRequest invite = Request(Action::INVITE_NAME);
+  invite.set_name("p40");
+  CHECK(!lobby.Request("p0", invite).notice.empty()); // no team yet
+  lobby.Request("p0", Request(Action::CREATE));
+  const bool listed_before =
+      std::ranges::any_of(lobby.StateFor("p0").players(),
+                          [](const auto &p) { return p.member() == "p40"; });
+  CHECK(!listed_before);
+  invite.set_name(" p40 "); // case and spaces aside
+  const TeamLobby::Outcome done = lobby.Request("p0", invite, 10);
+  CHECK(done.changed && done.notice.empty());
+  CHECK(lobby.StateFor("p40").invites_size() == 1);
+  CHECK(std::ranges::any_of(lobby.StateFor("p0").players(),
+                            [](const auto &p) { return p.member() == "p40"; }));
+  // Two players of that name: refused, nobody invited.
+  invite.set_name("Hunter");
+  const TeamLobby::Outcome two = lobby.Request("p0", invite, 20);
+  CHECK(two.notice.find("several") != std::string::npos);
+  CHECK(lobby.StateFor("h1").invites_size() == 0);
+  // Nobody of that name, or itself: refused.
+  invite.set_name("Gehrman");
+  CHECK(!lobby.Request("p0", invite, 30).notice.empty());
+  invite.set_name("P0");
+  CHECK(!lobby.Request("p0", invite, 40).notice.empty());
+  return 0;
+}
+
 int main() {
   int failed = 0;
   failed |= PlayersAreSeenByTheirCharactersName();
@@ -775,6 +934,10 @@ int main() {
   failed |= HostedWorldsAreTheirPlayersOnly();
   failed |= HostedServersKeepEveryPlayersWorlds();
   failed |= AHostedLobbyListsFewOthers();
+  failed |= AFriendJoinsByTheTeamsCode();
+  failed |= TeamCodesAreUnique();
+  failed |= WrongLookupsAreLimited();
+  failed |= AFriendIsInvitedByName();
   if (failed == 0) {
     std::cout << "team lobby: all checks passed\n";
   }

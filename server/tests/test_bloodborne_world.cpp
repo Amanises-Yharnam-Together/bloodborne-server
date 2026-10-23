@@ -2505,6 +2505,58 @@ int HostedTradesAreWithinAStartedTeam() {
   return 0;
 }
 
+// Hosted: a friend the lobby does not list joins by the team's code (typed in
+// its game); wrong codes are counted on the service's clock.
+int HostedFriendsJoinByTheTeamsCode() {
+  Service service{{}};
+  BloodborneWorld::HostedRules rules;
+  rules.enabled = true;
+  rules.lobby_players = 0; // nobody listed: only the code finds the team
+  service.SetHosted(rules);
+  const auto hex = [](const char *id) {
+    return QByteArray(id).toHex().toStdString();
+  };
+  Game leader{1000, hex("Kaniel"), 11};
+  leader.online_id = "Kaniel";
+  Game friend_{1001, hex("Ada"), 12};
+  friend_.online_id = "Ada";
+  const std::vector<Game *> games{&leader, &friend_};
+  qint64 now = 1'000'000;
+  const auto step = [&] {
+    now += 300; // past the lobby's interval
+    Pump(service, games, now);
+  };
+  leader.LobbyHello(false, now);
+  friend_.LobbyHello(false, now);
+  step();
+  CHECK(leader.lobby.players_size() == 0);
+  leader.Team(bbcoop::TeamRequest::CREATE, now);
+  step();
+  const std::string code = leader.lobby.team().code();
+  CHECK(code.size() == 6);
+  const auto join = [&](const std::string &typed) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_team_request()->set_action(bbcoop::TeamRequest::JOIN_CODE);
+    envelope.mutable_team_request()->set_code(typed);
+    friend_.Send(envelope, now);
+    step();
+  };
+  for (size_t n = 0; n < TeamLobby::LookupTries; ++n) {
+    join(code == "222222" ? "333333" : "222222");
+    CHECK(friend_.lobby.notice() == "no team has that code");
+  }
+  join(code);
+  CHECK(friend_.lobby.notice().find("too many") != std::string::npos);
+  CHECK(!friend_.lobby.has_team());
+  now += TeamLobby::LookupWindowMs;
+  join(code);
+  CHECK(friend_.lobby.has_team() &&
+        friend_.lobby.team().id() == leader.lobby.team().id());
+  CHECK(friend_.lobby.team().code().empty()); // the leader's to hand out
+  CHECK(leader.lobby.team().members_size() == 2);
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
@@ -2516,6 +2568,7 @@ int main() {
       {"AnEmptyPartyWorldIsCollected", AnEmptyPartyWorldIsCollected},
       {"TheWorldsInMemoryAreCapped", TheWorldsInMemoryAreCapped},
       {"HostedTradesAreWithinAStartedTeam", HostedTradesAreWithinAStartedTeam},
+      {"HostedFriendsJoinByTheTeamsCode", HostedFriendsJoinByTheTeamsCode},
       {"ATeamEndsWhenEveryMembersGameIsGone",
        ATeamEndsWhenEveryMembersGameIsGone},
       {"TheWorldsOfTheOldTeamsAreOnTheList",

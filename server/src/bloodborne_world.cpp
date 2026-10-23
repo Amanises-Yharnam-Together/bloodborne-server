@@ -1478,7 +1478,8 @@ std::optional<QString> Service::Oversized(const bbcoop::Envelope& envelope) {
     case bbcoop::Envelope::kTeamRequest: {
         const bbcoop::TeamRequest& request = envelope.team_request();
         if (text(request.member(), MaxNameBytes) || text(request.team(), MaxNameBytes) ||
-            text(request.world(), MaxNameBytes) || text(request.character(), MaxCharacterBytes)) {
+            text(request.world(), MaxNameBytes) || text(request.character(), MaxCharacterBytes) ||
+            text(request.code(), MaxNameBytes) || text(request.name(), MaxCharacterBytes)) {
             return QStringLiteral("a team request's field too long");
         }
         break;
@@ -1866,7 +1867,7 @@ void Service::OnTeamRequest(Member& member, const bbcoop::TeamRequest& request, 
     if (member.lobby.empty()) {
         return; // nothing before its lobby hello
     }
-    const TeamLobby::Outcome outcome = lobby.Request(member.lobby, request);
+    const TeamLobby::Outcome outcome = lobby.Request(member.lobby, request, now_ms);
     // Kaniel 2026-10-16: the world a Start plays is the team's last played.
     if (request.action() == bbcoop::TeamRequest::START && !outcome.starts.empty()) {
         if (const bbcoop::Team* team = lobby.TeamOf(member.lobby)) {

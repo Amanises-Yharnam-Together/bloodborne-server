@@ -77,8 +77,17 @@ Settings: `Hosted`, `HostedBuild`, `HostedBanList`, `HostedLinksPerAddress`,
 `HttpLinkedOnly`.
 
 The games need no change for any of this (the emulator already says its id in hex as its names;
-check the port does too). One game-side change is wanted: on a hosted server the lobby lists 32
-players, so inviting a friend needs invite by name or code.
+check the port does too).
+
+A friend the lobby does not list (it lists 32 players), on every server: each team has a 6-letter
+code (no 0/O, 1/I; `coop/team_code.h`), shown to its leader on the team screen, made again with
+New code. Join by code puts the player straight into that team (the leader handing out the code is
+its invite, the typing the accept, so the leader has nothing more to answer). Invite by name sends
+the usual invite to the one signed-in player of that name as the lobby shows it (case aside;
+several of that name: refused), who is then listed to the inviter. Wrong codes and names count
+per player: past 5 in a minute every lookup waits (`TeamLobby::LookupTries`). Both are typed in
+the window's text entry (the game's name dialog's) and need this build on both sides
+(`TeamRequest` actions 12-14, `Team.code`).
 
 ## Load test
 
@@ -153,5 +162,4 @@ Server only:
 Game and launcher:
 - A cookie handshake and an HMAC on every datagram (secrets cross the internet in clear today, and
   after the hello a datagram is trusted by its address), ~3-5 days; or Noise, ~1.5-2 weeks.
-- Invite by name or code (the lobby lists 32 players).
 - A fresh id when the server refuses one (virtual address collision).
