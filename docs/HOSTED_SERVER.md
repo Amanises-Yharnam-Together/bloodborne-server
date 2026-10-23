@@ -25,6 +25,23 @@ Two fixes are on for everyone: a TCP packet size under its header no longer loop
 ever (`client_session.cpp`), and a datagram from one game no longer walks every member's stream
 (`Service::FlushSome`; that walk was the limit past ~600 games).
 
+Also for everyone: each account's virtual address (10.x.y.z, a 24-bit hash of its id that the games
+compute too) is stored with it, one account each (`database.cpp`, migration 3). A new id whose
+address another account has is refused, so nobody squats a known player's address; the link's
+refusal starts with `address taken:` (the launcher should make a new id). Accounts that already
+shared an address keep signing in, logged at start. Home servers get it too: an id sharing an
+address could never link while the other was linked anyway.
+
+Fuzzing: `test_fuzz_decoders` (in ctest) feeds the link's datagrams, game frames, our messages
+(`DecodeEnvelope` -> `Service::Take`) and the TCP sessions' packets a few thousand seeded random and
+mutated inputs each. With clang, `-DSHADNET_FUZZ=ON -DCMAKE_CXX_COMPILER=clang++` builds the same
+targets for libFuzzer with ASan/UBSan (`fuzz_link`, `fuzz_game_frame`, `fuzz_world`,
+`fuzz_session`; see `tests/fuzz/libfuzzer_main.cpp`; run with
+`ASAN_OPTIONS=detect_container_overflow=0`, protobuf and Qt are not instrumented); crashing inputs
+go in `tests/fuzz/regressions/<target>/`, which the ctest replays. It found one crash, fixed for
+everyone: a TCP packet's blob size past 2 GB passed `StreamExtractor`'s bounds check and read far
+past the packet, from any client before signing in. Four minutes of each target since: clean.
+
 Settings: `Hosted`, `HostedBuild`, `HostedBanList`, `HostedLinksPerAddress`,
 `HostedHellosPerSecond`, `HostedNewAccountsPerHour`, `HostedDatagramsPerSecond`,
 `HostedBytesPerSecond`, `HostedLobbyPlayers`, `HostedLobbyIntervalMs`, `HostedWorldsPerPlayer`.
@@ -96,7 +113,6 @@ Server only:
 - The HTTP ports (31315 summon broker, 20443 backend) take the player id from the request: only
   answer addresses with a signed-in link, as that link's player.
 - Caps on the reliable streams' reassembly and out-of-order buffers and on the protobuf strings.
-- Store each account's virtual address and refuse a colliding new account (24-bit hash).
 - World journal writes off the link thread (each record is fsynced on it now).
 - Make the account limit hold against botnets: a proof-of-work in the hello, or sign-up through
   the launcher with a server-signed token.

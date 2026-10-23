@@ -11,6 +11,7 @@
 #include <QUuid>
 #include <qcryptographichash.h>
 #include "database.h"
+#include "virtual_address.h"
 
 QByteArray Database::GenerateSalt(int bytes) {
     QByteArray salt(bytes, Qt::Uninitialized);
@@ -191,10 +192,70 @@ bool Database::Migrate() {
     ins2.prepare("INSERT OR IGNORE INTO migration VALUES(2,'title_name mapping')");
     Exec(ins2);
 
+    // Migration 3: each account's virtual address (virtual_address.h), one account each, so a new
+    // id cannot take (or squat) a known player's. Old accounts get theirs below.
+    {
+        QSqlQuery columns(m_db);
+        bool present = false;
+        if (columns.exec("PRAGMA table_info(account)"))
+            while (columns.next())
+                present = present || columns.value(1).toString() == "virtual_address";
+        if (!present)
+            Exec("ALTER TABLE account ADD COLUMN virtual_address INTEGER");
+    }
+    AssignVirtualAddresses();
+    Exec("CREATE UNIQUE INDEX IF NOT EXISTS account_virtual_address ON account(virtual_address)");
+    QSqlQuery ins3(m_db);
+    ins3.prepare("INSERT OR IGNORE INTO migration VALUES(3,'account virtual_address')");
+    Exec(ins3);
+
     qInfo() << "Database migrations complete";
 
     RunMaintenance();
     return true;
+}
+
+void Database::AssignVirtualAddresses() {
+    QSqlQuery missing(m_db);
+    if (!missing.exec("SELECT user_id, username FROM account WHERE virtual_address IS NULL "
+                      "ORDER BY user_id"))
+        return;
+    QList<QPair<qlonglong, QString>> accounts;
+    while (missing.next())
+        accounts.append({missing.value(0).toLongLong(), missing.value(1).toString()});
+    if (accounts.isEmpty())
+        return;
+    // Immediate: the sign-in threads open their connections (and migrate) at once.
+    if (!Exec("BEGIN IMMEDIATE"))
+        return;
+    int assigned = 0;
+    for (const auto& [userId, username] : accounts) {
+        const quint32 address = VirtualAddressOf(username.toUtf8());
+        if (AddressTaken(address)) {
+            // Two old accounts on one address keep signing in; their games cannot both be linked
+            // at once (server_link.cpp), as before.
+            qWarning() << "Accounts: the virtual address of" << username
+                       << "is an older account's; it keeps signing in, without an address of its "
+                          "own";
+            continue;
+        }
+        QSqlQuery set(m_db);
+        set.prepare("UPDATE account SET virtual_address=? WHERE user_id=?");
+        set.addBindValue(static_cast<qlonglong>(address));
+        set.addBindValue(userId);
+        if (Exec(set))
+            ++assigned;
+    }
+    Exec("COMMIT");
+    if (assigned > 0)
+        qInfo() << "Accounts: stored the virtual address of" << assigned << "account(s)";
+}
+
+bool Database::AddressTaken(quint32 address) {
+    QSqlQuery q(m_db);
+    q.prepare("SELECT 1 FROM account WHERE virtual_address=?");
+    q.addBindValue(static_cast<qlonglong>(address));
+    return Exec(q) && q.next();
 }
 
 std::optional<DbError> Database::CreateAccount(const QString& npid, const QString& password,
@@ -279,6 +340,14 @@ std::optional<DbError> Database::CreateAccount(const QString& npid, const QStrin
         }
     }
 
+    // Another account's game has this id's address: refused, so a new id never squats a known
+    // player's (the launcher makes another id).
+    const quint32 address = VirtualAddressOf(npid.toUtf8());
+    if (AddressTaken(address)) {
+        qWarning() << "createAccount: another account has the virtual address of" << npid;
+        return DbError::ExistingAddress;
+    }
+
     // Generate cryptographic values
     QByteArray salt = GenerateSalt();
     if (salt.isEmpty()) {
@@ -313,8 +382,8 @@ std::optional<DbError> Database::CreateAccount(const QString& npid, const QStrin
     {
         QSqlQuery q(m_db);
         if (!q.prepare("INSERT INTO account(username, hash, salt, avatar_url, "
-                       "email, email_check, token, admin, stat_agent, banned) "
-                       "VALUES(?, ?, ?, ?, ?, ?, ?, 0, 0, 0)")) {
+                       "email, email_check, token, admin, stat_agent, banned, virtual_address) "
+                       "VALUES(?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)")) {
             qCritical() << "createAccount: Failed to prepare insert query:" << q.lastError().text();
             m_db.rollback();
             return DbError::Internal;
@@ -327,10 +396,14 @@ std::optional<DbError> Database::CreateAccount(const QString& npid, const QStrin
         q.addBindValue(email);
         q.addBindValue(email.isEmpty() ? "" : email.toLower().trimmed());
         q.addBindValue(token);
+        q.addBindValue(static_cast<qlonglong>(address));
 
         if (!q.exec()) {
             qCritical() << "createAccount: Failed to insert account:" << q.lastError().text();
             m_db.rollback();
+            // Another connection (a sign-in thread) made an account on this address meanwhile.
+            if (AddressTaken(address))
+                return DbError::ExistingAddress;
 
             // Check for specific SQL errors
             if (q.lastError().nativeErrorCode() == "19" || // SQLITE_CONSTRAINT
@@ -427,7 +500,8 @@ std::optional<UserRecord> Database::CheckUser(const QString& npid, const QString
 }
 
 std::optional<UserRecord> Database::SignIn(const QString& npid, const QString& password,
-                                           const QString& token, bool checkToken, bool make) {
+                                           const QString& token, bool checkToken, bool make,
+                                           DbError* why) {
     if (auto user = CheckUser(npid, password, token, checkToken))
         return user;
     if (!make || password.isEmpty() || npid.size() < 3 || npid.size() > 16 ||
@@ -438,10 +512,13 @@ std::optional<UserRecord> Database::SignIn(const QString& npid, const QString& p
             return std::nullopt;
     if (GetUserId(npid))
         return std::nullopt; // a known id with another password: not this player
-    if (CreateAccount(npid, password,
-                      QStringLiteral("https://shadps4.net/shadnet/avatars/default_01.png"),
-                      npid + QStringLiteral("@player.local")))
+    if (const auto error = CreateAccount(
+            npid, password, QStringLiteral("https://shadps4.net/shadnet/avatars/default_01.png"),
+            npid + QStringLiteral("@player.local"))) {
+        if (why)
+            *why = *error;
         return std::nullopt;
+    }
     qInfo() << "signIn: made the account of player" << npid;
     return CheckUser(npid, password, token, false);
 }
@@ -515,7 +592,10 @@ bool Database::DeleteUser(int64_t userId) {
     QSqlQuery q(m_db);
     q.prepare("DELETE FROM account WHERE user_id=?");
     q.addBindValue(static_cast<qlonglong>(userId));
-    return Exec(q);
+    if (!Exec(q))
+        return false;
+    AssignVirtualAddresses(); // an account that shared its address may have it now
+    return true;
 }
 
 bool Database::SetAdmin(int64_t userId, bool admin) {
@@ -539,7 +619,8 @@ void Database::CleanNeverUsedAccounts() {
     q.prepare("DELETE FROM account WHERE user_id IN ("
               "  SELECT user_id FROM account_timestamp WHERE creation < ? AND last_login IS NULL)");
     q.addBindValue(static_cast<qint64>(cutoff));
-    Exec(q);
+    if (Exec(q) && q.numRowsAffected() > 0)
+        AssignVirtualAddresses();
 }
 
 void Database::RunMaintenance() {

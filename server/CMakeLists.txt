@@ -317,6 +317,36 @@ if(BUILD_TESTING)
     target_link_libraries(test_accounts PRIVATE Qt6::Core Qt6::Sql)
     add_test(NAME accounts COMMAND test_accounts)
 
+    # The fuzz targets (tests/fuzz) on seeded random and mutated inputs: the link's datagrams, game
+    # frames, our messages into the worlds, the TCP sessions' packets (all of shadnet but main).
+    set(SHADNET_FUZZ_SOURCES ${SOURCES}
+        tests/fuzz/fuzz_targets.h
+        tests/fuzz/fuzz_link.cpp
+        tests/fuzz/fuzz_world.cpp
+        tests/fuzz/fuzz_session.cpp
+    )
+    list(REMOVE_ITEM SHADNET_FUZZ_SOURCES src/main.cpp)
+    add_executable(test_fuzz_decoders EXCLUDE_FROM_ALL
+        tests/test_fuzz_decoders.cpp
+        ${SHADNET_FUZZ_SOURCES}
+    )
+    target_include_directories(test_fuzz_decoders PRIVATE
+        src
+        tests
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_fuzz_decoders PRIVATE
+        Qt6::Core Qt6::Network Qt6::Sql Qt6::Concurrent Qt6::HttpServer libprotobuf)
+    target_compile_definitions(test_fuzz_decoders PRIVATE
+        SHADNET_FUZZ_REGRESSIONS="${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/regressions")
+    if(Qt6_VERSION VERSION_LESS 6.8)
+        target_compile_definitions(test_fuzz_decoders PRIVATE SHADNET_NO_HTTP)
+    endif()
+    add_test(NAME fuzz_decoders COMMAND test_fuzz_decoders)
+    set_tests_properties(fuzz_decoders PROPERTIES TIMEOUT 600)
+
     # The backend in shadnet against backend/bb_dummy_server.py: the same requests, the same
     # answers (needs Python 3).
     find_package(Python3 COMPONENTS Interpreter)
@@ -342,6 +372,61 @@ target_include_directories(bbload PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
 )
 target_link_libraries(bbload PRIVATE Qt6::Core Qt6::Network libprotobuf)
+
+# libFuzzer targets (tests/fuzz/libfuzzer_main.cpp), with clang: -DSHADNET_FUZZ=ON
+# -DCMAKE_CXX_COMPILER=clang++ in a build folder of their own. Each fuzz_<name> runs one target
+# under AddressSanitizer and UndefinedBehaviorSanitizer; `fuzz_<name> -seeds=<folder>` writes its
+# seed corpus (docs/HOSTED_SERVER.md).
+option(SHADNET_FUZZ "Build the libFuzzer targets (clang)" OFF)
+if(SHADNET_FUZZ)
+    set(SHADNET_FUZZ_FLAGS -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined
+        -fno-omit-frame-pointer -g)
+    set(SHADNET_FUZZ_ALL ${SOURCES}
+        tests/fuzz/fuzz_link.cpp
+        tests/fuzz/fuzz_world.cpp
+        tests/fuzz/fuzz_session.cpp
+    )
+    list(REMOVE_ITEM SHADNET_FUZZ_ALL src/main.cpp)
+    # One library of everything, instrumented for coverage; each target its own main.
+    add_library(shadnet_fuzz_core STATIC ${SHADNET_FUZZ_ALL})
+    target_compile_options(shadnet_fuzz_core PUBLIC
+        -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined
+        -fno-omit-frame-pointer -g)
+    target_link_options(shadnet_fuzz_core PUBLIC -fsanitize=address,undefined)
+    target_include_directories(shadnet_fuzz_core PUBLIC
+        src
+        tests
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(shadnet_fuzz_core PUBLIC
+        Qt6::Core Qt6::Network Qt6::Sql Qt6::Concurrent Qt6::HttpServer libprotobuf)
+    if(Qt6_VERSION VERSION_LESS 6.8)
+        target_compile_definitions(shadnet_fuzz_core PUBLIC SHADNET_NO_HTTP)
+    endif()
+    foreach(target link game_frame world session)
+        if(target STREQUAL "link")
+            set(fuzz_function LinkDatagrams)
+            set(fuzz_seeds LinkSeeds)
+        elseif(target STREQUAL "game_frame")
+            set(fuzz_function GameFrames)
+            set(fuzz_seeds GameFrameSeeds)
+        elseif(target STREQUAL "world")
+            set(fuzz_function WorldMessages)
+            set(fuzz_seeds WorldSeeds)
+        else()
+            set(fuzz_function SessionPackets)
+            set(fuzz_seeds SessionSeeds)
+        endif()
+        add_executable(fuzz_${target} tests/fuzz/libfuzzer_main.cpp)
+        target_compile_definitions(fuzz_${target} PRIVATE
+            SHADNET_FUZZ_TARGET=${fuzz_function} SHADNET_FUZZ_SEEDS=${fuzz_seeds})
+        target_compile_options(fuzz_${target} PRIVATE ${SHADNET_FUZZ_FLAGS})
+        target_link_options(fuzz_${target} PRIVATE ${SHADNET_FUZZ_FLAGS})
+        target_link_libraries(fuzz_${target} PRIVATE shadnet_fuzz_core)
+    endforeach()
+endif()
 
 add_custom_command(TARGET shadnet POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

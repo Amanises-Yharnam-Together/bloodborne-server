@@ -7,9 +7,12 @@
 #include <iostream>
 
 #include <QCoreApplication>
+#include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QVariant>
 
 #include "database.h"
+#include "virtual_address.h"
 
 namespace {
 
@@ -70,6 +73,79 @@ int AnOldAccountSignsInAsBefore(const QString &folder) {
   return 0;
 }
 
+// Two ids whose games get the same virtual address (virtual_address.h): the
+// second could never link while the first is linked, or could squat it.
+const QString Holder = "p000000000048cf";
+const QString Collider = "p00000000005b99";
+
+QVariant AddressOf(Database &db, const QString &npid) {
+  QSqlQuery q(db.Conn());
+  q.prepare("SELECT virtual_address FROM account WHERE username=?");
+  q.addBindValue(npid);
+  return q.exec() && q.next() ? q.value(0) : QVariant{};
+}
+
+int ANewIdOnAnotherAccountsAddressIsRefused(const QString &folder) {
+  CHECK(VirtualAddressOf(Holder.toUtf8()) ==
+        VirtualAddressOf(Collider.toUtf8()));
+  Database db("address");
+  CHECK(db.Open(folder + "/address.db"));
+  CHECK(db.SignIn(Holder, "secret0123456789", {}, false, true).has_value());
+  CHECK(AddressOf(db, Holder).toLongLong() ==
+        VirtualAddressOf(Holder.toUtf8()));
+  DbError why = DbError::None;
+  CHECK(!db.SignIn(Collider, "secret0123456789", {}, false, true, &why));
+  CHECK(why == DbError::ExistingAddress);
+  CHECK(db.CreateAccount(Collider, "pw", "avatar.png", "c.pw@p2p.db") ==
+        DbError::ExistingAddress);
+  CHECK(db.TotalUsers() == 1);
+  // A wrong password is not an address taken.
+  why = DbError::None;
+  CHECK(!db.SignIn(Holder, "not-the-secret", {}, false, true, &why));
+  CHECK(why != DbError::ExistingAddress);
+  // Once the holder's account is gone its address is free.
+  CHECK(db.DeleteUser(*db.GetUserId(Holder)));
+  CHECK(db.SignIn(Collider, "secret0123456789", {}, false, true).has_value());
+  return 0;
+}
+
+// A database from before the addresses were stored: each account gets its
+// address, and two accounts that already share one both keep signing in (the
+// later one has none stored).
+int AnOldDatabaseGetsItsAddresses(const QString &folder) {
+  const QString path = folder + "/old_addresses.db";
+  {
+    Database db("before");
+    CHECK(db.Open(path));
+    CHECK(!db.CreateAccount(Holder, "pw1", "avatar.png", "h.pw@p2p.db"));
+    CHECK(!db.CreateAccount("kaniel", "pw2", "avatar.png", "k.pw@p2p.db"));
+    CHECK(!db.CreateAccount("later", "pw3", "avatar.png", "l.pw@p2p.db"));
+    QSqlQuery q(db.Conn());
+    CHECK(q.exec("DROP INDEX account_virtual_address"));
+    CHECK(q.exec("ALTER TABLE account DROP COLUMN virtual_address"));
+    CHECK(q.exec("DELETE FROM migration WHERE migration_id=3"));
+    CHECK(q.exec("UPDATE account SET username='" + Collider +
+                 "' WHERE username='later'"));
+  }
+  Database db("after");
+  CHECK(db.Open(path));
+  CHECK(AddressOf(db, Holder).toLongLong() ==
+        VirtualAddressOf(Holder.toUtf8()));
+  CHECK(AddressOf(db, "kaniel").toLongLong() == VirtualAddressOf("kaniel"));
+  CHECK(AddressOf(db, Collider).isNull());
+  CHECK(db.SignIn(Holder, "pw1", {}, false, true).has_value());
+  CHECK(db.SignIn(Collider, "pw3", {}, false, true).has_value());
+  CHECK(db.SignIn("kaniel", "pw2", {}, false, true).has_value());
+  // Migrating again changes nothing; once the holder is gone the later
+  // account gets the address.
+  CHECK(db.Migrate());
+  CHECK(AddressOf(db, Collider).isNull());
+  CHECK(db.DeleteUser(*db.GetUserId(Holder)));
+  CHECK(AddressOf(db, Collider).toLongLong() ==
+        VirtualAddressOf(Collider.toUtf8()));
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -81,7 +157,8 @@ int main(int argc, char **argv) {
   }
   for (const auto test :
        {AFirstSignInMakesTheAccount, WithoutMakingAnUnknownIdIsRefused,
-        AnOldAccountSignsInAsBefore}) {
+        AnOldAccountSignsInAsBefore, ANewIdOnAnotherAccountsAddressIsRefused,
+        AnOldDatabaseGetsItsAddresses}) {
     if (const int failed = test(folder.path())) {
       return failed;
     }
