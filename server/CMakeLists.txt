@@ -278,6 +278,22 @@ if(BUILD_TESTING)
     target_link_libraries(test_bloodborne_world PRIVATE Qt6::Core libprotobuf)
     add_test(NAME bloodborne_world COMMAND test_bloodborne_world)
 
+    add_executable(test_world_writer EXCLUDE_FROM_ALL
+        tests/test_world_writer.cpp
+        src/bloodborne_world.cpp
+        src/bloodborne_party_boards.cpp
+        src/server_link.cpp
+        ${COOP_SOURCES}
+    )
+    target_include_directories(test_world_writer PRIVATE
+        src
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_world_writer PRIVATE Qt6::Core libprotobuf)
+    add_test(NAME world_writer COMMAND test_world_writer)
+
     add_executable(test_admission EXCLUDE_FROM_ALL tests/test_admission.cpp src/admission.cpp)
     target_include_directories(test_admission PRIVATE src)
     target_link_libraries(test_admission PRIVATE Qt6::Core Qt6::Network)

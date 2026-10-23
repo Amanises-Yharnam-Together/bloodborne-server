@@ -246,7 +246,7 @@ struct Game {
   u32 run = 0x1001;
   u32 number = 0;
   bool online = true; // false: its datagrams are lost
-  bool deaf = false;   // true: what the server sends it is lost (it never acks)
+  bool deaf = false;  // true: what the server sends it is lost (it never acks)
   QByteArray online_id; // its link's player id (empty: its name)
 };
 
@@ -511,6 +511,46 @@ int AJournalCutShortLoadsUpToItsLastRecord() {
   CHECK(world != nullptr);
   CHECK(WorldLogHandles(world->Kills()) == std::unordered_set<u32>{1});
   // A world file that does not read: the backup.
+  return 0;
+}
+
+// A journal whose tail does not read (a crash in a write): the world is written
+// whole at the load, so the records after it are not written behind the tail
+// that does not read.
+int AJournalsBrokenTailIsNotWrittenAfter() {
+  QTemporaryDir dir;
+  qint64 now = 1'000'000;
+  {
+    Service service{dir.path(), 1000, 1, 30'000}; // every record written whole
+    Game host{1000, "host", 11};
+    host.Hello(now);
+    Pump(service, {&host}, now);
+    host.Propose({{0x18000000, {1}}}, now + 1);
+    Pump(service, {&host}, now + 1);
+  }
+  const QString folder =
+      QDir{dir.path()}.filePath(BloodborneWorld::PartyFolderName(Party));
+  {
+    QFile journal{QDir{folder}.filePath("journal.pb")};
+    CHECK(journal.open(QIODevice::WriteOnly | QIODevice::Append));
+    CHECK(journal.size() == 0);
+    journal.write(QByteArray("\x09\x00\x00\x00ab", 6)); // a cut record
+  }
+  {
+    Service service{dir.path(), 1000, 1000, 1'000'000}; // the journal only
+    service.Load(now + 10);
+    Game host{1000, "host", 21};
+    host.run = 0x2001;
+    host.Hello(now + 20);
+    Pump(service, {&host}, now + 20);
+    host.Propose({{0x18000000, {1, 2}}}, now + 30);
+    Pump(service, {&host}, now + 30);
+  }
+  Service service{dir.path()};
+  service.Load(now + 40);
+  const WorldLogHost *world = service.World(Party);
+  CHECK(world != nullptr);
+  CHECK((WorldLogHandles(world->Kills()) == std::unordered_set<u32>{1, 2}));
   return 0;
 }
 
@@ -1782,6 +1822,7 @@ int AForgottenWorldsFolderIsPutAside() {
   a.LobbyHello(true, now);
   Pump(service, {&a}, now);
   const QString folder = FolderOfKey(dir.path(), go.party());
+  service.Drain();
   CHECK(QDir{folder}.exists());
   bbcoop::Envelope forget;
   forget.mutable_team_request()->set_action(bbcoop::TeamRequest::FORGET_WORLD);
@@ -1798,6 +1839,7 @@ int AForgottenWorldsFolderIsPutAside() {
   Pump(service, {&a2}, now);
   a2.Send(forget, now);
   Pump(service, {&a2}, now);
+  service.Drain(); // the folder goes aside on the writer's thread
   CHECK(a2.lobby.notice().empty());
   CHECK(a2.lobby.worlds_size() == 0);
   CHECK(!QDir{folder}.exists());
@@ -2168,7 +2210,6 @@ int ARemovedMemberIsOutOfTheTeamsWorld() {
   return 0;
 }
 
-
 // Hosted (docs/HOSTED_SERVER.md): a player's names are its own id's, and a
 // party hello is only for the world its team plays.
 int HostedPartiesAreTheirTeamsOnly() {
@@ -2497,6 +2538,8 @@ int main() {
        AJournalCutShortLoadsUpToItsLastRecord},
       {"ABrokenWorldFileFallsBackToABackup",
        ABrokenWorldFileFallsBackToABackup},
+      {"AJournalsBrokenTailIsNotWrittenAfter",
+       AJournalsBrokenTailIsNotWrittenAfter},
       {"TheServerRestartingMidSessionLosesNothing",
        TheServerRestartingMidSessionLosesNothing},
       {"AWorldKeepsADatedCopyADayForAWeek", AWorldKeepsADatedCopyADayForAWeek},

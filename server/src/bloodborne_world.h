@@ -46,6 +46,7 @@ public:
     struct Loaded {
         bbcoop::StoredWorld world;
         QList<bbcoop::JournalRecord> journal; // the records from world.journal_from on
+        bool journal_cut = false; // its journal ends in bytes that do not read (a crash)
     };
     // The world and its journal, or nothing (no world here yet). A world file that does not read
     // falls back to the backups; a journal cut short ends at its last whole record.
@@ -63,6 +64,46 @@ public:
 
 private:
     QString folder;
+};
+
+// The worlds' disk writes, on a thread of their own (security review P1 12): the link thread
+// that relays every game's packets only queues them. One queue for every world, written in the
+// order given, so each world's records reach its journal in order and a Compact comes after the
+// records it holds. Group commit: the journals written to are fsynced every commit_ms, after
+// commit_records records, before a world is written whole (journal before world.pb, as the
+// backups read them) and before a folder moves. A crash loses at most the records not fsynced
+// yet (a tail: the order holds); the journal still reads (WorldStore::Load stops at a cut record).
+class WorldWriter {
+public:
+    explicit WorldWriter(qint64 commit_ms = 100, int commit_records = 256);
+    // Drains: everything queued is on disk.
+    ~WorldWriter();
+    WorldWriter(const WorldWriter&) = delete;
+    WorldWriter& operator=(const WorldWriter&) = delete;
+
+    void Append(const QString& folder, bbcoop::JournalRecord record);
+    void Compact(const QString& folder, bbcoop::StoredWorld world,
+                 const QDate& today = QDate::currentDate());
+    void SaveTrades(const QString& folder, bbcoop::StoredTrades trades);
+    // A whole file (team_world.pb, worlds.pb), replaced at once (QSaveFile).
+    void Save(const QString& path, QByteArray bytes);
+    // `name` in `parent` moves to `to` (in `parent`): a world's folder put aside.
+    void Move(const QString& parent, const QString& name, const QString& to);
+    // Whether a Move of the folder `parent`/`name` is queued (what is in it is not known yet).
+    bool Moving(const QString& parent, const QString& name) const;
+    // Returns when everything queued before it is on disk.
+    void Drain();
+    // Stops at once, writing nothing more and fsyncing nothing (a crash, for the tests).
+    void Abandon();
+    // What went wrong since the last call, for the server's log.
+    QStringList TakeLog();
+    // Records fsynced, and fsync rounds, so far (the tests).
+    quint64 Synced() const;
+    quint64 Commits() const;
+
+private:
+    struct State;
+    std::unique_ptr<State> state;
 };
 
 // The world key of a party: a hash of its key, safe as a folder name.
@@ -152,6 +193,10 @@ public:
     const BloodborneCoop::TeamLobby& Lobby() const {
         return lobby;
     }
+
+    // Returns when the worlds' writes so far are on disk (the tests; the service drains when it
+    // goes).
+    void Drain();
 
     // For the tests and the log.
     const BloodborneCoop::WorldLogHost* World(const QByteArray& party) const;
@@ -315,6 +360,7 @@ private:
     void PutAside(const std::vector<std::string>& forgotten, Result& result);
 
     QString folder;
+    std::unique_ptr<WorldWriter> writer; // with a folder
     qint64 heartbeat_ms;
     int compact_records;
     qint64 compact_ms;

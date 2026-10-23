@@ -5,6 +5,12 @@
 #include <QDebug>
 #include <QDir>
 #include <QLoggingCategory>
+#ifdef Q_OS_UNIX
+#include <csignal>
+#include <QSocketNotifier>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 #ifndef SHADNET_NO_HTTP
 #include "bloodborne_backend_server.h"
 #endif
@@ -16,6 +22,35 @@
 #endif
 
 const QString versionString = QStringLiteral("0.0.13");
+
+#ifdef Q_OS_UNIX
+namespace {
+int quitSockets[2] = {-1, -1};
+
+void OnQuitSignal(int) {
+    const char byte = 1;
+    [[maybe_unused]] const auto written = ::write(quitSockets[1], &byte, 1);
+}
+
+// SIGTERM (docker stop, systemctl stop) and Ctrl+C end the event loop instead of the process, so
+// the worlds' writes still queued reach the disk (LinkServer drains them on aboutToQuit).
+void QuitOnSignals(QCoreApplication& app) {
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, quitSockets) != 0)
+        return;
+    auto* notifier = new QSocketNotifier(quitSockets[0], QSocketNotifier::Read, &app);
+    QObject::connect(notifier, &QSocketNotifier::activated, &app, [&app] {
+        qInfo() << "Stopping (signal)";
+        app.quit();
+    });
+    struct sigaction action {};
+    action.sa_handler = OnQuitSignal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART;
+    sigaction(SIGTERM, &action, nullptr);
+    sigaction(SIGINT, &action, nullptr);
+}
+} // namespace
+#endif
 
 int main(int argc, char* argv[]) {
     QLoggingCategory::setFilterRules(QStringLiteral("*.debug=false\n*.info=true\n*.warning=true"));
@@ -45,6 +80,9 @@ int main(int argc, char* argv[]) {
     }
 
     qInfo() << "ShadNet Qt server version" << versionString;
+#ifdef Q_OS_UNIX
+    QuitOnSignals(app);
+#endif
 
     ConfigManager config;
     config.Load();

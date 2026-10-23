@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadNet Project
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
@@ -78,6 +79,12 @@ LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_
     // The worlds' clock is the wall clock: their journals keep it across restarts.
     Apply(m_world.Load(QDateTime::currentMSecsSinceEpoch()));
     m_worldTimer->start(50);
+    // The worlds' writes are on their own thread: on disk before anything else goes down.
+    if (QCoreApplication::instance())
+        connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] {
+            m_world.Drain();
+            qInfo() << "Link: the worlds are on disk";
+        });
 }
 
 LinkServer::~LinkServer() {
