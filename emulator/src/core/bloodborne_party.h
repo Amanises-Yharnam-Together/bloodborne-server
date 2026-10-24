@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -136,8 +137,10 @@ public:
     explicit CoopTimeMeter(s64 period_ms) : period_ms{period_ms} {}
     void Add(std::string_view section, s64 ns, s64 now_ms);
     // "<section> avg <ms> ms max <ms> ms (<n> calls), ... over <s> s", in the order the sections
-    // came first; nothing before the period is over.
-    std::optional<std::string> Report(s64 now_ms);
+    // came first; nothing before the period is over. With `slowest`, only that many sections, the
+    // ones with the most time in all, most first.
+    std::optional<std::string> Report(s64 now_ms,
+                                      size_t slowest = std::numeric_limits<size_t>::max());
 
 private:
     struct Section {

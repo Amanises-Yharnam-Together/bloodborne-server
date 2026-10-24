@@ -44,6 +44,7 @@ LONG = {
     "paarl-after-wipe": "Kaniel's playtest 2026-10-22: three games, a wipe, a wake and a walk back",
     "kill-reaches-arrival": "the 10-19 playtest case #278: three games, two trips",
     "soak": "a long session by design",
+    "solo-death-tick": "70 s and 100 s waits: the co-op time lines come every 30 s",
     "chalice-team": "two rituals and two dungeon loads, measured 313 s",
     "chalice-altar-host": "a ritual and two dungeon loads, measured 315 s",
     "chalice-altar-team": "a ritual and two dungeon loads, measured 315 s",

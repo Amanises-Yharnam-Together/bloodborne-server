@@ -835,10 +835,14 @@ void CoopTimeMeter::Add(std::string_view section, s64 ns, s64 now_ms) {
     ++it->calls;
 }
 
-std::optional<std::string> CoopTimeMeter::Report(s64 now_ms) {
+std::optional<std::string> CoopTimeMeter::Report(s64 now_ms, size_t slowest) {
     std::scoped_lock lock{mutex};
     if (!since_ms || now_ms - *since_ms < period_ms) {
         return std::nullopt;
+    }
+    if (slowest < sections.size()) {
+        std::ranges::stable_sort(sections, std::ranges::greater{}, &Section::total_ns);
+        sections.resize(slowest);
     }
     std::string line;
     for (const Section& section : sections) {

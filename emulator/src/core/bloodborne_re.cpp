@@ -1007,40 +1007,62 @@ bool InSessionWorld() {
 namespace Coop {
 
 CoopTimeMeter coop_time{30'000};
+CoopTimeMeter coop_tick_parts{30'000};
+
+TickPartTimer::~TickPartTimer() {
+    coop_tick_parts.Add(name,
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - started)
+                            .count(),
+                        SteadyMilliseconds());
+}
 
 void ReportCoopTime(s64 now_ms) {
     // A warning, so the port's console shows it beside its Perf lines.
     if (const auto line = coop_time.Report(now_ms)) {
         LOG_WARNING(Debug, "Co-op time: {}", *line);
     }
+    if (const auto line = coop_tick_parts.Report(now_ms, 4)) {
+        LOG_WARNING(Debug, "Co-op tick slowest parts: {}", *line);
+    }
 }
 
+namespace {
+
+template <typename Part>
+void TimeTickPart(std::string_view name, Part&& part) {
+    const TickPartTimer timer{name};
+    part();
+}
+
+} // namespace
+
 void TickPartyController() {
-    NoteGameThreadTick();
-    TickPlace();
-    TickAutoplay();
-    TickPartyTrip();
-    TickPlayersOnThisMap();
-    TickMapScreen();
-    CheckAutoplayWatch();
-    LogJoinTaskChanges();
-    WatchSummonJoin();
-    KeepGuestBloodstainMark();
-    ShowGuestBloodstain();
-    LogBloodstainStateChanges();
-    LogMapChanges();
-    LogLocalEffectChanges();
+    TimeTickPart("NoteGameThreadTick", NoteGameThreadTick);
+    TimeTickPart("TickPlace", TickPlace);
+    TimeTickPart("TickAutoplay", TickAutoplay);
+    TimeTickPart("TickPartyTrip", TickPartyTrip);
+    TimeTickPart("TickPlayersOnThisMap", TickPlayersOnThisMap);
+    TimeTickPart("TickMapScreen", TickMapScreen);
+    TimeTickPart("CheckAutoplayWatch", CheckAutoplayWatch);
+    TimeTickPart("LogJoinTaskChanges", LogJoinTaskChanges);
+    TimeTickPart("WatchSummonJoin", WatchSummonJoin);
+    TimeTickPart("KeepGuestBloodstainMark", KeepGuestBloodstainMark);
+    TimeTickPart("ShowGuestBloodstain", ShowGuestBloodstain);
+    TimeTickPart("LogBloodstainStateChanges", LogBloodstainStateChanges);
+    TimeTickPart("LogMapChanges", LogMapChanges);
+    TimeTickPart("LogLocalEffectChanges", LogLocalEffectChanges);
     if (party_controller) {
-        LogActionBlockingState();
-        KeepBossHpInStep();
-        LogNearbyEnemyControl();
-        LogEnemyTargets();
-        LogJoinTasksOnChange();
-        ReconcileMemberPresence();
-        LogUnsharedNearbyCharacters();
+        TimeTickPart("LogActionBlockingState", LogActionBlockingState);
+        TimeTickPart("KeepBossHpInStep", KeepBossHpInStep);
+        TimeTickPart("LogNearbyEnemyControl", LogNearbyEnemyControl);
+        TimeTickPart("LogEnemyTargets", LogEnemyTargets);
+        TimeTickPart("LogJoinTasksOnChange", LogJoinTasksOnChange);
+        TimeTickPart("ReconcileMemberPresence", ReconcileMemberPresence);
+        TimeTickPart("LogUnsharedNearbyCharacters", LogUnsharedNearbyCharacters);
     }
-    LogOtherPlayersChanges();
-    ObserveLocalAliveState();
+    TimeTickPart("LogOtherPlayersChanges", LogOtherPlayersChanges);
+    TimeTickPart("ObserveLocalAliveState", ObserveLocalAliveState);
     {
         const auto started = std::chrono::steady_clock::now();
         TickPartyDeath();
@@ -1050,10 +1072,11 @@ void TickPartyController() {
                           .count(),
                       SteadyMilliseconds());
     }
-    TickLampRest();
+    TimeTickPart("TickLampRest", TickLampRest);
     if (!party_controller) {
         return;
     }
+    const TickPartTimer party_controller_part{"party controller"};
     ReopenClosedPartySession();
     const u64 player = GetLocalPlayer();
     const PartyObservation observation = ObserveParty(player, party_controller->SearchEffectId());
