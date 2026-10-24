@@ -2039,7 +2039,11 @@ void SwitchOffWhatALoneGuestKeepsLoaded(u32 map, std::span<const u64> characters
         switched.clear(); // the old map's characters are gone
         switched_map = map;
     }
-    const bool lone_guest = IsPartyGuestRole() && Coop::CurrentEnemyRole() == EnemyRole::Owner;
+    // Every guest on a map the host is not on, the one that runs its enemies and the others that
+    // follow it (Kaniel's playtest 2026-10-24: krolebord, following Lisara's game in the Grand
+    // Cathedral, saw Eileen there until the host came).
+    const bool lone_guest = IsPartyGuestRole() && (Coop::CurrentEnemyRole() == EnemyRole::Owner ||
+                                                   Coop::HostAwayFromThisMap());
     if (!lone_guest && switched.empty()) {
         return;
     }
