@@ -31,15 +31,39 @@ inline VramPlacement VramPlacementFrom(const char* env, const std::optional<std:
 /// This run's placement (BB_VRAM_PLACEMENT, bbport.ini vram_placement), decided once (image.cpp).
 VramPlacement ActiveVramPlacement();
 
+/// Whether the buffer cache's arena can be bound to a memory type outside the arena's heap
+/// (type_bits: the arena's memory types; type_heaps: each memory type's heap). AMD and Intel
+/// accept system memory for it, NVIDIA does not.
+constexpr bool ArenaSpillsOutsideVram(std::uint32_t type_bits,
+                                      std::span<const std::uint32_t> type_heaps,
+                                      std::uint32_t arena_heap) {
+    for (std::size_t i = 0; i < type_heaps.size() && i < 32; ++i) {
+        if (((type_bits >> i) & 1) != 0 && type_heaps[i] != arena_heap) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// The VRAM the buffer cache keeps for the game's memory at start (VramPlacement::Reserve):
-/// 512 MiB, or an eighth of a smaller heap, in whole blocks; none on integrated GPUs.
-constexpr std::uint64_t ArenaReserveBytes(bool discrete, std::uint64_t heap_size,
+/// 512 MiB, or an eighth of a smaller heap, in whole blocks; none on integrated GPUs, and none
+/// where the game's memory can spill outside VRAM (Supermedo 859f9e4: there EnsureResident falls
+/// back to system memory first; the RX 6500 XT report held 478 MiB of its 4 GB, 0 used).
+constexpr std::uint64_t ArenaReserveBytes(bool discrete, bool spills, std::uint64_t heap_size,
                                           std::uint64_t block_size) {
-    if (!discrete || block_size == 0) {
+    if (!discrete || spills || block_size == 0) {
         return 0;
     }
     const std::uint64_t size = std::min<std::uint64_t>(512ull << 20, heap_size / 8);
     return size / block_size * block_size;
+}
+
+/// Object motion (vk_object_motion.cpp) on this GPU: off on discrete GPUs with under 6 GB of
+/// VRAM, where its ~225 MiB (128 MiB of vertex history and the extra attachments) are better
+/// left to textures, unless BB_OBJECT_MOTION=1 asks for it (Supermedo d257021). A 6 GB card
+/// reports a little less than 6 GiB.
+constexpr bool ObjectMotionFitsVram(bool discrete, std::uint64_t vram, bool forced) {
+    return forced || !discrete || vram >= (6ull << 30) - (256ull << 20);
 }
 
 /// bbport: one memory heap as the driver reports it (VK_EXT_memory_budget).
