@@ -996,6 +996,31 @@ bool AutoplayLogFlags(const AutoplayStep& step) {
     return true;
 }
 
+// altar-record <altar 0-6 | view>: a ritual altar's record (94k00000-94k05999, or the current
+// altar's view 92900000-92905999), its 750 bytes logged as hex (team altars: the rig compares
+// every game's).
+bool AutoplayAltarRecord(const AutoplayStep& step) {
+    const bool view = step.Arg(0) == "view";
+    const s32 altar = view ? -1 : static_cast<s32>(step.Number(0, -1));
+    if (!view && (altar < 0 || altar >= 7)) {
+        step.failure = "altar-record takes an altar 0-6 or view";
+        return false;
+    }
+    const s32 base = view ? 92900000 : 94000000 + altar * 100000;
+    std::string hex;
+    for (s32 byte = 0; byte < 750; ++byte) {
+        const auto bits = EventFlagBits(base + byte * 8, 8);
+        if (!bits) {
+            step.failure = "the event flags are not readable";
+            return false;
+        }
+        hex += fmt::format("{:02x}", *bits & 0xFF);
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay altar-record {} (map {:#x}): {}",
+             view ? "view" : std::string{step.Arg(0)}, GetCurrentPackedMap(), hex);
+    return true;
+}
+
 // godmode [off]: the player's HP back to its max on every party tick (tests that stand
 // around near enemies), until switched off.
 bool AutoplayGodmode(const AutoplayStep& step) {
@@ -2032,6 +2057,7 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-gesture", AutoplayExpectGesture},
     {"wait-flag", AutoplayExpectOrWaitFlag},
     {"flags", AutoplayLogFlags},
+    {"altar-record", AutoplayAltarRecord},
     {"godmode", AutoplayGodmode},
     {"snapshot", AutoplaySnapshot},
     {"census", AutoplayCensus},

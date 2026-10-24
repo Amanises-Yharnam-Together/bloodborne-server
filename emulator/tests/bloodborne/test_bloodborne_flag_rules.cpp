@@ -644,20 +644,29 @@ TEST(BloodborneFlagRules, GestureSlotsAsTheTalkReadsThem) {
 }
 
 // Team altars (Kaniel 2026-10-17): a ritual at any member's altar puts its dungeon on every
-// member's altar. Ritual altar k keeps its dungeon in event flags 94k00000-94k05999 (8-bit values
-// packed into the flags, and switches such as "a chalice on it", 94k05001): those are the party's,
-// clears as well as sets, so the other altars take the same values.
+// member's altar. Ritual altar k keeps its dungeon in event flags 94k00000-94k05999 (a record
+// packed into the flags, and switches such as "a chalice on it", 94k05001): the world's, in the
+// team world as the host has them, and a ritual's record goes to the team whole, never flag by
+// flag (Kaniel's playtest 2026-10-24: the diffs merged the records). The current altar's view
+// (92900000-92905999) is each game's own: neither in the team world nor shared.
 TEST(BloodborneFlagRules, RitualAltarsAreTheTeams) {
     for (s32 altar = 0; altar < 10; ++altar) {
         const s32 base = 94000000 + altar * 100000;
         for (const s32 flag :
              {base, base + 31, base + 5000, base + 5001, base + 5500, base + 5999}) {
-            EXPECT_TRUE(SharedWithParty(flag)) << flag;
-            EXPECT_TRUE(RuleFor(flag).Has(FlagSharesClears)) << flag;
+            EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Host) << flag;
+            EXPECT_FALSE(SharedWithParty(flag)) << flag;
+            EXPECT_TRUE(IsWorldFlag(flag)) << flag;
+            EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
         }
-        EXPECT_FALSE(SharedWithParty(base + 6000)) << base + 6000;
-        EXPECT_FALSE(SharedWithParty(base - 1)) << base - 1;
     }
+    for (const s32 flag : {92900000, 92900031, 92905001, 92905999}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Session) << flag;
+        EXPECT_FALSE(SharedWithParty(flag)) << flag;
+        EXPECT_FALSE(IsWorldFlag(flag)) << flag;
+        EXPECT_FALSE(CarriesToGuestWorld(flag)) << flag;
+    }
+    EXPECT_NE(RuleFor(92906000).owner, FlagOwner::Session);
 }
 
 // Kaniel 2026-10-18: a teammate holding no chalice is given the chalice of the dungeon that came

@@ -1332,21 +1332,6 @@ bool IsCurrentAltarFlag(s32 flag) {
     return flag >= CurrentAltar && flag < CurrentAltar + AltarFlags;
 }
 
-FlagChanges AsAltarFlags(const FlagChanges& changes, std::optional<s32> altar) {
-    const auto map = [altar](const std::vector<s32>& flags) {
-        std::vector<s32> out;
-        for (const s32 flag : flags) {
-            if (!IsCurrentAltarFlag(flag)) {
-                out.push_back(flag);
-            } else if (altar && *altar >= 0 && *altar < 10) {
-                out.push_back(94000000 + *altar * 100000 + (flag - CurrentAltar));
-            }
-        }
-        return out;
-    };
-    return FlagChanges{map(changes.set), map(changes.cleared)};
-}
-
 std::optional<u32> AltarChaliceGoods(u32 depth_area) {
     // The standard chalices (goods 6109 Pthumeru, ...), as the server's StandardDungeon has them.
     constexpr std::array<std::pair<u32, u32>, 10> Chalices{{{10, 6109},

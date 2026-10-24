@@ -1778,6 +1778,7 @@ void TickPlayersOnThisMap() {
     // The boards go both ways in and out of a session (a guest on its own trip is out of one).
     const bool sharing = SharesWithParty(party_controller.has_value(), GetLocalPlayer() >= 0x10000);
     UnlockPartyTrophies(sharing);
+    KeepRitualAltarsWhole();
     SetPartyWorldChanges(sharing);
     KeepGuestProgress(in_session);
     LogFlagChangesInSession(sharing);

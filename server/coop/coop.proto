@@ -415,7 +415,20 @@ message Envelope {
         // 38 was EnemiesLetGo (phase 6's far-guest runners, gone in phase 8).
         EnemyHit enemy_hit = 39;
         ResumeAt resume_at = 40;
+        // 41 is the team pings' (PR #386).
+        AltarRecord altar_record = 42;
     }
+}
+
+// Team altars (Kaniel's playtest 2026-10-24, emulator bloodborne_altar.h): game -> server ->
+// the party's other games, as it is: a ritual's or a join's record of ritual altar `altar` (0-6),
+// whole (its 6000 event flags, 750 bytes, the first flag a byte's top bit), which every other
+// game's altar takes exactly. Sent flag by flag, as diffs, the records merged and named no
+// dungeon.
+message AltarRecord {
+    uint32 altar = 1;
+    bytes bits = 2;
+    string member = 3; // server -> game: whose
 }
 
 // Phase 7, server -> game (after its hello): where this member last stood in the team's world

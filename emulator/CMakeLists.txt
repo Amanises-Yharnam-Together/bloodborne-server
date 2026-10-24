@@ -969,6 +969,8 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_party_death.cpp
              src/core/bloodborne_portrait.cpp
              src/core/bloodborne_portrait.h
+             src/core/bloodborne_altar.cpp
+             src/core/bloodborne_altar.h
              src/core/bloodborne_compass.cpp
              src/core/bloodborne_compass.h
              src/core/bloodborne_map.cpp

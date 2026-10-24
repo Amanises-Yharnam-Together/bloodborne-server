@@ -696,6 +696,15 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
         SendToOthers(world, member, relayed, now_ms);
         break;
     }
+    case bbcoop::Envelope::kAltarRecord: {
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_altar_record()->set_member(member.name);
+        result.log.append(QStringLiteral("party world %1: %2's record of altar %3 to the others")
+                              .arg(world.name, QString::fromStdString(member.name))
+                              .arg(envelope.altar_record().altar()));
+        SendToOthers(world, member, relayed, now_ms);
+        break;
+    }
     case bbcoop::Envelope::kLoadProgress: {
         bbcoop::Envelope relayed = envelope;
         relayed.mutable_load_progress()->set_member(member.name);
