@@ -208,9 +208,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, DownloadMemoryFlags fla
 
 /// bbport co-op: the screen's height in pixels (the HUD is drawn at the output's size).
 static int PortraitOutputHeight() {
-    const int output = std::clamp(BbSettings::Get().output_res.load(std::memory_order_relaxed), 0,
-                                  BbSettings::OutputCount - 1);
-    return BbSettings::OutputHeights[output];
+    return BbSettings::CurrentOutput().height;
 }
 
 bool TextureCache::RefreshPortraitSlot(Image& image) {

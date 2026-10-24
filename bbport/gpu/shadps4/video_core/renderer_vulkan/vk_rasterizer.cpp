@@ -1658,6 +1658,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     if (camera_motion->Enabled() && regs.color_buffers[0] &&
         FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
         scene_started = false;
+        upscaler->OnDisplayPassStart(); // while the frame's camera and depth are still there
         camera_motion->OnDisplayPass(cb_descs[0].first);
         screen_lighting->OnFrameStart();
         if (upscaler->OnFrameStart()) {

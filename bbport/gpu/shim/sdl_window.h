@@ -69,6 +69,10 @@ private:
     void ApplyWindowMode(int mode);
     void UpdateHdrState();
     int applied_window_mode{-1};
+    /// The output the window was sized for (windowed) or the display mode taken (exclusive):
+    /// another choice in a menu applies it again (BbOutputSizes::Pack).
+    u32 applied_output{0};
+    void ApplyOutputSize();
     std::atomic<bool> hdr_display{false};
     u64 last_mouse_motion_ms{}; ///< SDL_GetTicks of the last mouse motion (UpdateCursor)
     bool cursor_hidden{};

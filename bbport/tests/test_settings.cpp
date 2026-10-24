@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <unistd.h>
+#include <vector>
 #include "gpu/shim/bbport_settings.h"
 
 #ifdef _WIN32
@@ -477,4 +478,84 @@ int main() {
         unlink(path);
     }
     std::puts("PASS: fast shader math setting");
+
+    // Kaniel 2026-10-24: every resolution the monitor has, and the aspect ratio: Auto (the game
+    // sees more to the sides on a wider output) or 16:9 (the old picture with bars).
+    {
+        using BbSettings::OutputSize;
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int file = mkstemp(path);
+        close(file);
+        setenv("BB_CONFIG", path, 1);
+        BbSettings::SetDisplay({}, {});
+        BbSettings::Load();
+        assert(s.output_res == 0 && s.aspect == BbSettings::AspectAuto);
+        // No choice yet: the game's 1080 lines, in the desktop's shape once it is known.
+        assert(BbSettings::ChosenOutput() == (OutputSize{1920, 1080}));
+        BbSettings::SetDisplay({{2560, 1080}, {1920, 1080}, {1280, 720}}, {2560, 1080});
+        assert(BbSettings::Desktop() == (OutputSize{2560, 1080}));
+        assert(BbSettings::ChosenOutput() == (OutputSize{2560, 1080}));
+        assert(BbSettings::CurrentOutput() == (OutputSize{2560, 1080}));
+        const auto choices = BbSettings::OutputChoices();
+        assert((choices == std::vector<OutputSize>{{1280, 720}, {1920, 1080}, {2560, 1080}}));
+
+        // Windowed: the chosen size itself; borderless: the desktop's shape; 16:9: bars.
+        using BbSettings::ResolveOutput;
+        assert(ResolveOutput({1920, 1080}, BbSettings::AspectAuto, BbSettings::Windowed, {2560, 1080}) ==
+               (OutputSize{1920, 1080}));
+        assert(ResolveOutput({1920, 1080}, BbSettings::AspectAuto, BbSettings::Borderless, {2560, 1080}) ==
+               (OutputSize{2560, 1080}));
+        assert(ResolveOutput({2560, 1080}, BbSettings::AspectAuto, BbSettings::ExclusiveFullscreen,
+                             {3440, 1440}) == (OutputSize{2560, 1080}));
+        assert(ResolveOutput({2560, 1080}, BbSettings::Aspect16x9, BbSettings::Windowed, {2560, 1080}) ==
+               (OutputSize{1920, 1080}));
+        assert(ResolveOutput({1280, 720}, BbSettings::Aspect16x9, BbSettings::Borderless, {3440, 1440}) ==
+               (OutputSize{1280, 720}));
+
+        BbSettings::ChooseOutput({1920, 1080});
+        assert(BbSettings::ChosenOutput() == (OutputSize{1920, 1080}));
+        s.aspect = BbSettings::Aspect16x9;
+        BbSettings::Save();
+        const std::string saved = Read(path);
+        assert(saved.find("output_res=1920x1080\n") != std::string::npos);
+        assert(saved.find("aspect_ratio=16:9\n") != std::string::npos);
+        s.aspect = BbSettings::AspectAuto;
+        BbSettings::Load();
+        assert(s.aspect == BbSettings::Aspect16x9 && BbSettings::ChosenOutput() == (OutputSize{1920, 1080}));
+
+        // Borderless keeps a choice in the desktop's shape (the next start's patch reads it).
+        s.aspect = BbSettings::AspectAuto;
+        s.window_mode = BbSettings::Borderless;
+        BbSettings::ChooseOutput({1280, 720});
+        assert(BbSettings::ChosenOutput() == (OutputSize{1706, 720}));
+        s.window_mode = BbSettings::Windowed;
+        BbSettings::ChooseOutput({1920, 1080});
+        s.window_mode = BbSettings::Borderless;
+        BbSettings::FitChosenOutputToDesktop();
+        assert(BbSettings::ChosenOutput() == (OutputSize{2560, 1080}));
+        assert(Read(path).find("output_res=2560x1080\n") != std::string::npos);
+        s.window_mode = BbSettings::Windowed;
+
+        // Old and new values in the file: any size the display has, 5120x1440 too.
+        const char sizes[] = "output_res=5120x1440\naspect_ratio=auto\n";
+        FILE* f = std::fopen(path, "w");
+        std::fwrite(sizes, 1, sizeof(sizes) - 1, f);
+        std::fclose(f);
+        BbSettings::Load();
+        assert(BbSettings::ChosenOutput() == (OutputSize{5120, 1440}) && s.aspect == BbSettings::AspectAuto);
+        assert(s.startup_output == (OutputSize{5120, 1440}));
+        // The startup patch's size: a change of the output needs a restart, the same size does not.
+        setenv("BB_RENDER_RES", "2560x720", 1);
+        setenv("BB_OUTPUT_RES", "5120x1440", 1);
+        BbSettings::Load();
+        assert(s.startup_output == (OutputSize{5120, 1440}) && !BbSettings::ResolutionNeedsRestart());
+        BbSettings::ChooseOutput({3440, 1440});
+        assert(BbSettings::ResolutionNeedsRestart());
+        unsetenv("BB_RENDER_RES");
+        unsetenv("BB_OUTPUT_RES");
+        BbSettings::SetDisplay({}, {});
+        unlink(path);
+    }
+    std::puts("PASS: output resolutions from the display, aspect ratio");
 }

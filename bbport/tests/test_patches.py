@@ -89,6 +89,20 @@ class NativeUiTests(unittest.TestCase):
         # TAA is native-only and uses the live host targets.
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
 
+    def test_any_display_size_and_the_16x9_aspect_ratio(self):
+        # Kaniel 2026-10-24: ultrawide and other shapes; the scene keeps the output's shape.
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'preset': '0'}), ((2560, 1080), (2560, 1080)))
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'preset': '3'}), ((1280, 540), (2560, 1080)))
+        self.assertEqual(scaled_sizes({'output_res': '5120x1440', 'preset': '1'}), ((3414, 960), (5120, 1440)))
+        self.assertEqual(scaled_sizes({'output_res': '1600x1200', 'preset': '0'}), ((1600, 1200), (1600, 1200)))
+        # 16:9: the game's picture with bars; 2560x1080 is then the game's own 1920x1080.
+        self.assertIsNone(scaled_sizes({'output_res': '2560x1080', 'aspect_ratio': '16:9', 'preset': '3'}))
+        self.assertEqual(scaled_sizes({'output_res': '3440x1440', 'aspect_ratio': '16:9', 'preset': '0'}),
+                         ((2560, 1440), (2560, 1440)))
+        self.assertEqual(scaled_sizes({'output_res': '1920x1200', 'aspect_ratio': '16:9', 'preset': '0'}), None)
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'aspect_ratio': 'auto', 'preset': '0'}),
+                         ((2560, 1080), (2560, 1080)))
+
 
 class FpsListTests(unittest.TestCase):
     """The FPS++ lists follow shadps4-emu/ps4_cheats of 2026-10-02 (timesteps, foliage wind)."""

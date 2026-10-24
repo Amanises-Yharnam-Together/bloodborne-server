@@ -1616,9 +1616,23 @@ void HdrRows() {
 
 void DisplayTab() {
     auto& s = BbSettings::Get();
-    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
-    Choice("output", T("Output resolution", "Разрешение вывода"), s.output_res, BbSettings::OutputCount,
-           [](int i) { return outputs[i]; }, [](int) { return true; },
+    // Kaniel 2026-10-24: the display's own resolutions, any shape (21:9, 32:9, 16:10, 4:3), and
+    // the one chosen even when the display has no such mode (another monitor, bbport.ini).
+    static std::vector<BbSettings::OutputSize> outputs;
+    static std::vector<std::string> output_names;
+    outputs = BbSettings::OutputChoices();
+    const BbSettings::OutputSize chosen = BbSettings::ChosenOutput();
+    if (std::find(outputs.begin(), outputs.end(), chosen) == outputs.end()) {
+        outputs.push_back(chosen);
+    }
+    output_names.clear();
+    for (const auto& size : outputs) {
+        const char* shape = BbOutputSizes::AspectName(size);
+        output_names.push_back(std::to_string(size.width) + " x " + std::to_string(size.height) +
+                               (shape[0] ? std::string("  (") + shape + ")" : std::string()));
+    }
+    Choice("output", T("Output resolution", "Разрешение вывода"), BbOutputSizes::Nearest(outputs, chosen),
+           int(outputs.size()), [](int i) { return output_names[i].c_str(); }, [](int) { return true; },
            BbSettings::FixedRenderSession()
                ? T("Size of the final frame and UI. The preset sets the scene size relative to "
                    "the output: 4K Performance = 1920x1080. Applies after restarting the game.",
@@ -1630,7 +1644,28 @@ void DisplayTab() {
                    "Размер готового кадра и интерфейса меняется со следующего кадра. Пресет задаёт "
                    "размер сцены относительно вывода: 4K Performance = 1920x1080. Смена сбрасывает "
                    "историю апскейлера (короткая пауза)."),
-           true, [&](int i) { Store(s.output_res, i, true); });
+           true, [&](int i) {
+               BbSettings::ChooseOutput(outputs[i]);
+               dirty = true;
+           });
+    const char* aspects[] = {T("Auto (the output's)", "Авто (как у вывода)"), T("16:9 (bars)", "16:9 (с полосами)")};
+    Choice("aspect", T("Aspect ratio", "Соотношение сторон"),
+           std::clamp(s.aspect.load(), 0, BbSettings::AspectModeCount - 1), BbSettings::AspectModeCount,
+           [&](int i) { return aspects[i]; }, [](int) { return true; },
+           BbSettings::FixedRenderSession()
+               ? T("Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) "
+                   "more above and below; the HUD goes to the screen's edges. 16:9: the game's picture "
+                   "with black bars. Applies after restarting the game.",
+                   "Авто: на широком экране (21:9, 32:9) видно больше по бокам, на высоком (16:10, 4:3) "
+                   "— сверху и снизу; интерфейс у краёв экрана. 16:9: картинка игры с чёрными "
+                   "полосами. Применяется после перезапуска игры.")
+               : T("Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) "
+                   "more above and below; the HUD goes to the screen's edges. 16:9: the game's picture "
+                   "with black bars. Changes at the next frame.",
+                   "Авто: на широком экране (21:9, 32:9) видно больше по бокам, на высоком (16:10, 4:3) "
+                   "— сверху и снизу; интерфейс у краёв экрана. 16:9: картинка игры с чёрными "
+                   "полосами. Меняется со следующего кадра."),
+           true, [&](int i) { Store(s.aspect, i, true); });
     const char* live_modes[] = {T("Auto (by GPU)", "Авто (по видеокарте)"), T("Off (faster)", "Выкл (быстрее)"),
                                 T("On", "Вкл")};
     Choice("live", T("Live resolution changes", "Смена разрешения на лету"), s.live_resolution + 1, 3,
@@ -1816,9 +1851,10 @@ void UpscalerTab() {
     static char preset_names[BbSettings::PresetCount][64];
     for (int i = 0; i < BbSettings::PresetCount; ++i) {
         const float scale = BbSettings::PresetScale(i);
+        const BbSettings::OutputSize output = BbSettings::CurrentOutput();
         std::snprintf(preset_names[i], sizeof(preset_names[i]), "%s  %dx%d", BbSettings::PresetName(i),
-                      int(std::lround(BbSettings::OutputWidths[s.output_res] / scale / 2) * 2),
-                      int(std::lround(BbSettings::OutputHeights[s.output_res] / scale / 2) * 2));
+                      int(std::lround(output.width / scale / 2) * 2),
+                      int(std::lround(output.height / scale / 2) * 2));
     }
     Choice("preset", T("Quality preset", "Пресет качества"), taa ? BbSettings::NativeAA : s.preset.load(),
            BbSettings::PresetCount, [](int i) { return preset_names[i]; }, [](int) { return true; },

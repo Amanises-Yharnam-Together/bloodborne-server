@@ -546,6 +546,10 @@ target_include_directories(cp-decoder-test PRIVATE cp)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
+# bbport: the output resolutions the menus offer, borderless and 16:9 outputs (shim/bbport_output_sizes.h).
+add_executable(output-sizes-test EXCLUDE_FROM_ALL ../tests/test_output_sizes.cpp)
+target_compile_options(output-sizes-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(output-sizes-test PRIVATE ..)
 
 # bbport co-op: trading's Give rows run for any item, weapons too (shim/bbport_trade_rows.h).
 add_executable(trade-rows-test EXCLUDE_FROM_ALL ../tests/test_trade_rows.cpp shim/bbport_trade_rows.cpp)
