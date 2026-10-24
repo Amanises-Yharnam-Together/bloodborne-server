@@ -68,13 +68,37 @@ static pthread_rwlock_t lock=PTHREAD_RWLOCK_INITIALIZER;
 static __thread unsigned exclusive_depth;
 /* Odd while a writer holds the lock; readers' region caches are valid for one even value. */
 static uint64_t table_generation;
+/* How the lock fared since the last runtime_memory_window_report (a player's game stuttered after
+ * each death, AtiniirSpectre 2026-10-23, and the co-op code's lookups stalled 50-100 ms in
+ * whichever part ran then): writes and their longest hold, and readers that had to wait. A reader
+ * that gets the lock at once costs nothing more. */
+static uint64_t lock_now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (uint64_t)t.tv_sec*1000000000u+(uint64_t)t.tv_nsec; }
+static uint64_t write_held_since_ns, write_holds, write_hold_max_ns, write_hold_total_ns;
+static uint64_t read_waits, read_wait_max_ns, read_wait_total_ns;
 static void write_lock(void) {
-    if (!exclusive_depth++) { pthread_rwlock_wrlock(&lock); __atomic_add_fetch(&table_generation,1,__ATOMIC_ACQ_REL); }
+    if (!exclusive_depth++) {
+        pthread_rwlock_wrlock(&lock); __atomic_add_fetch(&table_generation,1,__ATOMIC_ACQ_REL);
+        write_held_since_ns=lock_now_ns();
+    }
 }
 static void write_unlock(void) {
-    if (!--exclusive_depth) { __atomic_add_fetch(&table_generation,1,__ATOMIC_RELEASE); pthread_rwlock_unlock(&lock); }
+    if (!--exclusive_depth) {
+        const uint64_t held=lock_now_ns()-write_held_since_ns;
+        ++write_holds; write_hold_total_ns+=held;
+        if (held>write_hold_max_ns) write_hold_max_ns=held;
+        __atomic_add_fetch(&table_generation,1,__ATOMIC_RELEASE); pthread_rwlock_unlock(&lock);
+    }
 }
-static void read_lock(void) { if (!exclusive_depth) pthread_rwlock_rdlock(&lock); }
+static void read_lock(void) {
+    if (exclusive_depth || !pthread_rwlock_tryrdlock(&lock)) return;
+    const uint64_t start=lock_now_ns();
+    pthread_rwlock_rdlock(&lock);
+    const uint64_t waited=lock_now_ns()-start;
+    __atomic_add_fetch(&read_waits,1,__ATOMIC_RELAXED);
+    __atomic_add_fetch(&read_wait_total_ns,waited,__ATOMIC_RELAXED);
+    for (uint64_t max=__atomic_load_n(&read_wait_max_ns,__ATOMIC_RELAXED); waited>max &&
+         !__atomic_compare_exchange_n(&read_wait_max_ns,&max,waited,1,__ATOMIC_RELAXED,__ATOMIC_RELAXED);) {}
+}
 static void read_unlock(void) { if (!exclusive_depth) pthread_rwlock_unlock(&lock); }
 static Block blocks[LIMIT];
 static Vma *vmas; static size_t vma_count, vma_capacity;
@@ -1270,6 +1294,23 @@ int runtime_memory_is_mapped(uintptr_t address, uint64_t size) {
     int result=covered(address,address+size,0);
     read_unlock();
     return result;
+}
+/* One line per window (beside the Perf line): the region table's size and how its lock fared. */
+void runtime_memory_window_report(void) {
+    write_lock();
+    const uint64_t holds=write_holds, hold_max=write_hold_max_ns, hold_total=write_hold_total_ns;
+    const size_t regions=vma_count, protects_now=protects;
+    write_holds=write_hold_max_ns=write_hold_total_ns=0;
+    write_unlock();
+    static size_t protects_before;
+    const uint64_t waits=__atomic_exchange_n(&read_waits,0,__ATOMIC_RELAXED);
+    const uint64_t wait_max=__atomic_exchange_n(&read_wait_max_ns,0,__ATOMIC_RELAXED);
+    const uint64_t wait_total=__atomic_exchange_n(&read_wait_total_ns,0,__ATOMIC_RELAXED);
+    printf("Runtime: memory table: %zu regions, %zu protects; %" PRIu64 " writes held %.1f ms "
+           "(longest %.2f ms); readers waited %" PRIu64 " times, %.1f ms (longest %.2f ms)\n",
+           regions, protects_now-protects_before, holds, hold_total/1e6, hold_max/1e6, waits,
+           wait_total/1e6, wait_max/1e6);
+    protects_before=protects_now;
 }
 void runtime_memory_report(void) {
     printf("Runtime: direct memory allocations=%zu, maps=%zu, live=%" PRIu64 ", budget=%" PRIu64 "\n",

@@ -26,6 +26,7 @@ uintptr_t runtime_mutex_resolve(const char *name);
 void runtime_mutex_report(void);
 uintptr_t runtime_memory_resolve(const char *name);
 void runtime_memory_report(void);
+void runtime_memory_window_report(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
 /* Co-op (gpu/bbcoop): the guest's protection of a mapped address in the PS4 range and the run of
  * mappings around it with that protection, as sceKernelQueryMemoryProtection reports them;
