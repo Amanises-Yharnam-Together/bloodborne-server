@@ -425,6 +425,14 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
   its own world (4:3 type 0) in one group. `party_boss_events.py` (AMBUSH_EVENTS) moves that
   check to an unused group in m22_00 12204000 (Hemwick woods), m24_01 12414000, m25_00
   12504000, m26_00 12604000 and m29 12905406, so a guest's approach wakes them too.
+- **One-time enemies** (rig nightmare-flags 2026-10-24): the Wandering Nightmares and the like
+  (m24_00 12400200, m23 12300220, m28 12800500 and 9 more templates, a slot per enemy with its
+  drop's flag) go for good once their event ends: the slot flag switches them off (2004:5) or hides
+  them (2004:29) at every load. The event ends when an alive player (4:3 10000 0) has the drop's
+  flag, but a client skips that check (1003:5 1 1). A party guest reads alive after a trip, so its
+  game ended every one on the map with no kill and the session's sync and the team's world took
+  them off for everybody. `party_boss_events.py` (keep_one_time_drop_checks) makes that skip never
+  match. Saves and team worlds that already have the flags keep them.
 - **Death triggers** (rig-confirmed): events set the respawn point on a death (common 9400: first
   death -> Dream 2102962; 9404: Dream 2102961; 9421: kidnapping (flag 9420) -> Gaol 2802959). A
   party revive goes there, travelling 0.2 s later when it is on another map
