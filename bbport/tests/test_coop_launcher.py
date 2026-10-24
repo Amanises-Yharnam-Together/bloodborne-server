@@ -98,6 +98,29 @@ class AnswersTests(unittest.TestCase):
             self.assertTrue(coop.valid_name(made['account']), 'a new install has its id at once')
             self.assertEqual(coop.load_settings(install)['account'], made['account'], 'saved')
 
+    def test_a_copied_install_makes_its_own_player_id(self):
+        # Player report 2026-10-24: a friend's install copied with its user\\coop.json gave two PCs one
+        # id; their games took the server's link from each other and a new team left at once.
+        made = coop.with_own_player_id(dict(coop.DEFAULTS), 'pc-a')
+        self.assertEqual(made['machine'], 'pc-a')
+        self.assertEqual(coop.with_own_player_id(dict(made), 'pc-a'), made, 'kept on its own PC')
+        copied = coop.with_own_player_id(dict(made, host_ip='26.1.2.3'), 'pc-b')
+        self.assertNotEqual(copied['account'], made['account'])
+        self.assertNotEqual(copied['password'], made['password'])
+        self.assertEqual((copied['machine'], copied['host_ip']), ('pc-b', '26.1.2.3'), 'other answers stay')
+        # An install from before the PC was noted keeps its id (its teams and worlds) and notes the PC.
+        old = coop.with_own_player_id(dict(coop.DEFAULTS, account='kaniel', password='pw'), 'pc-a')
+        self.assertEqual((old['account'], old['password'], old['machine']), ('kaniel', 'pw', 'pc-a'))
+        # No fingerprint (it could not be read): nothing changes.
+        self.assertEqual(coop.with_own_player_id(dict(made), ''), made)
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            coop.save_settings(install, dict(made, machine='another-pc'))
+            loaded = coop.load_settings(install)
+            if coop.this_machine():
+                self.assertNotEqual(loaded['account'], made['account'])
+                self.assertEqual(coop.load_settings(install)['account'], loaded['account'], 'saved')
+
     def test_the_old_settings_bat_carries_over(self):
         with tempfile.TemporaryDirectory() as folder:
             bat = Path(folder) / 'settings.bat'
@@ -116,7 +139,7 @@ class AnswersTests(unittest.TestCase):
     def test_settings_are_kept_in_the_user_folder(self):
         with tempfile.TemporaryDirectory() as folder:
             install = Path(folder)
-            self.assertEqual(dict(coop.load_settings(install), account='', password=''), coop.DEFAULTS)
+            self.assertEqual(dict(coop.load_settings(install), account='', password='', machine=''), coop.DEFAULTS)
             coop.save_settings(install, dict(coop.DEFAULTS, account='Lisara', password='pw'))
             self.assertEqual(json.loads((install / 'user' / 'coop.json').read_text('utf-8'))['account'], 'Lisara')
             self.assertEqual(coop.load_settings(install)['account'], 'Lisara')

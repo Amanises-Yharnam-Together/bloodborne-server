@@ -11,6 +11,7 @@ over it, and the co-op event files go in coop-game\\CUSA03173-mods.
 """
 import collections
 import ctypes
+import hashlib
 import ipaddress
 import json
 import os
@@ -45,7 +46,9 @@ DETACHED = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CRE
 DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account': '', 'password': '',
             'p2p_port': 'auto', 'harder': 'off', 'prepared': '',
             # '1' once the player pressed Done in the launcher's co-op settings (they open by themselves until then).
-            'confirmed': ''}
+            'confirmed': '',
+            # The PC the player id was made on (this_machine()): a copied install makes its own id.
+            'machine': ''}
 HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
 HARDER_BIT, HARDER_MUCH = '1.5,1.25,1.5', '5,2,5'
 # What the game takes for each multiplier (ParseHarderEnemies in the emulator); all 1 is the normal game.
@@ -165,6 +168,37 @@ def with_player_id(settings):
     return settings
 
 
+def this_machine():
+    """A short fingerprint of this PC (Windows' MachineGuid, Linux's machine-id), '' when unknown."""
+    guid = ''
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SOFTWARE\Microsoft\Cryptography', 0,
+                            winreg.KEY_READ | getattr(winreg, 'KEY_WOW64_64KEY', 0)) as key:
+            guid = str(winreg.QueryValueEx(key, 'MachineGuid')[0])
+    except (ImportError, OSError):
+        for path in ('/etc/machine-id', '/var/lib/dbus/machine-id'):
+            try:
+                guid = Path(path).read_text(encoding='ascii').strip()
+                break
+            except OSError:
+                pass
+    return hashlib.sha256(guid.encode('utf-8')).hexdigest()[:16] if guid else ''
+
+
+def with_own_player_id(settings, machine):
+    """The settings with a player id of this PC's own. Two PCs with one id took the server's link from
+    each other every few seconds: a team left at once and nobody saw the other (player report 2026-10-24,
+    a friend's install copied with its user\\coop.json). An id made on another PC is made again here; an
+    install from before the PC was noted keeps its id and notes this PC."""
+    if machine and settings.get('machine') and settings['machine'] != machine:
+        settings = dict(settings, account='', password='')
+    settings = with_player_id(settings)
+    if machine:
+        settings['machine'] = machine
+    return settings
+
+
 def settings_path(install):
     return Path(install) / 'user' / 'coop.json'
 
@@ -188,10 +222,11 @@ def from_settings_bat(path):
 
 def load_settings(install):
     """coop.json, else the old settings.bat beside BLauncher.exe, else the defaults; with the player's
-    id, saved the first time it is made."""
+    id of this PC, saved the first time it is made."""
     settings = read_settings(install)
-    if not (valid_name(settings['account']) and valid_secret(settings['password'])):
-        settings = with_player_id(settings)
+    own = with_own_player_id(dict(settings), this_machine())
+    if own != settings:
+        settings = own
         try:
             save_settings(install, settings)
         except OSError:
