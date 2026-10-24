@@ -29,7 +29,6 @@
 
 extern "C" void runtime_sleep_stats(uint64_t* calls, uint64_t* ns);
 extern "C" void runtime_wait_report(double frames);
-extern "C" void runtime_memory_window_report(void);
 extern "C" void runtime_thread_cpu_report(void);
 #include "video_core/page_manager.h"
 #include "core/libraries/videoout/videoout_error.h"
@@ -410,7 +409,6 @@ void VideoOutDriver::Flip(const Request& req) {
                         "shader/pipeline compiles\n",
                         n / window, window, 1000.0 / std::max(slow_ms, 0.001),
                         static_cast<double>(intervals.back()), Vulkan::g_bb_compiles.exchange(0));
-            runtime_memory_window_report();
             runtime_thread_cpu_report();
             intervals.clear();
             window_start = now;

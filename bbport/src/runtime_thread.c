@@ -281,7 +281,7 @@ static FARPROC kernel32_proc(const char *name) {
 #endif
 /* Linux thread names hold 15 characters; longer ones would be rejected. On Windows the thread's
  * description holds the whole name, so runtime_thread_cpu_report (and a debugger) can show it. */
-static void set_host_name(const char *name) {
+void runtime_set_thread_name(const char *name) {
     char host[16]={0};
     memcpy(host,name,strnlen(name,sizeof(host)-1));
     pthread_setname_np(pthread_self(),host);
@@ -417,7 +417,7 @@ static void set_host_priority(int guest_prio) {
 static void *host_start(void *p) {
     GuestThread *t=p;
     attach(t);
-    set_host_name(t->name);
+    runtime_set_thread_name(t->name);
     set_host_priority(t->attr.prio);
     if (!exit_setjmp(t)) t->result=t->entry(t->argument);
     runtime_thread_keys_cleanup();
@@ -510,7 +510,7 @@ static ABI int32_t thread_rename(GuestThread *t,const char *name) {
     if (!find_thread(t)) return ERR(3);
     if (!name) return ERR(22);
     snprintf(t->name,sizeof(t->name),"%s",name);
-    if (t==current) set_host_name(t->name);
+    if (t==current) runtime_set_thread_name(t->name);
     return 0;
 }
 static ABI int32_t thread_equal(GuestThread *a,GuestThread *b) { return a==b; }
