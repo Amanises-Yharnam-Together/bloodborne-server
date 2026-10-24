@@ -584,6 +584,11 @@ target_compile_options(push-data-test PRIVATE -UNDEBUG)
 target_include_directories(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
 target_compile_definitions(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
 
+add_executable(sendmsg-simm-test EXCLUDE_FROM_ALL ../tests/test_sendmsg_simm.cpp)
+target_compile_options(sendmsg-simm-test PRIVATE -UNDEBUG)
+target_include_directories(sendmsg-simm-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
+target_compile_definitions(sendmsg-simm-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
+
 add_executable(prompt-sets-test EXCLUDE_FROM_ALL ../tests/test_prompt_sets.cpp)
 target_compile_options(prompt-sets-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(prompt-sets-test PRIVATE shim)
