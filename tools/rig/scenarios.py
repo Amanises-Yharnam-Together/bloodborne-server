@@ -4191,9 +4191,10 @@ GUEST_WIPE = ["sync pw-hurt", "godmode off", *TO_PAARL_HITS, "wait-vital down 90
 GUEST_BACK = ["wait-vital dead 90", "wait-vital up 150", "godmode",
               f"ensure-map {PAARL_LAMP_MAP} {PAARL_LAMP} 60", "wait-members 3 120",
               "sync pw-back", *PAARL_BACK[1:], "sync pw-checked", "expect-session 3"]
-# A host alone dies by a fall from the first Central Yharnam lamp. LETHAL_FALL's 18 m lands on a
-# ledge 11 m above the lamp's ground there, 7 m down, and leaves it at 1 HP (rig 2026-10-24).
-SOLO_DEATH = ["hurt self 1", "rise 40", "wait-vital dead 30"]
+# A host alone dies by a fall from the first Central Yharnam lamp. A rise lands on a ledge 11 m
+# above the lamp's ground there: 18 m (LETHAL_FALL) is a 7 m fall and leaves it at 1 HP, 40 m a
+# 29 m fall that kills only sometimes; 60 m always did (rig 2026-10-24).
+SOLO_DEATH = ["hurt self 1", "rise 60", "wait-vital dead 30"]
 SCENARIOS["solo-death-tick"] = {
     "about": "AtiniirSpectre 2026-10-23 (v1.2.0): a host alone stuttered after a death, its "
              "co-op tick's longest call 21 ms before and 111 ms after. The host plays a minute "
@@ -4204,7 +4205,8 @@ SCENARIOS["solo-death-tick"] = {
         "host": [START, "wait 70", *SOLO_DEATH, "wait 100", *SOLO_DEATH, "wait 100", *SOLO_DEATH,
                  "wait 100", "snapshot"],
     },
-    "expect": {"host": [r"Co-op tick slowest parts: ", r"Runtime: CPU over the window: "]},
+    "expect": {"host": [r"Co-op tick slowest parts: "]},
+    "console_expect": {"host": [r"Runtime: CPU over the window: .*busiest: GameMain"]},
     "timeout": 720,
 }
 

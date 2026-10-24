@@ -1770,41 +1770,17 @@ void KeepOwnedWeaponFlagsOwn() {
 namespace Coop {
 
 void TickPlayersOnThisMap() {
-    {
-        const TickPartTimer part{"LogItemModuleChecks"};
-        LogItemModuleChecks();
-    }
-    {
-        const TickPartTimer part{"LogItemButtonAndMapItems"};
-        LogItemButtonAndMapItems();
-    }
-    {
-        const TickPartTimer part{"KeepGuestFullHp"};
-        KeepGuestFullHp();
-    }
-    {
-        const TickPartTimer part{"PolishMultiplayerUi"};
-        PolishMultiplayerUi();
-    }
+    LogItemModuleChecks();
+    LogItemButtonAndMapItems();
+    KeepGuestFullHp();
+    PolishMultiplayerUi();
     const bool in_session = InPartySession();
     // The boards go both ways in and out of a session (a guest on its own trip is out of one).
     const bool sharing = SharesWithParty(party_controller.has_value(), GetLocalPlayer() >= 0x10000);
-    {
-        const TickPartTimer part{"UnlockPartyTrophies"};
-        UnlockPartyTrophies(sharing);
-    }
-    {
-        const TickPartTimer part{"SetPartyWorldChanges"};
-        SetPartyWorldChanges(sharing);
-    }
-    {
-        const TickPartTimer part{"KeepGuestProgress"};
-        KeepGuestProgress(in_session);
-    }
-    {
-        const TickPartTimer part{"LogFlagChangesInSession"};
-        LogFlagChangesInSession(sharing);
-    }
+    UnlockPartyTrophies(sharing);
+    SetPartyWorldChanges(sharing);
+    KeepGuestProgress(in_session);
+    LogFlagChangesInSession(sharing);
     {
         const auto started = std::chrono::steady_clock::now();
         KeepEnemyDeathsInStep(sharing);
@@ -1814,81 +1790,32 @@ void TickPlayersOnThisMap() {
                           .count(),
                       SteadyMilliseconds());
     }
-    {
-        const TickPartTimer part{"SnapshotHostMapState"};
-        SnapshotHostMapState(sharing);
-    }
-    {
-        const TickPartTimer part{"ResumeWhereTheGuestLeft"};
-        ResumeWhereTheGuestLeft(in_session);
-    }
-    {
-        const TickPartTimer part{"LogWatchedWrites"};
-        LogWatchedWrites();
-    }
-    {
-        const TickPartTimer part{"GiveDeferredBossItems"};
-        GiveDeferredBossItems();
-    }
-    {
-        const TickPartTimer part{"TurnOffMultiplayerWalls"};
-        TurnOffMultiplayerWalls(in_session);
-    }
-    {
-        const TickPartTimer part{"PlayGuestAsHost"};
-        PlayGuestAsHost(in_session);
-    }
-    {
-        const TickPartTimer part{"TickGuestLampTrip"};
-        TickGuestLampTrip();
-    }
+    SnapshotHostMapState(sharing);
+    ResumeWhereTheGuestLeft(in_session);
+    LogWatchedWrites();
+    GiveDeferredBossItems();
+    TurnOffMultiplayerWalls(in_session);
+    PlayGuestAsHost(in_session);
+    TickGuestLampTrip();
     // SHADPS4_BLOODBORNE_ESD_LOG=1: every member's talk answers, not only a guest's.
     static const bool esd_log_all = std::getenv("SHADPS4_BLOODBORNE_ESD_LOG") != nullptr;
-    {
-        const TickPartTimer part{"LogEsdAnswers"};
-        LogEsdAnswers(
-            in_session && party_controller &&
-            (esd_log_all || party_controller->SearchEffectId() == SmallResonantBellEffect));
-    }
-    {
-        const TickPartTimer part{"RestoreSearchAfterTrip"};
-        RestoreSearchAfterTrip(in_session);
-    }
+    LogEsdAnswers(in_session && party_controller &&
+                  (esd_log_all || party_controller->SearchEffectId() == SmallResonantBellEffect));
+    RestoreSearchAfterTrip(in_session);
     const u32 map = PlayingMap();
     party_map_now.store(party_controller && IsUsablePackedMap(map) ? map : 0);
-    if (const TickPartTimer part{"TickEnemyOwner or ClaimEnemiesWhenAlone"}; EnemyOwnerOn()) {
+    if (EnemyOwnerOn()) {
         TickEnemyOwner(in_session, IsUsablePackedMap(map) ? map : 0);
     } else {
         ClaimEnemiesWhenAlone(in_session, IsUsablePackedMap(map) ? map : 0);
     }
-    {
-        const TickPartTimer part{"GrantPartyEchoes"};
-        GrantPartyEchoes();
-    }
-    {
-        const TickPartTimer part{"TickTrades"};
-        TickTrades();
-    }
-    {
-        const TickPartTimer part{"FinishWaitingJoins"};
-        FinishWaitingJoins(in_session);
-    }
-    {
-        const TickPartTimer part{"ResendOwnDataOnChange"};
-        ResendOwnDataOnChange(in_session);
-    }
-    {
-        const TickPartTimer part{"LogMemberDataChanges"};
-        LogMemberDataChanges(in_session);
-    }
-    {
-        const TickPartTimer part{"GiveEncounterInsight"};
-        GiveEncounterInsight(in_session);
-    }
-    {
-        const TickPartTimer part{"KeepImpurityBonus"};
-        KeepImpurityBonus(in_session);
-    }
+    GrantPartyEchoes();
+    TickTrades();
+    FinishWaitingJoins(in_session);
+    ResendOwnDataOnChange(in_session);
+    LogMemberDataChanges(in_session);
+    GiveEncounterInsight(in_session);
+    KeepImpurityBonus(in_session);
     // Whether this character has been to the Hunter's Dream: its own world has the first visit's
     // flag, or it is there (the first visit's event runs for a guest too).
     static int dream_slot = -2;
