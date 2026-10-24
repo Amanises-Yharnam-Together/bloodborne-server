@@ -47,6 +47,7 @@ void* runtime_memory_backing_pointer(uint64_t) { std::abort(); }
 uintptr_t runtime_memory_resolve(const char*) { std::abort(); }
 void runtime_wait_report(double) {}
 void runtime_memory_window_report(void) {}
+void runtime_thread_cpu_report(void) {}
 void runtime_sleep_stats(uint64_t* calls, uint64_t* ns) { *calls = 0; *ns = 0; }
 uint64_t runtime_heap_growths() { return 0; }
 }

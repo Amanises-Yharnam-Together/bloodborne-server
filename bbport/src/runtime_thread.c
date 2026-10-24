@@ -15,9 +15,13 @@
 #include <setjmp.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdint.h>
+#include <time.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <tlhelp32.h>
 #else
+#include <dirent.h>
 #include <sys/syscall.h>
 #include <sys/mman.h>
 #include <asm/prctl.h>
@@ -267,11 +271,115 @@ static ABI int32_t attr_set_guard(ThreadAttr **slot,uint64_t size) {
     a->guard=size; return 0;
 }
 
-/* Linux thread names hold 15 characters; longer ones would be rejected. */
+#ifdef _WIN32
+typedef HRESULT (WINAPI *ThreadDescriptionSet)(HANDLE, PCWSTR);
+typedef HRESULT (WINAPI *ThreadDescriptionGet)(HANDLE, PWSTR *);
+static FARPROC kernel32_proc(const char *name) {
+    HMODULE kernel=GetModuleHandleA("kernel32.dll");
+    return kernel ? GetProcAddress(kernel,name) : NULL;
+}
+#endif
+/* Linux thread names hold 15 characters; longer ones would be rejected. On Windows the thread's
+ * description holds the whole name, so runtime_thread_cpu_report (and a debugger) can show it. */
 static void set_host_name(const char *name) {
     char host[16]={0};
     memcpy(host,name,strnlen(name,sizeof(host)-1));
     pthread_setname_np(pthread_self(),host);
+#ifdef _WIN32
+    ThreadDescriptionSet set=(ThreadDescriptionSet)(void *)kernel32_proc("SetThreadDescription");
+    WCHAR wide[64];
+    if (set && MultiByteToWideChar(CP_UTF8,0,name,-1,wide,64)>0) set(GetCurrentThread(),wide);
+#endif
+}
+
+/* The threads that took the most CPU time since the last call, one line (AtiniirSpectre
+ * 2026-10-23: after a death the whole game slowed, the co-op tick's stalls landing in whichever
+ * part ran; a thread busy where it should sleep shows here). Called beside the Perf line. */
+typedef struct { unsigned long id; uint64_t cpu_ns; char name[48]; } ThreadCpu;
+void runtime_thread_cpu_report(void) {
+    enum { MaxThreads=512, Shown=5 };
+    static ThreadCpu before[MaxThreads];
+    static size_t before_count;
+    static uint64_t before_wall_ns;
+    static ThreadCpu now[MaxThreads];
+    size_t count=0;
+    struct timespec wall; clock_gettime(CLOCK_MONOTONIC,&wall);
+    const uint64_t wall_ns=(uint64_t)wall.tv_sec*1000000000u+(uint64_t)wall.tv_nsec;
+#ifdef _WIN32
+    ThreadDescriptionGet get=(ThreadDescriptionGet)(void *)kernel32_proc("GetThreadDescription");
+    HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+    if (snapshot==INVALID_HANDLE_VALUE) return;
+    THREADENTRY32 entry={.dwSize=sizeof(entry)};
+    const DWORD process=GetCurrentProcessId();
+    for (BOOL more=Thread32First(snapshot,&entry); more && count<MaxThreads; more=Thread32Next(snapshot,&entry)) {
+        if (entry.th32OwnerProcessID!=process) continue;
+        HANDLE thread=OpenThread(THREAD_QUERY_LIMITED_INFORMATION,FALSE,entry.th32ThreadID);
+        if (!thread) continue;
+        FILETIME created, exited, kernel, user;
+        if (GetThreadTimes(thread,&created,&exited,&kernel,&user)) {
+            ThreadCpu *t=&now[count++];
+            t->id=entry.th32ThreadID;
+            t->cpu_ns=((((uint64_t)user.dwHighDateTime<<32)|user.dwLowDateTime)+
+                       (((uint64_t)kernel.dwHighDateTime<<32)|kernel.dwLowDateTime))*100;
+            t->name[0]=0;
+            PWSTR description=NULL;
+            if (get && SUCCEEDED(get(thread,&description)) && description) {
+                WideCharToMultiByte(CP_UTF8,0,description,-1,t->name,sizeof(t->name),NULL,NULL);
+                LocalFree(description);
+            }
+        }
+        CloseHandle(thread);
+    }
+    CloseHandle(snapshot);
+#else
+    DIR *tasks=opendir("/proc/self/task");
+    if (!tasks) return;
+    const long ticks=sysconf(_SC_CLK_TCK);
+    for (struct dirent *e; (e=readdir(tasks)) && count<MaxThreads;) {
+        if (e->d_name[0]<'0' || e->d_name[0]>'9') continue;
+        char path[64], line[512];
+        snprintf(path,sizeof(path),"/proc/self/task/%s/stat",e->d_name);
+        FILE *f=fopen(path,"r");
+        if (!f) continue;
+        const char *got=fgets(line,sizeof(line),f);
+        fclose(f);
+        const char *close=got ? strrchr(line,')') : NULL;
+        unsigned long long utime=0, stime=0;
+        if (!close || sscanf(close+2,"%*c %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %llu %llu",&utime,&stime)!=2) continue;
+        ThreadCpu *t=&now[count++];
+        t->id=strtoul(e->d_name,NULL,10);
+        t->cpu_ns=(utime+stime)*(1000000000u/(uint64_t)ticks);
+        t->name[0]=0;
+        snprintf(path,sizeof(path),"/proc/self/task/%s/comm",e->d_name);
+        if ((f=fopen(path,"r"))) {
+            if (fgets(t->name,sizeof(t->name),f)) t->name[strcspn(t->name,"\n")]=0;
+            fclose(f);
+        }
+    }
+    closedir(tasks);
+#endif
+    if (before_wall_ns && wall_ns>before_wall_ns) {
+        ThreadCpu top[Shown]={{0}};
+        uint64_t total=0;
+        for (size_t i=0;i<count;++i) {
+            uint64_t used=now[i].cpu_ns;
+            for (size_t j=0;j<before_count;++j) if (before[j].id==now[i].id) { used=now[i].cpu_ns-before[j].cpu_ns; break; }
+            total+=used;
+            ThreadCpu t=now[i]; t.cpu_ns=used;
+            for (size_t k=0;k<Shown;++k) if (t.cpu_ns>top[k].cpu_ns) { ThreadCpu out=top[k]; top[k]=t; t=out; }
+        }
+        const double window=(double)(wall_ns-before_wall_ns);
+        char text[512]; size_t at=0;
+        for (size_t k=0;k<Shown && top[k].cpu_ns;++k)
+            at+=(size_t)snprintf(text+at,sizeof(text)-at,"%s%s %.0f%%",k ? ", " : "",
+                                 top[k].name[0] ? top[k].name : "?",100.0*top[k].cpu_ns/window);
+        text[at<sizeof(text) ? at : sizeof(text)-1]=0;
+        printf("Runtime: CPU over the window: %.0f%% of a core in %zu threads; busiest: %s\n",
+               100.0*total/window,count,at ? text : "none");
+    }
+    memcpy(before,now,count*sizeof(*now));
+    before_count=count;
+    before_wall_ns=wall_ns;
 }
 #ifdef _WIN32
 #define exit_setjmp(t) bb_setjmp((t)->exit_jump)
