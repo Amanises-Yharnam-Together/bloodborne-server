@@ -960,7 +960,7 @@ SCENARIOS = {
                    f"flags {NIGHTMARE_FLAGS}", "census 400", "done"]
             for role in ("host", "guest")
         },
-        "timeout": 600,
+        "timeout": 300,
     },
     "guest-flags-stay": {
         "about": "flags a guest's own world sets in the session stay in it: the host's world "
