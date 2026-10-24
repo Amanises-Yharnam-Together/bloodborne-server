@@ -426,6 +426,32 @@ TEST_F(BloodborneEboot, TheGiveQueuesItsPopupsAtTheHookedPush) {
               std::vector<u8>(ItemGetQueuedPrologue.begin(), ItemGetQueuedPrologue.end()));
 }
 
+// Team pings (Kaniel 2026-10-24): the item popup's push plays its sound (300) with the system
+// sound function, which the pings play their tick with; the HUD's feed writes the lock cursor's
+// spot where the pings read it.
+TEST_F(BloodborneEboot, ThePingsSoundAndLockCursorAreTheGamesOwn) {
+    EXPECT_EQ(CallTarget(0x016D8981), SystemSoundOffset);
+    EXPECT_EQ(Bytes(0x016D897C, 5),
+              (std::vector<u8>{0xBE, 0x2C, 0x01, 0x00, 0x00})); // mov esi, 300
+    EXPECT_EQ(SystemSoundItemGot, 300);
+    // mov rdi, [rip + ...]: the sound's object from the pointer the pings read.
+    const std::vector<u8> load = Bytes(0x016D8975, 7);
+    ASSERT_EQ(load.size(), 7u);
+    EXPECT_EQ((std::vector<u8>{load[0], load[1], load[2]}), (std::vector<u8>{0x48, 0x8B, 0x3D}));
+    s32 displacement = 0;
+    std::memcpy(&displacement, load.data() + 3, 4);
+    EXPECT_EQ(0x016D897C + displacement, s64(SystemSoundPointerOffset));
+    EXPECT_EQ(Bytes(SystemSoundOffset, SystemSoundPrologue.size()),
+              std::vector<u8>(SystemSoundPrologue.begin(), SystemSoundPrologue.end()));
+    // The cursor's tick: a selection that moved plays sound 0 (xor esi, esi; call).
+    EXPECT_EQ(CallTarget(0x015CA596), SystemSoundOffset);
+    EXPECT_EQ(Bytes(0x015CA594, 2), (std::vector<u8>{0x31, 0xF6}));
+    EXPECT_EQ(Bytes(HudLockCursorXWrite, HudLockCursorXStore.size()),
+              std::vector<u8>(HudLockCursorXStore.begin(), HudLockCursorXStore.end()));
+    EXPECT_EQ(Bytes(HudLockCursorYWrite, HudLockCursorYStore.size()),
+              std::vector<u8>(HudLockCursorYStore.begin(), HudLockCursorYStore.end()));
+}
+
 // The boss-death tracer's sites are the game's dead-flag writes; the two deaths go straight on
 // to the death step.
 TEST_F(BloodborneEboot, TheDeathSitesSetTheDeadFlag) {

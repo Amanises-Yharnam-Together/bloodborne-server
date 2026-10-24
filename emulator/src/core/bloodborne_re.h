@@ -17,6 +17,7 @@ namespace Core::Bloodborne {
 
 struct PartyPanel;
 struct CompassView;
+struct PingsView;
 
 std::optional<std::string> GetSeamlessHostPlacementHeader();
 bool SetSeamlessHostPlacementHeader(std::string_view value);
@@ -83,6 +84,14 @@ void RequestMapTrip(s32 warp_point);
 // Kaniel 2026-10-18 (fog of war): the cells (bloodborne_map.h's ExploredCellMetres squares) this
 // character has walked on the map.
 std::vector<std::array<s16, 2>> ExploredOn(u32 packed_map);
+// Kaniel 2026-10-24: team pings (bloodborne_pings.h). A ping where the camera aims (on the
+// locked-on enemy while locked on) or on the map (`map`'s metres), placed by the game thread on
+// its next tick, at most one a second; the pings shown as of the last tick (false: none);
+// whether pings are on (the Insert menu's Team pings: off, none are placed, shown or heard).
+void RequestAimPing();
+void RequestMapPing(u32 map, const std::array<float, 3>& at);
+bool ReadPings(PingsView& view);
+void SetTeamPingsOn(bool on);
 // Party portraits (bloodborne_portrait.h). The status page's model (its render target's RGBA
 // rows) as the port's texture cache read it back: this character's portrait once the page closes.
 void NoteStatusModel(std::span<const std::uint8_t> rgba, int width, int height);

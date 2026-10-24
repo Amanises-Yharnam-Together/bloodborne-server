@@ -377,5 +377,10 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Champ de vision vertical en degrés ; la caméra du jeu en a 43. Chaque caméra est élargie d'autant. S'applique après le redémarrage du jeu.",
  "Mute in the background": "Muet en arrière-plan",
  "The game is silent while its window is not the active one.": "Le jeu reste silencieux tant que sa fenêtre n'est pas active.",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Les boutons que le jeu affiche à l'écran. Automatique suit ce avec quoi vous jouez : les touches attribuées ci-dessous au clavier et à la souris, les boutons de la manette (PlayStation, Xbox ou Switch) quand vous en utilisez une, et change dès que vous changez. Un changement ici s'applique après un redémarrage."
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Les boutons que le jeu affiche à l'écran. Automatique suit ce avec quoi vous jouez : les touches attribuées ci-dessous au clavier et à la souris, les boutons de la manette (PlayStation, Xbox ou Switch) quand vous en utilisez une, et change dès que vous changez. Un changement ici s'applique après un redémarrage.",
+ "Team pings": "Signaux d'équipe",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Signalez un endroit à votre équipe pendant 20 secondes : touchez deux fois le pavé tactile ou appuyez sur la touche de signal là où vous visez (sur l'ennemi verrouillé), {Square} sur la carte. Votre équipe le voit dans le monde, sur la boussole et sur la carte.",
+ "Ping key": "Touche de signal",
+ "The keyboard key that pings where you aim.": "La touche du clavier qui place un signal là où vous visez.",
+ "Ping": "Signal"
 }

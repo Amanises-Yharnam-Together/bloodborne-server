@@ -31,6 +31,7 @@ VERBS = {
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",
     "expect-compass",  # Kaniel 2026-10-17: the teammate compass
     "expect-stains", "pickup-stain",  # Kaniel 2026-10-20: bloodstains on the compass and map
+    "ping-aim", "ping-map", "expect-pings",  # Kaniel 2026-10-24: team pings
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
     "shot", "expect-hidden", "expect-disabled", "set-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "add-effect",  # #300: Insight for Hemwick's mist ambush
@@ -77,6 +78,19 @@ class ScenarioTest(unittest.TestCase):
                             self.assertIn(words[1], BUTTONS)
                         if words[0] in ("wait-vital", "wait-member-vital"):
                             self.assertIn(words[1], VITALS)
+
+    def test_every_sync_is_declared(self):
+        # Kaniel 2026-10-24 (the first pings run): a sync the scenario does not declare is never
+        # let go, and every game waits on it until the run times out.
+        for name, scenario in scenarios.SCENARIOS.items():
+            declared = scenario.get("syncs", {})
+            for role, script in scenario["roles"].items():
+                for command in sum(run_scenario.stages_of(script), []):
+                    words = command.split()
+                    if words[0] == "sync":
+                        with self.subTest(scenario=name, role=role, sync=words[1]):
+                            self.assertIn(words[1], declared)
+                            self.assertIn(role, declared[words[1]]["roles"])
 
     def test_every_shot_has_a_plain_name_of_its_own(self):
         for name, scenario in scenarios.SCENARIOS.items():

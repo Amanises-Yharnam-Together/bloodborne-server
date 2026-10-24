@@ -377,5 +377,10 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "縦の視野角 (度)。ゲームのカメラは 43 です。すべてのカメラが同じだけ広がります。ゲームの再起動後に反映されます。",
  "Mute in the background": "バックグラウンドで消音",
  "The game is silent while its window is not the active one.": "ゲームのウィンドウがアクティブでない間は音を出しません。",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "ゲームが画面に表示するボタンです。自動では、プレイ中の入力に合わせます。キーボードとマウスの間は下で割り当てたキー、コントローラーの間はそのボタン (PlayStation、Xbox、Switch) を表示し、持ち替えると切り替わります。ここでの変更は再起動後に反映されます。"
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "ゲームが画面に表示するボタンです。自動では、プレイ中の入力に合わせます。キーボードとマウスの間は下で割り当てたキー、コントローラーの間はそのボタン (PlayStation、Xbox、Switch) を表示し、持ち替えると切り替わります。ここでの変更は再起動後に反映されます。",
+ "Team pings": "チームピン",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "チームに20秒間、場所を知らせます。狙った場所（ロックオン中は敵）にタッチパッドをすばやく2回押すか、ピンキーを押します。マップでは{Square}。チームはワールド、コンパス、マップで見られます。",
+ "Ping key": "ピンキー",
+ "The keyboard key that pings where you aim.": "狙った場所にピンを置くキーボードのキー。",
+ "Ping": "ピン"
 }

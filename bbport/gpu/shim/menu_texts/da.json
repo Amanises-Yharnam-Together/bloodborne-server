@@ -377,5 +377,10 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Lodret synsfelt i grader; spillets kamera har 43. Hvert kamera udvides lige meget. Træder i kraft, når spillet genstartes.",
  "Mute in the background": "Lydløs i baggrunden",
  "The game is silent while its window is not the active one.": "Spillet er stille, mens dets vindue ikke er det aktive.",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Knapperne, spillet viser på skærmen. Automatisk følger det, du spiller med: tasterne nedenfor, mens du bruger tastatur og mus, controllerens egne knapper (PlayStation, Xbox eller Switch), mens du bruger en, og skifter undervejs. En ændring her træder i kraft efter en genstart."
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Knapperne, spillet viser på skærmen. Automatisk følger det, du spiller med: tasterne nedenfor, mens du bruger tastatur og mus, controllerens egne knapper (PlayStation, Xbox eller Switch), mens du bruger en, og skifter undervejs. En ændring her træder i kraft efter en genstart.",
+ "Team pings": "Holdmarkeringer",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Markér et sted for dit hold i 20 sekunder: tryk to gange på touchpladen eller tryk på markeringstasten, hvor du sigter (på den fjende, du har låst), {Square} på kortet. Holdet ser den i verden, på kompasset og på kortet.",
+ "Ping key": "Markeringstast",
+ "The keyboard key that pings where you aim.": "Tasten, der markerer, hvor du sigter.",
+ "Ping": "Markér"
 }

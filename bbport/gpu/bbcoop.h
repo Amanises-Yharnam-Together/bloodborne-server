@@ -146,6 +146,61 @@ typedef struct bbcoop_map {
     bbcoop_map_stain stain;
 } bbcoop_map;
 int bbcoop_map_view(bbcoop_map *map, int open);
+/* Kaniel 2026-10-24: team pings. The pings shown (one per team member, 20 s each) as the game
+ * thread read them last: the sender's character name ("" when unknown: Hunter), `own` this
+ * player's, its spot (the game's metres on `map`), `enemy` 1 while it follows an enemy,
+ * `from_map` placed on the world map. On this player's map (`here`): its distance, its bearing
+ * from the camera (as the compass's markers: `strip_x` / `strip_pinned` its place on the strip)
+ * and, while the game's HUD is up, where it shows on the screen (`screen_x`, `screen_y`: fractions
+ * of the game's picture; `pinned` at its edge, `arrow` the way it lies, radians on the screen, 0
+ * right). `has_heading`: the camera's heading is known (the compass strip's ticks). 0 when there
+ * is none. */
+enum { BBCOOP_PINGS = 4 };
+typedef struct bbcoop_ping {
+    char name[40];
+    int own;
+    uint32_t map;
+    float x, y, z;
+    int enemy, from_map;
+    int here;
+    float distance, bearing, strip_x;
+    int strip_pinned;
+    int on_screen;
+    float screen_x, screen_y;
+    int pinned;
+    float arrow;
+    float seconds_left;
+} bbcoop_ping;
+typedef struct bbcoop_pings {
+    int has_heading;
+    float heading;
+    int count;
+    bbcoop_ping pings[BBCOOP_PINGS];
+} bbcoop_pings;
+int bbcoop_pings_view(bbcoop_pings *pings);
+/* A ping where the camera aims (the locked-on enemy while locked on: it follows it), placed by the
+ * game thread (the pad's touchpad double tap, the ping key). */
+void bbcoop_ping_aim(void);
+/* A ping on the map screen: the spot under its cursor on the atlas (`atlas_x`, `atlas_z`) is on
+ * the area drawn there (`areas`: each area's picture on the atlas and its world's place there;
+ * `shown` wins where two overlap), at height `y`. 1 when it was asked for (0: on no area). */
+typedef struct bbcoop_ping_area {
+    uint32_t map;
+    float x0, x1, z0, z1, dx, dz;
+} bbcoop_ping_area;
+int bbcoop_ping_map(const bbcoop_ping_area *areas, int count, uint32_t shown, float atlas_x,
+                    float atlas_z, float y);
+/* The Insert menu's Team pings: off, none is placed, shown or heard. */
+void bbcoop_set_team_pings(int on);
+/* A ping's words beside its marker: the name and its distance (`has_distance`), else the area it
+ * is in (`area`, may be ""). */
+void bbcoop_ping_label(const char *name, int has_distance, float distance, const char *area,
+                       char *out, size_t size);
+/* Where a map ping's words go (screen pixels): under its mark at (`x`, `y`) of radius `r`, else
+ * over, right or left of it, off the place names drawn there (`taken`: `count` boxes of x0, y0, x1,
+ * y1); the words' box into `out` (x0, y0, x1, y1). */
+void bbcoop_ping_label_place(float x, float y, float r, float width, float height,
+                             const float *taken, int count, float gap, float out[4]);
 /* A trip from the map to the lamp (a warp point of the view's lamps), started by the game thread
  * if nothing stops it. */
 void bbcoop_map_travel(int32_t warp_point);

@@ -11,7 +11,9 @@
 #include <ctime>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -25,6 +27,7 @@
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_map.h"
 #include "core/bloodborne_party.h"
+#include "core/bloodborne_pings.h"
 #include "core/bloodborne_portrait.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
@@ -307,6 +310,91 @@ static_assert(BBCOOP_MAP_GO == int(Core::Bloodborne::MapTravelBlock::None) &&
               BBCOOP_MAP_DOWN == int(Core::Bloodborne::MapTravelBlock::Down) &&
               BBCOOP_MAP_BOSS == int(Core::Bloodborne::MapTravelBlock::BossFight) &&
               BBCOOP_MAP_TRAVELLING == int(Core::Bloodborne::MapTravelBlock::Travelling));
+
+extern "C" int bbcoop_pings_view(bbcoop_pings* pings) {
+    using namespace Core::Bloodborne;
+    *pings = {};
+    PingsView view;
+    if (!ReadPings(view)) {
+        return 0;
+    }
+    pings->has_heading = view.heading ? 1 : 0;
+    pings->heading = view.heading.value_or(0.0f);
+    for (const PingShown& ping : view.pings) {
+        if (pings->count >= BBCOOP_PINGS) {
+            break;
+        }
+        bbcoop_ping& out = pings->pings[pings->count++];
+        std::snprintf(out.name, sizeof(out.name), "%s", ping.name.c_str());
+        out.own = ping.member.empty() ? 1 : 0;
+        out.map = ping.map;
+        out.x = ping.at[0];
+        out.y = ping.at[1];
+        out.z = ping.at[2];
+        out.enemy = ping.enemy != 0 ? 1 : 0;
+        out.from_map = ping.from_map ? 1 : 0;
+        out.here = ping.here ? 1 : 0;
+        out.distance = ping.distance;
+        out.bearing = ping.bearing;
+        const CompassPlace place = PlaceOnStrip(ping.bearing);
+        out.strip_x = place.x;
+        out.strip_pinned = place.pinned ? 1 : 0;
+        if (ping.screen) {
+            out.on_screen = 1;
+            out.screen_x = ping.screen->x;
+            out.screen_y = ping.screen->y;
+            out.pinned = ping.screen->pinned ? 1 : 0;
+            out.arrow = ping.screen->arrow;
+        }
+        out.seconds_left = ping.seconds_left;
+    }
+    return pings->count > 0 ? 1 : 0;
+}
+
+extern "C" void bbcoop_ping_aim(void) {
+    Core::Bloodborne::RequestAimPing();
+}
+
+extern "C" int bbcoop_ping_map(const bbcoop_ping_area* areas, int count, uint32_t shown,
+                               float atlas_x, float atlas_z, float y) {
+    using namespace Core::Bloodborne;
+    std::vector<PingArea> list;
+    for (int i = 0; i < count; ++i) {
+        list.push_back({areas[i].map, areas[i].x0, areas[i].x1, areas[i].z0, areas[i].z1,
+                        areas[i].dx, areas[i].dz});
+    }
+    const auto spot = PingAreaAt(list, shown, atlas_x, atlas_z);
+    if (!spot) {
+        return 0;
+    }
+    RequestMapPing(spot->map, {spot->x, y, spot->z});
+    return 1;
+}
+
+extern "C" void bbcoop_set_team_pings(int on) {
+    Core::Bloodborne::SetTeamPingsOn(on != 0);
+}
+
+extern "C" void bbcoop_ping_label(const char* name, int has_distance, float distance,
+                                  const char* area, char* out, size_t size) {
+    const std::string line = Core::Bloodborne::PingLabel(
+        name != nullptr ? name : "", has_distance ? std::optional{distance} : std::nullopt,
+        area != nullptr ? area : "");
+    std::snprintf(out, size, "%s", line.c_str());
+}
+
+extern "C" void bbcoop_ping_label_place(float x, float y, float r, float width, float height,
+                                        const float* taken, int count, float gap, float out[4]) {
+    std::vector<Core::Bloodborne::PingBox> boxes;
+    for (int i = 0; i < count; ++i) {
+        boxes.push_back({taken[i * 4], taken[i * 4 + 1], taken[i * 4 + 2], taken[i * 4 + 3]});
+    }
+    const auto box = Core::Bloodborne::PlacePingLabel(x, y, r, width, height, boxes, gap);
+    out[0] = box.x0;
+    out[1] = box.y0;
+    out[2] = box.x1;
+    out[3] = box.y1;
+}
 
 extern "C" void bbcoop_map_travel(int32_t warp_point) {
     Core::Bloodborne::RequestMapTrip(warp_point);

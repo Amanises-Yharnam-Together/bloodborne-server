@@ -88,6 +88,10 @@ enum Map3d { Map3dOff, Map3dPrerendered, Map3dLive, Map3dCount };
 /// the bottom of the screen, or a ring around its middle.
 enum CompassPosition : int { CompassTop = 0, CompassBottom = 1, CompassReticle = 2, CompassPositionCount };
 inline constexpr const char* CompassPositionNames[] = {"top", "bottom", "reticle"};
+/// Kaniel 2026-10-24 (team pings): the keys the ping key may be (bbport.ini ping_key, SDL's key
+/// names): none of them is in the default keyboard layout (runtime_pad.c) or the overlay's own.
+inline constexpr const char* PingKeyNames[] = {"T", "V", "Z", "X", "B", "H", "N", "Y", "U", "O", "P", "CapsLock"};
+inline constexpr int PingKeyCount = int(sizeof(PingKeyNames) / sizeof(PingKeyNames[0]));
 /// Kaniel 2026-10-19: screen-space lighting (vk_screen_lighting.h; bbport.ini screen_lighting):
 /// ambient occlusion and one bounce of indirect light, traced at half (low) or full (high) size.
 enum ScreenLighting : int {
@@ -141,6 +145,10 @@ struct Values {
     /// Kaniel 2026-10-20: the party's bloodstains on the compass and the map (bbport.ini
     /// bloodstains, on by default).
     std::atomic<bool> bloodstains{true};
+    /// Kaniel 2026-10-24: team pings (bbport.ini team_pings, on by default) and the key that
+    /// places one where the camera aims (ping_key, an index into PingKeyNames, kept by name).
+    std::atomic<bool> team_pings{true};
+    std::atomic<int> ping_key{0};
     /// Kaniel 2026-10-19 ("make it opt in, so low vram cards will not prerender it", "an opt in
     /// option to view rendered in real time 3d map"): the map screen's 3D view (bbport.ini map_3d,
     /// Map3d*, off by default): prerendered pictures, or the models drawn live on the GPU.

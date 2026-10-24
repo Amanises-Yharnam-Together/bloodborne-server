@@ -377,5 +377,10 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Campo de visão vertical em graus; a câmera do jogo tem 43. Todas as câmeras são ampliadas na mesma medida. Vale depois de reiniciar o jogo.",
  "Mute in the background": "Sem som em segundo plano",
  "The game is silent while its window is not the active one.": "O jogo fica em silêncio enquanto a janela dele não for a ativa.",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Os botões que o jogo mostra na tela. Automático segue o que você usa: as teclas atribuídas abaixo enquanto você usa teclado e mouse, os botões do controle (PlayStation, Xbox ou Switch) enquanto usa um, e muda quando você muda. Uma alteração aqui vale depois de reiniciar."
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Os botões que o jogo mostra na tela. Automático segue o que você usa: as teclas atribuídas abaixo enquanto você usa teclado e mouse, os botões do controle (PlayStation, Xbox ou Switch) enquanto usa um, e muda quando você muda. Uma alteração aqui vale depois de reiniciar.",
+ "Team pings": "Marcações de equipe",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Marque um local para sua equipe por 20 segundos: toque duas vezes no touchpad ou pressione a tecla de marcação onde você mira (no inimigo travado), {Square} no mapa. Sua equipe vê no mundo, na bússola e no mapa.",
+ "Ping key": "Tecla de marcação",
+ "The keyboard key that pings where you aim.": "A tecla que marca onde você mira.",
+ "Ping": "Marcar"
 }

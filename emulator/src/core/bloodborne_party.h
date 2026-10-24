@@ -315,6 +315,10 @@ constexpr u64 ResetCharacterFollowOffset = 0x018BCF30;
 constexpr u64 CameraManagerPointerOffset = 0x0553E860;
 constexpr u64 CameraManagerField = 0x2830;
 constexpr u64 CameraSnapByte = 0x80;
+// Kaniel 2026-10-24 (team pings): the camera the frame is drawn with, in the camera manager from
+// +0x10 (bloodborne_pings.h's PingCamera: its world matrix, field of view, width / height, near
+// and far; rebuilt every frame at 0x01436C31 from the active camera, as PR #320 found).
+constexpr u64 PingCameraAt = 0x10;
 // Returns whether it moved the character (every call is needed).
 bool PlaceCharacter(const PlacementCalls& calls, u64 character, const float* position,
                     const float* rotation);
@@ -3697,6 +3701,25 @@ PadInput DownedPad(const PadInput& pad);
 // press of ours (the game's own toggle), at most one every LockOnReleaseGapMs while the cursor
 // still shows.
 constexpr u64 HudLockCursorAt = 0x14F8;
+// Kaniel 2026-10-24 (team pings): where the lock cursor is, on the HUD's 1920 x 1080 screen
+// (ints): the lock-on manager's +0xCF0 / +0xCF4 written at 0x01BFE568 / 0x01BFE572 each frame
+// (960, 540 while it is on another mark).
+constexpr u64 HudLockCursorXAt = 0x14FC;
+constexpr u64 HudLockCursorYAt = 0x1500;
+constexpr u64 HudLockCursorXWrite = 0x01BFE568;
+constexpr std::array<u8, 6> HudLockCursorXStore{0x89, 0x88, 0xFC, 0x14, 0x00, 0x00};
+constexpr u64 HudLockCursorYWrite = 0x01BFE572;
+constexpr std::array<u8, 6> HudLockCursorYStore{0x89, 0x88, 0x00, 0x15, 0x00, 0x00};
+// Kaniel 2026-10-24 (team pings): the game's system sounds, its menus' own. 0x01774690 (this:
+// [0x05562FD8], esi: the sound) plays one of the ids of its table (60 of them at 0x04733830; any
+// other does nothing): 0 the cursor's tick (a list's selection moving, e.g. 0x015CA596), 100 and
+// 200 a page's confirm and cancel, 300 an item got (the item popup's push calls it, 0x016D8981),
+// 400 a number stepping. A ping coming in plays the cursor's tick: the quietest.
+constexpr u64 SystemSoundOffset = 0x01774690;
+constexpr std::array<u8, 8> SystemSoundPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
+constexpr u64 SystemSoundPointerOffset = 0x05562FD8;
+constexpr s32 SystemSoundCursor = 0;
+constexpr s32 SystemSoundItemGot = 300;
 constexpr s64 LockOnReleaseGapMs = 600;
 bool ReleasesLockOn(s32 cursor, s64 now_ms, std::optional<s64> last_press_ms);
 // R1 or R2 going down between two reads of the pad: an attack, which may be a revive hit.

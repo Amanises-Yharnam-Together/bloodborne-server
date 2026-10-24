@@ -377,5 +377,10 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Campo visivo verticale in gradi; la telecamera del gioco ne ha 43. Ogni telecamera viene allargata della stessa misura. Si applica dopo il riavvio del gioco.",
  "Mute in the background": "Muto in background",
  "The game is silent while its window is not the active one.": "Il gioco resta in silenzio finché la sua finestra non è quella attiva.",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "I pulsanti che il gioco mostra a schermo. Automatico segue ciò con cui giochi: i tasti assegnati qui sotto mentre usi tastiera e mouse, i pulsanti del controller (PlayStation, Xbox o Switch) mentre ne usi uno, e cambia quando cambi tu. Una modifica qui si applica dopo il riavvio."
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "I pulsanti che il gioco mostra a schermo. Automatico segue ciò con cui giochi: i tasti assegnati qui sotto mentre usi tastiera e mouse, i pulsanti del controller (PlayStation, Xbox o Switch) mentre ne usi uno, e cambia quando cambi tu. Una modifica qui si applica dopo il riavvio.",
+ "Team pings": "Segnali di squadra",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Segnala un punto alla tua squadra per 20 secondi: tocca due volte il touchpad o premi il tasto segnale dove miri (sul nemico agganciato), {Square} sulla mappa. La squadra lo vede nel mondo, sulla bussola e sulla mappa.",
+ "Ping key": "Tasto segnale",
+ "The keyboard key that pings where you aim.": "Il tasto che mette un segnale dove miri.",
+ "Ping": "Segnala"
 }
