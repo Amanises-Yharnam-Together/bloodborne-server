@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "解析度、升頻器、銳利度與模型細節（bbport）",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "場景解析度：0-1 Native AA，2-3 Quality，4-6 Balanced，7-8 Performance，9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "升頻器後的 RCAS：0 關閉，10 最強",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "最終畫面：0-1 1280x720，2-4 1920x1080，5-7 2560x1440，8-10 3840x2160",
  "Frame rate in the top right corner": "在右上角顯示幀率",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "重新啟動後：0-1 最高，2-4 遊戲預設，5-7 較低，8-10 最低",
  "Highest": "最高",
@@ -377,5 +376,12 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "垂直視野角度；遊戲的鏡頭為 43。所有鏡頭按相同幅度放寬。重新啟動遊戲後生效。",
  "Mute in the background": "背景時靜音",
  "The game is silent while its window is not the active one.": "遊戲視窗不是使用中的視窗時，遊戲不發出聲音。",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "遊戲在畫面上顯示的按鍵。自動會跟隨你正在使用的裝置：使用鍵盤和滑鼠時顯示下方綁定的按鍵，使用手把時顯示手把自己的按鍵（PlayStation、Xbox 或 Switch），切換裝置時隨之切換。此處的變更在重新啟動後生效。"
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "遊戲在畫面上顯示的按鍵。自動會跟隨你正在使用的裝置：使用鍵盤和滑鼠時顯示下方綁定的按鍵，使用手把時顯示手把自己的按鍵（PlayStation、Xbox 或 Switch），切換裝置時隨之切換。此處的變更在重新啟動後生效。",
+ "Auto (the output's)": "自動（跟隨輸出）",
+ "16:9 (bars)": "16:9（黑邊）",
+ "Aspect ratio": "畫面比例",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "自動：更寬的螢幕（21:9、32:9）兩側顯示更多，更高的螢幕（16:10、4:3）上下顯示更多，HUD 移到螢幕邊緣。16:9：遊戲原本的畫面，帶黑邊。重新啟動遊戲後生效。",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "自動：更寬的螢幕（21:9、32:9）兩側顯示更多，更高的螢幕（16:10、4:3）上下顯示更多，HUD 移到螢幕邊緣。16:9：遊戲原本的畫面，帶黑邊。從下一個畫面起改變。",
+ "Final frame": "最終畫面",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "自動：更寬或更高的螢幕顯示更多世界。16:9：遊戲原本的畫面，黑邊"
 }

@@ -1018,13 +1018,29 @@ struct HudItem {
     double base_x = 0, base_y = 0;
     double set_x = 0, set_y = 0; ///< what the port set last
     bool known = false;
+    bool missing = false; ///< not in this HUD (a mod's, or one without the party list)
 };
-std::array<HudItem, 5> hud_items = {{
+std::array<HudItem, 17> hud_items = {{
     {0, "PlayerHUD", -1.0f, -1.0f},
     {1, "Soul", 2.0f, 0.0f}, // in PlayerHUD: twice, for its move to the left
     {1, "HeroPoint", 2.0f, 0.0f},
     {0, "AutoSaveIcon", 1.0f, -1.0f},
     {0, "BossTop", 0.0f, 1.0f},
+    // bbport co-op: the party list the HUD patch puts at the top level (scripts/hud_patch.py: the
+    // members' icons, portraits, badges and supplies) stays beside the player's bars (PlayerHUD).
+    // Its tags (CoopParty0-2) the co-op code places itself each frame (PartyListPosition).
+    {0, "CoopSupply0", -1.0f, -1.0f},
+    {0, "CoopSupply1", -1.0f, -1.0f},
+    {0, "CoopSupply2", -1.0f, -1.0f},
+    {0, "CoopPartyIcon0", -1.0f, -1.0f},
+    {0, "CoopPartyIcon1", -1.0f, -1.0f},
+    {0, "CoopPartyIcon2", -1.0f, -1.0f},
+    {0, "CoopPartyFace0", -1.0f, -1.0f},
+    {0, "CoopPartyFace1", -1.0f, -1.0f},
+    {0, "CoopPartyFace2", -1.0f, -1.0f},
+    {0, "CoopPartyBadge0", -1.0f, -1.0f},
+    {0, "CoopPartyBadge1", -1.0f, -1.0f},
+    {0, "CoopPartyBadge2", -1.0f, -1.0f},
 }};
 
 /// Each frame, from the game's screen update: the HUD groups where the output's edges are.
@@ -1048,7 +1064,7 @@ GUEST_ABI void HudFrame(u64 screen) {
     if (hud != last_hud) {
         last_hud = hud; // a new HUD (another area): where the game put its groups is read again
         for (HudItem& item : hud_items) {
-            item.known = false;
+            item.known = item.missing = false;
         }
         static bool told = false;
         if (!told) {
@@ -1061,7 +1077,7 @@ GUEST_ABI void HudFrame(u64 screen) {
     const float dy = hud_anchor_on ? hud_dy.load(std::memory_order_relaxed) : 0.0f;
     bool all_known = true;
     for (const HudItem& item : hud_items) {
-        all_known = all_known && item.known;
+        all_known = all_known && (item.known || item.missing);
     }
     // Rechecked every half second: the game may put a group back itself.
     if (dx == applied_dx && dy == applied_dy && all_known && ++frames % 32 != 0) {
@@ -1076,8 +1092,10 @@ GUEST_ABI void HudFrame(u64 screen) {
         GfxValue clip;
         if (!GfxGet(item.parent ? player : root, item.name, clip) || !GfxIsObject(clip)) {
             GfxRelease(clip);
+            item.missing = true; // looked for again at the next recheck
             continue;
         }
+        item.missing = false;
         double x = 0, y = 0;
         if (GfxGetNumber(clip, "x", x) && GfxGetNumber(clip, "y", y)) {
             // Positions are in twips (1/20 pixel): a read back is that close.

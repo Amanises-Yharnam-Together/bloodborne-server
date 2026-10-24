@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "解像度、アップスケーラー、シャープネス、モデル詳細度（bbport）",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "シーン解像度：0-1 Native AA、2-3 Quality、4-6 Balanced、7-8 Performance、9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "アップスケーラー後のRCAS：0 OFF、10 最強",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "最終フレーム：0-1 1280x720、2-4 1920x1080、5-7 2560x1440、8-10 3840x2160",
  "Frame rate in the top right corner": "右上にフレームレートを表示",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "再起動後：0-1 最高、2-4 ゲーム標準、5-7 低め、8-10 最低",
  "Highest": "最高",
@@ -377,5 +376,12 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "縦の視野角 (度)。ゲームのカメラは 43 です。すべてのカメラが同じだけ広がります。ゲームの再起動後に反映されます。",
  "Mute in the background": "バックグラウンドで消音",
  "The game is silent while its window is not the active one.": "ゲームのウィンドウがアクティブでない間は音を出しません。",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "ゲームが画面に表示するボタンです。自動では、プレイ中の入力に合わせます。キーボードとマウスの間は下で割り当てたキー、コントローラーの間はそのボタン (PlayStation、Xbox、Switch) を表示し、持ち替えると切り替わります。ここでの変更は再起動後に反映されます。"
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "ゲームが画面に表示するボタンです。自動では、プレイ中の入力に合わせます。キーボードとマウスの間は下で割り当てたキー、コントローラーの間はそのボタン (PlayStation、Xbox、Switch) を表示し、持ち替えると切り替わります。ここでの変更は再起動後に反映されます。",
+ "Auto (the output's)": "自動（出力に合わせる）",
+ "16:9 (bars)": "16:9（黒帯）",
+ "Aspect ratio": "アスペクト比",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "自動：横に広い画面（21:9、32:9）では左右が、縦に長い画面（16:10、4:3）では上下がより広く見え、HUDは画面の端に移動します。16:9：ゲーム本来の映像に黒帯が付きます。ゲームの再起動後に反映されます。",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "自動：横に広い画面（21:9、32:9）では左右が、縦に長い画面（16:10、4:3）では上下がより広く見え、HUDは画面の端に移動します。16:9：ゲーム本来の映像に黒帯が付きます。次のフレームから変わります。",
+ "Final frame": "最終画面",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "自動：横長・縦長の画面では世界がより広く見えます。16:9：ゲーム本来の映像と黒帯"
 }

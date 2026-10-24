@@ -4215,3 +4215,34 @@ SCENARIOS["paarl-after-wipe"] = {
     "forbid": {role: SESSION_HOLDS for role in ("host", "guest", "guest2")},
     "timeout": 900,
 }
+
+# Kaniel 2026-10-24: every aspect ratio. One visible host (the guest headless beside it, for the
+# party list, the compass and a teammate's nametag): the HUD at the output's edges, the party list
+# beside the player's bars, the menu's dimming over the whole output, a lock-on marker on its enemy.
+ASPECT_HUD_HOST = [START, "godmode", "wait-session 2 300", "wait 25", "shot host-hud",
+                   "press options", "wait 2", "shot host-menu", "press circle", "wait 3",
+                   f"approach {ENEMY} 0 2 3.14", "wait 2", f"hit {ENEMY} 20", "press r3", "wait 2",
+                   "shot host-lockon",
+                   "press r3", "wait 2", "expect-session 2", "sync aspect-shots"]
+ASPECT_HUD_GUEST = [START, "godmode", "wait-session 2 300", "sync aspect-shots", "expect-session 2"]
+SCENARIOS["aspect-hud-wide"] = {
+    "about": "a 21:9 output (1680x720): the game sees more to the sides, its HUD at the edges, the "
+             "party list beside the player's bars, the menu's dimming and a lock-on marker "
+             "(pictures; run visible, not --headless: the guest is headless by itself)",
+    "settings": {"ini.output_res": "1680x720", "ini.aspect_ratio": "auto", "rig.headless_roles": "guest"},
+    "roles": {"host": ASPECT_HUD_HOST, "guest": ASPECT_HUD_GUEST},
+    "syncs": {"aspect-shots": {"chapter": "aspect-hud", "roles": ["host", "guest"]}},
+    "console_expect": {"host": [r"the camera at 5 of 5 places", r"Display: aspect ratio 2\.333 \(wider",
+                                r"HUD: anchored to the output's edges"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
+}
+SCENARIOS["aspect-hud-16x9"] = {
+    "about": "the 16:9 regression of aspect-hud-wide at 1280x720: the game's own picture and HUD",
+    "settings": {"ini.output_res": "1280x720", "ini.aspect_ratio": "auto", "rig.headless_roles": "guest"},
+    "roles": {"host": ASPECT_HUD_HOST, "guest": ASPECT_HUD_GUEST},
+    "syncs": {"aspect-shots": {"chapter": "aspect-hud", "roles": ["host", "guest"]}},
+    "console_expect": {"host": [r"the camera at 5 of 5 places", r"Display: aspect ratio 1\.778 \(the game's\)"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
+}

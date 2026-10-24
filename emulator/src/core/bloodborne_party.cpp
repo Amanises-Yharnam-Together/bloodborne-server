@@ -5211,10 +5211,21 @@ void WritePromptData(std::span<u8, HudPromptDataSize> data,
     put(HudPromptTextAt + 0x20, 63);
 }
 
+namespace {
+std::atomic<float> hud_shift_x{0.0f}, hud_shift_y{0.0f};
+} // namespace
+
+void SetHudEdgeShift(float dx, float dy) {
+    hud_shift_x.store(dx, std::memory_order_relaxed);
+    hud_shift_y.store(dy, std::memory_order_relaxed);
+}
+
 std::pair<s32, s32> PartyListPosition(int index) {
     // hud_patch.py LIST_X/LIST_Y/LIST_STEP: each tag's HP bar starts where the player's own does
-    // (x 61 on the 1920 stage: the tag's bar starts 143 left of its position), its icon left of it.
-    return {204, 330 + 95 * index};
+    // (x 61 on the 1920 stage: the tag's bar starts 143 left of its position), its icon left of it;
+    // with the player's bars where the port's aspect hooks moved them (SetHudEdgeShift).
+    return {204 - s32(std::lround(hud_shift_x.load(std::memory_order_relaxed))),
+            330 + 95 * index - s32(std::lround(hud_shift_y.load(std::memory_order_relaxed)))};
 }
 
 void WriteTagData(std::span<u8, HudTagDataSize> data, std::span<const u8, HudTagDataSize> game,

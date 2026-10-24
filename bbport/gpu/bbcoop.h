@@ -160,6 +160,10 @@ int32_t bbcoop_map_area_name_id(uint32_t map);
  * presses Circle a moment later). bbcoop_map_screen: 1 while it is open. */
 void bbcoop_map_menu(int open);
 int bbcoop_map_screen(void);
+/* Kaniel 2026-10-24: how far the HUD's groups are moved toward the screen's edges on another aspect
+ * ratio than 16:9 (BbGuestHooks::HudEdgeShift, the HUD stage's pixels): the native party list
+ * follows the player's bars. Any thread. */
+void bbcoop_set_hud_shift(float dx, float dy);
 /* Kaniel 2026-10-18: the pad's touchpad held: the map opens (as from the Insert menu) while the
  * player is in the world. */
 void bbcoop_map_from_pad(void);
