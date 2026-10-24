@@ -5,6 +5,7 @@ image places eboot vaddr 0 at image offset 0. Only literal writes are supported
 (bytes, bytes16/32/64, float32/64, utf8, utf16); pattern ("mask") patches are rejected.
 """
 import argparse
+import hashlib
 import json
 import os
 import struct
@@ -288,6 +289,93 @@ def eboot_segments(elf):
     return segments
 
 
+def eboot_bytes(elf, start, end):
+    """eboot.elf's bytes at image offsets [start, end) (eboot vaddr 0 at offset 0), zeros where no
+    segment holds file data."""
+    out=bytearray(end-start)
+    phoff,=struct.unpack_from('<Q',elf,0x20)
+    phentsize,phnum=struct.unpack_from('<HH',elf,0x36)
+    for i in range(phnum):
+        kind,_,offset,vaddr,_,filesz,_,_=struct.unpack_from('<IIQQQQQQ',elf,phoff+i*phentsize)
+        if kind!=1: continue
+        first,last=max(start,vaddr),min(end,vaddr+filesz)
+        if first<last:
+            out[first-start:last-start]=elf[offset+first-vaddr:offset+last-vaddr]
+    return bytes(out)
+
+
+# The patches write bytes into the code of one build of the game (Supermedo 48e41b7). A
+# fingerprint covers the game's original bytes everywhere a group of patches writes, so another
+# region's build with the same code passes, and each group is checked on its own: an eboot.bin
+# with only its frame-rate code changed (a 60 fps patch applied to the file, as some dumps ship
+# it) still gets the resolution, effect and fix patches, whose code is untouched, and no patch is
+# written over code it does not expect. Enemy Control rewrites code the FPS patches write too, and
+# Restore Debug Camera code Enemy Control writes (EXCLUSIVE_PATCHES), so both are checked with them. bbport's game check (game_check.py) refuses such an eboot.bin unless
+# BB_SKIP_GAME_CHECK=1; the co-op site check (coop_conflicts) runs on what is applied either way.
+# Recompute the fingerprints with --print-fingerprint (after a run of CUSA03173 v01.09) when the
+# patches change; test_patches.py checks them against BLOODBORNE_EBOOT.
+HEAP_PATCH='Increased Graphics Heap Sizes'
+SHARES_FPS_CODE={'Enemy Control','Restore Debug Camera'}
+PATCH_GROUPS={
+    'fps':sorted({n for names in FPS_PRESETS.values() for n in names}|SHARES_FPS_CODE),
+    'resolution':sorted({RESOLUTION_TEMPLATE,HEAP_PATCH}),
+    'effects':sorted(({n for pair in EFFECTS.values() for n in pair if n}|set(MODEL_LOD.values()))-SHARES_FPS_CODE),
+    'fixes':sorted({INTEL_TONEMAP,SKIP_NETWORK_CHOICE,GX_COMMAND_HEAP}),
+}
+GROUP_OF={name:group for group,names in PATCH_GROUPS.items() for name in names}
+GROUP_TEXT={'fps':'frame rate','resolution':'resolution','effects':'effect options','fixes':'game fixes'}
+PATCH_FINGERPRINTS={'01.09':{
+    'fps':'d38e60663e70814b91d955578eb96c778378fb4a2f67ce5d41bf4e94a1bb99e2',
+    'resolution':'e9a46a62677b9892744ffcbeae8639aa166c597ca22b8999d63e42a32145285f',
+    'effects':'d18f58dbf11ba2b02662c51f9e4090c69c89dd302aae8701b0ce10aa34ea3d3b',
+    'fixes':'ebba53663144d9fbf8ed0c7ee4e16c71b68c2af830125190e78bb43c2bbe77aa',
+}}
+
+
+def group_list(groups):
+    """'frame rate, resolution and effect options' for the groups given."""
+    names=[GROUP_TEXT[g] for g in PATCH_GROUPS if g in groups]
+    return names[0] if len(names)==1 else ', '.join(names[:-1])+' and '+names[-1]
+
+
+def patch_sites(xml, app_version, names):
+    """Sorted, merged [start, end) eboot ranges the named patches write."""
+    ranges=[]
+    for meta in ET.parse(xml).getroot().iter('Metadata'):
+        if meta.get('Name') not in names or meta.get('AppVer')!=app_version: continue
+        for line in meta.iter('Line'):
+            offset=int(line.get('Address'),0)-EBOOT_BASE
+            ranges.append((offset,offset+len(encode(line))))
+    merged=[]
+    for start,end in sorted(ranges):
+        if merged and start<=merged[-1][1]: merged[-1]=(merged[-1][0],max(merged[-1][1],end))
+        else: merged.append((start,end))
+    return merged
+
+
+def fingerprint(read, names, xml=None, app_version=APP_VERSION):
+    """SHA-256 over the named patches' sites as `read(start, end)` gives the eboot's bytes there."""
+    digest=hashlib.sha256()
+    for start,end in patch_sites(xml or BUILTIN_XML,app_version,names):
+        digest.update(struct.pack('<QQ',start,end)+read(start,end))
+    return digest.hexdigest()
+
+
+def matching_groups_of(read, app_version=APP_VERSION):
+    """The PATCH_GROUPS whose original bytes the eboot has (all of them for a game version
+    without fingerprints): only those may be patched."""
+    expected=PATCH_FINGERPRINTS.get(app_version)
+    if not expected: return set(PATCH_GROUPS)
+    return {group for group,value in expected.items()
+            if fingerprint(read,PATCH_GROUPS[group],BUILTIN_XML,app_version)==value}
+
+
+def matching_groups(elf_path, app_version=APP_VERSION):
+    """matching_groups_of for eboot.elf (prepare.py)."""
+    elf=Path(elf_path).read_bytes()
+    return matching_groups_of(lambda start,end: eboot_bytes(elf,start,end),app_version)
+
+
 def encode(line):
     kind,value=line.get('Type'),line.get('Value')
     if kind=='bytes': return bytes.fromhex(value.replace(' ',''))
@@ -321,6 +409,9 @@ def compile_named(xml, names, app_version, segments):
                 raise ValueError(f'{name}: address {line.get("Address")} is outside the eboot')
             writes.append((name,offset,data))
     return writes
+
+
+BUILTIN_XML=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml'
 
 
 # Third-party patch files (shadPS4/GoldHEN XML) in the data directory's patches/ folder.
@@ -474,7 +565,14 @@ def main():
                    help='print "RENDER OUTPUT" (WxH) when bbport.ini selects an output other than 1080p')
     p.add_argument('--print-patched',action='store_true',
                    help='print "patched" or "unpatched" for the version of --game-dir (run.sh asks this)')
+    p.add_argument('--print-fingerprint',action='store_true',
+                   help='print the patch groups\' fingerprints of <out>/eboot.elf (PATCH_FINGERPRINTS)')
     a=p.parse_args()
+    if a.print_fingerprint:
+        elf=(a.out/'eboot.elf').read_bytes()
+        for group,names in PATCH_GROUPS.items():
+            print(group,fingerprint(lambda start,end: eboot_bytes(elf,start,end),names,a.xml,a.app_version))
+        return
     if a.print_patched:
         print('patched' if game_is_patched(game_app_version(a.game_dir),os.environ,a.app_version) else 'unpatched')
         return
@@ -500,18 +598,34 @@ def main():
         print(f'Patches: game version {version}, patches are for {a.app_version}: none applied '
               '(30 FPS, no effect or resolution patches)')
         return
-    names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
-    names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]
-    if intel_tonemap_fix() and INTEL_TONEMAP not in names:
-        names.append(INTEL_TONEMAP)
-    if skip_network_choice() and SKIP_NETWORK_CHOICE not in names:
-        names.append(SKIP_NETWORK_CHOICE)
-    if gx_command_heap() and GX_COMMAND_HEAP not in names:
-        names.append(GX_COMMAND_HEAP)
+    force=bool(os.environ.get('BB_FORCE_PATCHES'))
+    groups=set(PATCH_GROUPS) if force else matching_groups(a.out/'eboot.elf',a.app_version)
+    if not groups:
+        (a.out/'patches.bin').write_bytes(struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,0))
+        print(f'Patches: eboot.bin is not the {a.app_version} build the patches were made for: none '
+              'applied (30 FPS, no effect or resolution patches; BB_FORCE_PATCHES=1 applies them)')
+        return
+    whole=groups==set(PATCH_GROUPS)
+    if not whole:
+        print(f'Patches: eboot.bin is not the clean {a.app_version} build: its '
+              f'{group_list(set(PATCH_GROUPS)-groups)} code differs; only the {group_list(groups)} '
+              'patches apply')
+    fps_names=FPS_PRESETS[a.fps] if 'fps' in groups else []
+    names=list(fps_names)
+    if whole:  # other patches' code is not fingerprinted
+        names+=[n.strip() for n in a.extra.split(';') if n.strip()]
+    names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names and GROUP_OF.get(n) in groups]
+    if 'fixes' in groups:
+        if intel_tonemap_fix() and INTEL_TONEMAP not in names:
+            names.append(INTEL_TONEMAP)
+        if skip_network_choice() and SKIP_NETWORK_CHOICE not in names:
+            names.append(SKIP_NETWORK_CHOICE)
+        if gx_command_heap() and GX_COMMAND_HEAP not in names:
+            names.append(GX_COMMAND_HEAP)
     names=validate_patch_requirements(names,a.game_dir)
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     named=compile_named(a.xml,names,a.app_version,segments)
-    size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
+    size=render_size(read_settings(a.settings),a.render_res) if a.render_res and 'resolution' in groups else None
     # The UI keeps the game's 1920x1080 coordinates even for a larger output: the port draws
     # it into the output-size image with a viewport scaled by output / 1920
     # (UiComposition::NativeViewport), so it is rasterized at the output resolution.
@@ -520,19 +634,18 @@ def main():
         named+=[(RESOLUTION_TEMPLATE,offset,data)
                 for offset,data in resolution_writes(a.xml,size,a.app_version,segments,ui)]
         if size[0]*size[1]>OUTPUT_SIZE[0]*OUTPUT_SIZE[1]:
-            heap='Increased Graphics Heap Sizes'
-            named+=compile_named(a.xml,[heap],a.app_version,segments)
-            names.append(heap)
+            named+=compile_named(a.xml,[HEAP_PATCH],a.app_version,segments)
+            names.append(HEAP_PATCH)
         print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
-    if a.patches_dir:
+    if a.patches_dir and whole:
         # After the built-in ones: an external patch of the same bytes wins.
         external=compile_external_named(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
                                                            a.patches_config),segments)
-        named,replacing=drop_replaced_fps(named,FPS_PRESETS[a.fps],external)
+        named,replacing=drop_replaced_fps(named,fps_names,external)
         if replacing:
             print(f'Patches: external {", ".join(replacing)} replaces the built-in '
-                  f'{", ".join(FPS_PRESETS[a.fps])}')
-            names=[n for n in names if n not in FPS_PRESETS[a.fps]]
+                  f'{", ".join(fps_names)}')
+            names=[n for n in names if n not in fps_names]
         named+=external
     try:
         report_coop_conflicts(coop_conflicts(named))

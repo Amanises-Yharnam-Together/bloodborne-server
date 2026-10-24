@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from struct import error as struct_error
 import sys
 
 PORT = Path(__file__).resolve().parent
@@ -375,16 +376,33 @@ def main():
         # Patches exist for game version 01.09 only (patches.py applies none to others): other
         # versions keep the game's 30 FPS timing and change resolutions live.
         sys.path.insert(0, str(PORT / 'scripts'))
-        from patches import game_app_version, game_is_patched
+        from patches import PATCH_GROUPS, game_app_version, game_is_patched, group_list, matching_groups
         version = game_app_version(game)
         patched = game_is_patched(version, env)
         if not patched:
             print(f'Game version {version}: community patches need 01.09; 30 FPS, no effect patches')
+        # Of a 01.09 eboot.bin, only the groups of patches whose code is the 01.09 build's are
+        # applied (patches.py PATCH_GROUPS, Supermedo 48e41b7): the frame rate needs the FPS
+        # group, the startup resolution the resolution group.
+        groups = set(PATCH_GROUPS) if patched else set()
+        if patched and not env.get('BB_FORCE_PATCHES'):
+            try:
+                groups = matching_groups(out / 'eboot.elf')
+            except (OSError, ValueError, struct_error):
+                pass  # prepare.py reports unreadable executables itself
+            if not groups:
+                print('Game files: eboot.bin is not the 01.09 build the community patches were made for; '
+                      '30 FPS, no effect or resolution patches')
+            elif groups != set(PATCH_GROUPS):
+                print(f'Game files: eboot.bin is modified, not the clean 01.09 build: its '
+                      f'{group_list(set(PATCH_GROUPS) - groups)} code differs, so those options are off; '
+                      f'{group_list(groups)} work')
+        patched = 'resolution' in groups
         # Sizes chosen below for the previous launch are recomputed after an in-game restart.
         if env.get('BB_AUTO_RENDER_RES') == '1':
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
                 env.pop(key, None)
-        fps = env.get('BB_FPS', 'uncap') if patched else '30'
+        fps = env.get('BB_FPS', 'uncap') if 'fps' in groups else '30'
         asked = fps
         online = env.get('BB_ONLINE') == '1'
         online_unlocked = env.get('BB_ONLINE_UNLOCKED_FPS') == '1'
