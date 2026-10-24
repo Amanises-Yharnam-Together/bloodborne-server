@@ -580,6 +580,12 @@ add_executable(prompt-sets-test EXCLUDE_FROM_ALL ../tests/test_prompt_sets.cpp)
 target_compile_options(prompt-sets-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(prompt-sets-test PRIVATE shim)
 
+# The icons that follow the device in use, found again when the game loads its menu file anew.
+add_executable(prompts-test EXCLUDE_FROM_ALL ../tests/test_prompts.cpp shim/bbport_prompts.cpp)
+target_compile_options(prompts-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(prompts-test PRIVATE shim)
+target_link_libraries(prompts-test PRIVATE PkgConfig::XXHASH)
+
 add_executable(frame-gen-pace-test EXCLUDE_FROM_ALL ../tests/test_frame_gen_pace.cpp)
 target_compile_options(frame-gen-pace-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(frame-gen-pace-test PRIVATE shim)
