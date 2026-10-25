@@ -79,6 +79,9 @@ std::vector<AltarRecordNews> altar_records;
 // Kaniel 2026-10-24: the team's pings (bbcoop::Ping) as they came, for the next pings tick.
 std::mutex team_pings_mutex;
 std::vector<TeamPing> team_pings;
+// Kaniel 2026-10-25: the party's duel states as they came, for the next duel tick.
+std::mutex duel_states_mutex;
+std::vector<bbcoop::DuelState> duel_states;
 std::string hello_party;
 std::string hello_member;
 bool hello_due = true;
@@ -605,6 +608,13 @@ void StreamTick(s64 now_ms) {
                         }
                         continue;
                     }
+                    if (envelope->has_duel_state()) {
+                        std::scoped_lock duels_lock{duel_states_mutex};
+                        if (duel_states.size() < 64) {
+                            duel_states.push_back(envelope->duel_state());
+                        }
+                        continue;
+                    }
                     if (IsTradeMessage(*envelope)) {
                         TakeServerTrade(std::move(*envelope));
                     } else if (IsBoard(*envelope)) {
@@ -929,6 +939,22 @@ void SendTeamTravel(const bbcoop::TeamTravel& travel) {
 std::vector<TeamPing> TakeTeamPings() {
     std::scoped_lock lock{team_pings_mutex};
     return std::exchange(team_pings, {});
+}
+
+void SendDuelRequest(bbcoop::DuelRequest::Action action, u32 duel, u32 map) {
+    if (!ServerWorldOn()) {
+        return;
+    }
+    bbcoop::Envelope envelope;
+    envelope.mutable_duel_request()->set_action(action);
+    envelope.mutable_duel_request()->set_duel(duel);
+    envelope.mutable_duel_request()->set_map(map);
+    Queue(std::move(envelope));
+}
+
+std::vector<bbcoop::DuelState> TakeDuelStates() {
+    std::scoped_lock lock{duel_states_mutex};
+    return std::exchange(duel_states, {});
 }
 
 std::vector<EnemyHitNews> TakeEnemyHits() {

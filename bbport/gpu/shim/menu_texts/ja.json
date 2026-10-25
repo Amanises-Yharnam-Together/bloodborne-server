@@ -419,5 +419,16 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "チームに20秒間、場所を知らせます。狙った場所（ロックオン中は敵）にタッチパッドをすばやく2回押すか、ピンキーを押します。マップでは{Square}。チームはワールド、コンパス、マップで見られます。",
  "Ping key": "ピンキー",
  "The keyboard key that pings where you aim.": "狙った場所にピンを置くキーボードのキー。",
- "Ping": "ピン"
+ "Ping": "ピン",
+ "Duel": "決闘",
+ "End the duel": "決闘を終える",
+ "The duel begins in %d": "決闘開始まで %d",
+ "Defeated: the duel goes on without you": "敗北：決闘はあなた抜きで続きます",
+ "%s challenges you to a duel. Accept?": "%sが決闘を申し込んでいます。受けますか？",
+ "A duel is already under way.": "すでに決闘が行われています。",
+ "Nobody else of your team is here to duel.": "決闘できるチームの仲間がここにいません。",
+ "Nobody accepted the duel.": "誰も決闘を受けませんでした。",
+ "%s ended the duel.": "%sが決闘を終えました。",
+ "%s is gone: the duel is over.": "%sがいなくなりました：決闘は終わりです。",
+ "%s left the area: the duel is over.": "%sがこの地を離れました：決闘は終わりです。"
 }

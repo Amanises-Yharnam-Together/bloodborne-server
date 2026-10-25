@@ -74,6 +74,8 @@ set(COOP_SOURCES
     coop/link_crypto.cpp
     coop/invasions.h
     coop/invasions.cpp
+    coop/duel.h
+    coop/duel.cpp
     "${PROTO_OUT}/coop.pb.cc"
 )
 
@@ -411,6 +413,18 @@ if(BUILD_TESTING)
     )
     target_link_libraries(test_bloodborne_trade PRIVATE libprotobuf)
     add_test(NAME bloodborne_trade COMMAND test_bloodborne_trade)
+
+    add_executable(test_bloodborne_duel EXCLUDE_FROM_ALL
+        tests/test_bloodborne_duel.cpp
+        ${COOP_SOURCES}
+    )
+    target_include_directories(test_bloodborne_duel PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${PROTO_OUT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/externals/protobuf/src"
+    )
+    target_link_libraries(test_bloodborne_duel PRIVATE libprotobuf)
+    add_test(NAME bloodborne_duel COMMAND test_bloodborne_duel)
 
     add_executable(test_accounts EXCLUDE_FROM_ALL tests/test_accounts.cpp src/database.cpp)
     target_include_directories(test_accounts PRIVATE src)

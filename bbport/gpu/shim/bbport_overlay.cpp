@@ -3560,7 +3560,9 @@ void Screen() {
     const float bw = S(260.0f), bh = S(54.0f);
     // Kaniel 2026-10-19: high enough for the line under them and the key guide over the ornament.
     const float by = win.y + size.y - S(180.0f);
-    float bx = win.x + (size.x - (3 * bw + 2 * gap)) * 0.5f;
+    // Kaniel 2026-10-25: over the game a fourth, the team's duel.
+    const int buttons = lobby.menu ? 4 : 3;
+    float bx = win.x + (size.x - (buttons * bw + (buttons - 1) * gap)) * 0.5f;
     // The leader hosts the hunt: it leaves only once it is alone in it (its game leaving would
     // end the others' session).
     const bool leader_hosts = lobby.leader && lobby.in_hunt && lobby.member_count > 1;
@@ -3609,6 +3611,21 @@ void Screen() {
                        lobby.playing && lobby.in_team && !lobby.in_hunt, true)) {
                 bbcoop_team_join_hunt("");
             }
+        }
+        bx += bw + gap;
+        // Kaniel 2026-10-25: a duel with the team members here (they answer in the world), or the
+        // end of the one this player is in. Either goes back to the game.
+        bbcoop_duel duel{};
+        bbcoop_duel_view(&duel);
+        if (duel.may_cancel) {
+            if (Button(draw, "duel", T("End the duel", "Завершить дуэль"), ImVec2(bx, by), ImVec2(bw, bh))) {
+                bbcoop_duel_cancel();
+                bbcoop_team_menu(0);
+            }
+        } else if (Button(draw, "duel", T("Duel", "Дуэль"), ImVec2(bx, by), ImVec2(bw, bh),
+                          duel.may_propose != 0)) {
+            bbcoop_duel_propose();
+            bbcoop_team_menu(0);
         }
         bx += bw + gap;
         if (Button(draw, "close", T("Close", "Закрыть"), ImVec2(bx, by), ImVec2(bw, bh))) {
@@ -4537,10 +4554,30 @@ void RotLine(ImDrawList* draw) {
     Text(draw, sans_font, S(15.0f), ImVec2(x, y), Rgba(0.86f, 0.52f, 0.46f, 0.95f), line.c_str());
 }
 
+/// Kaniel 2026-10-25: a team duel's countdown, and the line a defeated duelist keeps until it ends
+/// (the game's own banners say the defeat and the win).
+void DuelLine(ImDrawList* draw) {
+    using Ui::S;
+    using Ui::T;
+    bbcoop_duel duel{};
+    bbcoop_duel_view(&duel);
+    const float mid = game.x + game.w * 0.5f, y = game.y + game.h * 0.22f;
+    char line[160];
+    if (duel.part == BBCOOP_DUEL_COUNTDOWN) {
+        std::snprintf(line, sizeof(line), T("The duel begins in %d", "Дуэль начнётся через %d"),
+                      int(std::ceil(std::max(duel.seconds_left, 0.0f))));
+        Text(draw, serif_font, S(34.0f), ImVec2(mid, y), Bone(), line, 0.5f);
+    } else if (duel.part == BBCOOP_DUEL_OUT) {
+        Text(draw, serif_font, S(22.0f), ImVec2(mid, y), Bone(0.85f),
+             T("Defeated: the duel goes on without you", "Вы побеждены: дуэль идёт без вас"), 0.5f);
+    }
+}
+
 void Draw() {
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
     RotLine(draw);
+    DuelLine(draw);
     if (!panel.native_list) { // else the game's HUD shows it (the party HUD's CoopParty tags)
         MemberList(draw, pulse);
     } else if (!panel.native_supplies) { // else the HUD's own vial and bullet show them

@@ -419,5 +419,16 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Markér et sted for dit hold i 20 sekunder: tryk to gange på touchpladen eller tryk på markeringstasten, hvor du sigter (på den fjende, du har låst), {Square} på kortet. Holdet ser den i verden, på kompasset og på kortet.",
  "Ping key": "Markeringstast",
  "The keyboard key that pings where you aim.": "Tasten, der markerer, hvor du sigter.",
- "Ping": "Markér"
+ "Ping": "Markér",
+ "Duel": "Duel",
+ "End the duel": "Afslut duellen",
+ "The duel begins in %d": "Duellen begynder om %d",
+ "Defeated: the duel goes on without you": "Besejret: duellen fortsætter uden dig",
+ "%s challenges you to a duel. Accept?": "%s udfordrer dig til duel. Accepter?",
+ "A duel is already under way.": "Der er allerede en duel i gang.",
+ "Nobody else of your team is here to duel.": "Ingen andre fra dit hold er her til en duel.",
+ "Nobody accepted the duel.": "Ingen accepterede duellen.",
+ "%s ended the duel.": "%s afsluttede duellen.",
+ "%s is gone: the duel is over.": "%s er væk: duellen er slut.",
+ "%s left the area: the duel is over.": "%s forlod området: duellen er slut."
 }

@@ -242,6 +242,8 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_host_rules.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_host_rules_game.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_pings_game.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_duel.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_duel_game.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map_screen.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_boards.cpp
@@ -253,6 +255,7 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_SERVER_SRC}/coop/world_log.cpp ${BB_SERVER_SRC}/coop/coop_messages.cpp
     ${BB_SERVER_SRC}/coop/trade.cpp
     ${BB_SERVER_SRC}/coop/link_crypto.cpp
+    ${BB_SERVER_SRC}/coop/duel.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_autoplay.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_trace_diag.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_re_tracer.cpp

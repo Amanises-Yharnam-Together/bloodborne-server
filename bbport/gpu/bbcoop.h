@@ -413,6 +413,30 @@ int bbcoop_cutscene_vote(int *want, int *watching);
 enum { BBCOOP_TEAM_GO_START = 1, BBCOOP_TEAM_GO_ALONE = 2 };
 void bbcoop_team_choose(int what);
 
+/* Kaniel 2026-10-25: team duels (the co-op code's bloodborne_duel.h). The team screen proposes one
+ * (to the members on this map) or ends the one this player is in; the asked members answer a yes/no
+ * box in the world; the overlay shows the countdown. Any thread. */
+enum { BBCOOP_DUEL_NONE, BBCOOP_DUEL_ASKED, BBCOOP_DUEL_ANSWERED, BBCOOP_DUEL_COUNTDOWN,
+       BBCOOP_DUEL_FIGHTING, BBCOOP_DUEL_OUT };
+typedef struct bbcoop_duel {
+    int part;           /* this player's: BBCOOP_DUEL_* */
+    int may_propose;    /* someone else of the party is on this map and no duel is under way */
+    int may_cancel;     /* this player is in the duel under way */
+    float seconds_left; /* the question's or the countdown's */
+    int fighters;       /* duelists still standing */
+} bbcoop_duel;
+void bbcoop_duel_view(bbcoop_duel *duel);
+void bbcoop_duel_propose(void);
+void bbcoop_duel_cancel(void);
+/* The duel waiting for this player's answer and who proposed it (a character name); 0 when none. */
+int bbcoop_duel_ask(uint32_t *id, char *name, size_t size);
+int bbcoop_duel_ask_open(uint32_t id);
+void bbcoop_duel_answer(uint32_t id, int accept);
+/* The next thing to say once: its kind and whose name goes in; 0 when none. */
+enum { BBCOOP_DUEL_NOTICE_BUSY, BBCOOP_DUEL_NOTICE_ALONE, BBCOOP_DUEL_NOTICE_DECLINED,
+       BBCOOP_DUEL_NOTICE_CANCELLED, BBCOOP_DUEL_NOTICE_LEFT, BBCOOP_DUEL_NOTICE_MOVED };
+int bbcoop_duel_notice(int *kind, char *name, size_t size);
+
 /* Trading between party members (the co-op code's bloodborne_trade.h, with
  * always on in the port with the server world): what the port's trade menus (shim/bbport_trade_menu.cpp) need. An
  * item is a kind (1 Blood Echoes with id 0, 2 goods by EquipParamGoods id, 3 an item of its own:

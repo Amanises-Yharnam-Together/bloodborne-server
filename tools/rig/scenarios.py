@@ -4546,6 +4546,54 @@ SCENARIOS["paarl-after-wipe"] = {
 # plays alone. Games on the same settings link (build-check-same).
 HARDER = {"SHADPS4_BLOODBORNE_HARDER_ENEMIES": "3,1.5,3"}
 LINKED = r"Server link: the server took this game's hello"
+# Kaniel 2026-10-25: team duels, from the team screen's Duel (no bell). The host proposes, the guest
+# answers its box yes; after the countdown the host strikes the guest (its HP put at 1 first), whose
+# lethal hit puts it out of the duel: no party death (no down, no wipe, no map reset, no lamp), the
+# YOU DIED and ADVERSARY EXPUNGED banners, and the guest's HP given back at the end. A second duel
+# the host cancels: both friendly again at once.
+DUEL_HP_FLOOR = 594  # the rig hunters' max HP: the guest has it all back after the duel
+# What a party death does, none of it in a duel: a down, a real death, a wipe, a trip or move to a
+# lamp.
+DUEL_NO_DEATH = [r"Bloodborne party death: down \d", r"died for real", r"killed while down",
+                 r"Bloodborne party wipe", r"Bloodborne revive: (respawn point|moved to last lamp)"]
+SCENARIOS["duel"] = {
+    "about": "team duels: proposed from the team screen, accepted in the world, a lethal hit puts "
+             "the guest out (no party death, wipe or map reset), the end gives its HP back; a "
+             "second duel cancelled from the menu",
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "wait 5", "sync together",
+                 "duel-propose", "wait-duel countdown 40", "wait-duel fighting 10",
+                 "sync fighting", "sync guest-low", "duel-strike 60", "wait-duel none 20",
+                 "sync over", "wait 3", "duel-propose", "wait-duel countdown 40",
+                 "wait-duel fighting 10", "wait 2", "duel-cancel", "wait-duel none 10",
+                 "sync cancelled", "wait 3", "snapshot", "expect-session 2"],
+        "guest": [START, "wait-session 2 300", "wait 5", "note-max-hp", "sync together",
+                  "duel-answer yes 40", "wait-duel countdown 10", "wait-duel fighting 10",
+                  # Two duelists: the guest out ends it at once (its HP 1 then, as logged).
+                  "sync fighting", "hurt self 1", "sync guest-low", "wait-duel none 60",
+                  "sync over",
+                  f"expect-hp self >= {DUEL_HP_FLOOR}", "duel-answer yes 40",
+                  "wait-duel fighting 20", "wait-duel none 20", "sync cancelled", "wait 3",
+                  "snapshot", "expect-session 2", "expect-max-hp self == noted"],
+    },
+    "syncs": {name: {"chapter": "duel", "roles": ["host", "guest"]}
+              for name in ("together", "fighting", "guest-low", "over", "cancelled")},
+    "expect": {
+        "host": [r"Co-op duel: duel 1 fights",
+                 r"Co-op duel: body 0x[0-9a-f]+ \(team \d+\) is a foe's",
+                 r"Co-op duel: duel 1 is over: WON, this player's side won",
+                 r"Co-op duel: body 0x[0-9a-f]+ takes its team \d+ back",
+                 r"Co-op duel: duel 2 is over: CANCELLED"],
+        "guest": [r"Co-op duel: this player is out of duel 1 \(no party death\)",
+                  r"Co-op duel: duel 1 is over: WON, this player lost",
+                  rf"Co-op duel: given back \(the duel ended\): hp 1 -> {DUEL_HP_FLOOR}",
+                  r"Co-op duel: duel 2 is over: CANCELLED"],
+    },
+    "forbid": {role: SESSION_HOLDS + DUEL_NO_DEATH for role in ("host", "guest")},
+    "timeout": 300,
+}
+
+
 SCENARIOS["build-check-harder"] = {
     "about": "the guest has harder enemies (HP x3 damage x1.5 poise x3), the host the normal "
              "game: the server refuses the guest's link, saying both settings",

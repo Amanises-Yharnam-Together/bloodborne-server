@@ -419,5 +419,16 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Merkitse paikka tiimillesi 20 sekunniksi: napauta kosketuslevyä kahdesti tai paina merkkinäppäintä sinne, mihin tähtäät (lukittuun viholliseen), kartalla {Square}. Tiimi näkee sen maailmassa, kompassissa ja kartalla.",
  "Ping key": "Merkkinäppäin",
  "The keyboard key that pings where you aim.": "Näppäin, joka merkitsee kohdan, johon tähtäät.",
- "Ping": "Merkitse"
+ "Ping": "Merkitse",
+ "Duel": "Kaksintaistelu",
+ "End the duel": "Lopeta kaksintaistelu",
+ "The duel begins in %d": "Kaksintaistelu alkaa: %d",
+ "Defeated: the duel goes on without you": "Hävisit: kaksintaistelu jatkuu ilman sinua",
+ "%s challenges you to a duel. Accept?": "%s haastaa sinut kaksintaisteluun. Hyväksytkö?",
+ "A duel is already under way.": "Kaksintaistelu on jo käynnissä.",
+ "Nobody else of your team is here to duel.": "Tiimistäsi ei ole täällä ketään muuta kaksintaisteluun.",
+ "Nobody accepted the duel.": "Kukaan ei hyväksynyt kaksintaistelua.",
+ "%s ended the duel.": "%s lopetti kaksintaistelun.",
+ "%s is gone: the duel is over.": "%s lähti: kaksintaistelu on ohi.",
+ "%s left the area: the duel is over.": "%s poistui alueelta: kaksintaistelu on ohi."
 }

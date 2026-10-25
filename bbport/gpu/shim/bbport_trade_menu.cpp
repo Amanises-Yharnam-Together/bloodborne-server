@@ -28,6 +28,7 @@
 #include "../bbcoop.h"
 #include "bbport_game_menu.h"
 #include "bbport_save_editor.h"
+#include "bbport_settings.h"
 #include "bbport_trade_rows.h"
 
 namespace BbTradeMenu {
@@ -337,11 +338,13 @@ u8* MenuMan() {
 
 // The box shown now: for which offer (0: a notice), its job (our reference keeps it; once the
 // game let go of it, ours is the last: the box is gone) and whether it got its turn (the abort
-// function runs every frame from then; a job pushed behind another waits).
+// function runs every frame from then; a job pushed behind another waits). Kaniel 2026-10-25:
+// or for which duel's question (`duel`).
 struct Shown {
     void* job = nullptr;
     u64 ask = 0;
     bool running = false;
+    u32 duel = 0;
 };
 Shown shown;
 
@@ -357,7 +360,8 @@ GAME_ABI bool AbortCall(Impl*, void*) {
             *reinterpret_cast<int*>(menus + MenuAnswerAt) = -1;
         }
     }
-    return shown.ask != 0 && !bbcoop_trade_ask_open(shown.ask);
+    return (shown.ask != 0 && !bbcoop_trade_ask_open(shown.ask)) ||
+           (shown.duel != 0 && !bbcoop_duel_ask_open(shown.duel));
 }
 const void* const abort_vtable[8] = {
     reinterpret_cast<const void*>(&ImplCopy),       reinterpret_cast<const void*>(&ImplCopy),
@@ -405,6 +409,38 @@ bool OpenBox(u64 box, const char* utf8) {
     return pushed;
 }
 
+// What a duel's notice says.
+std::string DuelNoticeText(int kind, const char* name) {
+    using BbSettings::MenuText;
+    char line[256];
+    switch (kind) {
+    case BBCOOP_DUEL_NOTICE_BUSY:
+        return MenuText("A duel is already under way.", "Дуэль уже идёт.");
+    case BBCOOP_DUEL_NOTICE_ALONE:
+        return MenuText("Nobody else of your team is here to duel.",
+                        "Здесь нет никого из вашей команды для дуэли.");
+    case BBCOOP_DUEL_NOTICE_DECLINED:
+        return MenuText("Nobody accepted the duel.", "Никто не принял дуэль.");
+    case BBCOOP_DUEL_NOTICE_CANCELLED:
+        std::snprintf(line, sizeof line, MenuText("%s ended the duel.", "%s завершает дуэль."),
+                      name);
+        return line;
+    case BBCOOP_DUEL_NOTICE_LEFT:
+        std::snprintf(line, sizeof line,
+                      MenuText("%s is gone: the duel is over.", "%s нет в игре: дуэль окончена."),
+                      name);
+        return line;
+    case BBCOOP_DUEL_NOTICE_MOVED:
+        std::snprintf(line, sizeof line,
+                      MenuText("%s left the area: the duel is over.",
+                               "%s покидает местность: дуэль окончена."),
+                      name);
+        return line;
+    default:
+        return {};
+    }
+}
+
 // The co-op code's trades tick (the game's thread).
 void Tick() {
     if (shown.job) {
@@ -416,6 +452,12 @@ void Tick() {
                         answer == 1 ? "yes" : "no");
             shown.ask = 0;
         }
+        if (shown.running && shown.duel != 0 && (answer == 1 || answer == 2)) {
+            bbcoop_duel_answer(shown.duel, answer == 1);
+            std::printf("Trade menu: duel %u answered %s\n", shown.duel, answer == 1 ? "yes" : "no");
+            std::fflush(stdout);
+            shown.duel = 0;
+        }
         if (References(shown.job) > 1) {
             return; // still the game's
         }
@@ -423,6 +465,9 @@ void Tick() {
         std::fflush(stdout);
         if (shown.ask != 0 && bbcoop_trade_ask_open(shown.ask)) {
             bbcoop_trade_answer(shown.ask, 0); // closed without an answer: a no
+        }
+        if (shown.duel != 0 && bbcoop_duel_ask_open(shown.duel)) {
+            bbcoop_duel_answer(shown.duel, 0);
         }
         Release(shown.job);
         shown = {};
@@ -435,9 +480,26 @@ void Tick() {
         }
         return;
     }
+    // Kaniel 2026-10-25: a duel's question, in the world as an offer's.
+    u32 duel = 0;
+    char name[64];
+    if (bbcoop_duel_ask(&duel, name, sizeof name)) {
+        std::snprintf(text, sizeof text,
+                      BbSettings::MenuText("%s challenges you to a duel. Accept?",
+                                           "%s вызывает вас на дуэль. Принять?"),
+                      name);
+        if (OpenBox(YesNoBox, text)) {
+            shown.duel = duel;
+        }
+        return;
+    }
     static std::string notice;
     if (notice.empty() && bbcoop_trade_notice(text, sizeof text)) {
         notice = text;
+    }
+    int kind = 0;
+    if (notice.empty() && bbcoop_duel_notice(&kind, name, sizeof name)) {
+        notice = DuelNoticeText(kind, name);
     }
     if (!notice.empty() && OpenBox(OkBox, notice.c_str())) {
         notice.clear();

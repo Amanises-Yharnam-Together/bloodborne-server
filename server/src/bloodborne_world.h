@@ -30,6 +30,7 @@
 #include "coop.pb.h"
 #include "coop/coop_stream.h"
 #include "coop/invasions.h"
+#include "coop/duel.h"
 #include "coop/team_lobby.h"
 #include "coop/trade.h"
 #include "coop/world_log.h"
@@ -330,6 +331,8 @@ private:
         QString vitals_logged; // the members' states and the wipes, as last logged
         // Its trades (coop/trade.h): the offers held and the grants owed.
         BloodborneCoop::TradeDesk trades;
+        // Kaniel 2026-10-25: its duels (coop/duel.h), in memory only (about the games running).
+        BloodborneCoop::DuelReferee duels;
         // Phase 5b: a team's world (its party key is a team's), from its host's reports; read
         // from team_world.pb when the party first comes.
         bool team = false;
@@ -445,6 +448,12 @@ private:
                    qint64 now_ms, Result& result);
     void Deliver(PartyWorld& world, BloodborneCoop::TradeDesk::Result trades, qint64 now_ms,
                  Result& result);
+    // A member's duel messages; the duel's state to every member when it changed.
+    void TakeDuel(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                  qint64 now_ms, Result& result);
+    std::vector<BloodborneCoop::DuelMember> DuelMembers(const PartyWorld& world) const;
+    void SettleDuel(PartyWorld& world, const BloodborneCoop::DuelReferee::Result& duel,
+                    qint64 now_ms, Result& result);
     void SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
                       qint64 now_ms);
     void SendTo(Member& member, const bbcoop::Envelope& envelope, qint64 now_ms);

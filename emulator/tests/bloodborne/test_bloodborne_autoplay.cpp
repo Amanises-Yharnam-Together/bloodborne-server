@@ -62,6 +62,8 @@ TEST(BloodborneAutoplay, ReadsTargetsAndComparisons) {
     EXPECT_EQ(ParseAutoplayTarget("self"), std::optional<u32>{AutoplaySelf}) << "the player";
     EXPECT_EQ(ParseAutoplayTarget("marked"), std::optional<u32>{AutoplayMarked})
         << "the one a mark command picked";
+    EXPECT_EQ(ParseAutoplayTarget("player"), std::optional<u32>{AutoplayPlayer})
+        << "the nearest other player (a duel's foe)";
     EXPECT_EQ(ParseAutoplayTarget("0x1001409c"), std::optional<u32>{0x1001409c});
     EXPECT_EQ(ParseAutoplayTarget("1001409c"), std::optional<u32>{0x1001409c});
     EXPECT_EQ(ParseAutoplayTarget("zz"), std::nullopt);
