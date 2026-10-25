@@ -451,6 +451,14 @@ endif()
 add_executable(pm4-resync-test EXCLUDE_FROM_ALL ../tests/test_pm4_resync.cpp)
 target_compile_options(pm4-resync-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(pm4-resync-test PRIVATE ..)
+add_executable(pm4-lod-stats-test EXCLUDE_FROM_ALL ../tests/test_pm4_lod_stats.cpp)
+# pm4_cmds.h has static helpers the test does not call.
+target_compile_options(pm4-lod-stats-test PRIVATE -UNDEBUG -Wall -Wextra -Werror
+                       -Wno-unneeded-internal-declaration)
+target_include_directories(pm4-lod-stats-test PRIVATE shim shadps4 third_party/gcn/include)
+if (WIN32)
+    target_link_libraries(pm4-lod-stats-test PRIVATE ws2_32) # the headers' inline socket setup
+endif()
 add_executable(texture-gc-test EXCLUDE_FROM_ALL ../tests/test_texture_gc.cpp)
 target_compile_options(texture-gc-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(texture-gc-test PRIVATE ..)
@@ -576,6 +584,11 @@ add_executable(push-data-test EXCLUDE_FROM_ALL ../tests/test_push_data.cpp)
 target_compile_options(push-data-test PRIVATE -UNDEBUG)
 target_include_directories(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
 target_compile_definitions(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
+
+add_executable(sendmsg-simm-test EXCLUDE_FROM_ALL ../tests/test_sendmsg_simm.cpp)
+target_compile_options(sendmsg-simm-test PRIVATE -UNDEBUG)
+target_include_directories(sendmsg-simm-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
+target_compile_definitions(sendmsg-simm-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
 
 add_executable(prompt-sets-test EXCLUDE_FROM_ALL ../tests/test_prompt_sets.cpp)
 target_compile_options(prompt-sets-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

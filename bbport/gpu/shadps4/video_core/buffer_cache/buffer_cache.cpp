@@ -662,13 +662,22 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     arena_memory_type_bits = reqs.memoryTypeBits;
     // bbport: a reserve of VRAM for the game's memory (vram_placement.h): it only grows as areas
     // load and, on NVIDIA, cannot be outside VRAM. Textures keep VRAM otherwise (Supermedo
-    // 5f65e2d). BB_VRAM_RESERVE_MB=0: none.
+    // 5f65e2d). None where the arena accepts system memory (AMD, Intel; Supermedo 859f9e4).
+    // BB_VRAM_RESERVE_MB=0: none.
     if (VideoCore::ActiveVramPlacement() == VideoCore::VramPlacement::Reserve) {
         const auto& props = instance.GetMemoryProperties();
-        u64 size = VideoCore::ArenaReserveBytes(
-            !instance.IsIntegrated(),
-            props.memoryHeaps[props.memoryTypes[arena_memory_type_index].heapIndex].size,
-            block_size);
+        const u32 arena_heap = props.memoryTypes[arena_memory_type_index].heapIndex;
+        std::array<u32, VK_MAX_MEMORY_TYPES> type_heaps{};
+        for (u32 i = 0; i < props.memoryTypeCount; ++i) {
+            type_heaps[i] = props.memoryTypes[i].heapIndex;
+        }
+        const bool spills = VideoCore::ArenaSpillsOutsideVram(
+            arena_memory_type_bits, std::span{type_heaps.data(), props.memoryTypeCount}, arena_heap);
+        u64 size = VideoCore::ArenaReserveBytes(!instance.IsIntegrated(), spills,
+                                                props.memoryHeaps[arena_heap].size, block_size);
+        if (spills && !instance.IsIntegrated()) {
+            std::printf("GPU: no VRAM kept for the game's memory (it can use system memory)\n");
+        }
         if (const char* env = std::getenv("BB_VRAM_RESERVE_MB")) {
             size = std::min(size, std::strtoull(env, nullptr, 10) << 20) / block_size * block_size;
         }

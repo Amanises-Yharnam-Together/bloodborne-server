@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from struct import error as struct_error
 import sys
 
 PORT = Path(__file__).resolve().parent
@@ -217,6 +218,62 @@ def memory_mb(value):
     return int(value) if value.isdigit() else 0
 
 
+# Low-VRAM profile (Supermedo 44a6433, from a player's 4 GB mod; measured on an RTX 3050 Ti Laptop,
+# i5-11300H, Central Yharnam, 1080p output with an upscaler): the texture cache's own marks had it
+# evict and upload again ~30 textures a second with 2.7 GB in use, and the live path's native-size
+# game targets cost ~700 MiB more than the startup patch. Discrete GPUs up to LOW_VRAM_MB;
+# BB_LOW_VRAM=1 forces the profile, 0 turns it off.
+LOW_VRAM_MB = 4608
+# Left to the desktop, browsers and the driver.
+VRAM_RESERVE_MB = 600
+
+
+def low_vram_mb(env, caps):
+    """The card's memory in MiB when the low-VRAM profile applies, else 0. caps is
+    bb-gpu-capabilities, which picks the GPU the game uses (BB_GPU_ID included)."""
+    setting = env.get('BB_LOW_VRAM', '')
+    if setting == '0':
+        return 0
+    vram, discrete = 0, False
+    try:
+        result = subprocess.run([str(caps), '--vram'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, encoding='utf-8', errors='replace',
+                                timeout=20, creationflags=no_console())
+        size, kind = result.stdout.split()
+        vram, discrete = int(size), kind == '1'
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    if setting == '1':
+        return vram or 4096
+    # Integrated GPUs follow the driver's budget already (texture_cache.cpp).
+    return vram if discrete and 0 < vram <= LOW_VRAM_MB else 0
+
+
+def low_vram_budget_mb(vram):
+    """The texture cache's budget (BB_GC_BUDGET_MB) on a low-VRAM card."""
+    return max(2048, vram - VRAM_RESERVE_MB)
+
+
+def physical_cores():
+    """CPU cores, not threads (GetLogicalProcessorInformation); os.cpu_count() when unknown."""
+    try:
+        from ctypes import wintypes
+        size = wintypes.DWORD(0)
+        ctypes.windll.kernel32.GetLogicalProcessorInformation(None, ctypes.byref(size))
+        buffer = ctypes.create_string_buffer(size.value)
+        if not ctypes.windll.kernel32.GetLogicalProcessorInformation(buffer, ctypes.byref(size)):
+            raise OSError
+        # SYSTEM_LOGICAL_PROCESSOR_INFORMATION: ULONG_PTR mask, then the relationship (0 = a core).
+        entry = ctypes.sizeof(ctypes.c_void_p) * 2 + 16
+        cores = sum(1 for offset in range(0, size.value - entry + 1, entry)
+                    if int.from_bytes(buffer.raw[offset + ctypes.sizeof(ctypes.c_void_p):][:4], 'little') == 0)
+        if cores:
+            return cores
+    except (AttributeError, OSError):
+        pass
+    return os.cpu_count() or 8
+
+
 def find_executable(name):
     """bin/ (packaged), else out/ (built with build.sh)."""
     for candidate in (PORT / 'bin' / name, PORT / 'out' / name):
@@ -331,16 +388,33 @@ def main():
         # Patches exist for game version 01.09 only (patches.py applies none to others): other
         # versions keep the game's 30 FPS timing and change resolutions live.
         sys.path.insert(0, str(PORT / 'scripts'))
-        from patches import game_app_version, game_is_patched
+        from patches import PATCH_GROUPS, game_app_version, game_is_patched, group_list, matching_groups
         version = game_app_version(game)
         patched = game_is_patched(version, env)
         if not patched:
             print(f'Game version {version}: community patches need 01.09; 30 FPS, no effect patches')
+        # Of a 01.09 eboot.bin, only the groups of patches whose code is the 01.09 build's are
+        # applied (patches.py PATCH_GROUPS, Supermedo 48e41b7): the frame rate needs the FPS
+        # group, the startup resolution the resolution group.
+        groups = set(PATCH_GROUPS) if patched else set()
+        if patched and not env.get('BB_FORCE_PATCHES'):
+            try:
+                groups = matching_groups(out / 'eboot.elf')
+            except (OSError, ValueError, struct_error):
+                pass  # prepare.py reports unreadable executables itself
+            if not groups:
+                print('Game files: eboot.bin is not the 01.09 build the community patches were made for; '
+                      '30 FPS, no effect or resolution patches')
+            elif groups != set(PATCH_GROUPS):
+                print(f'Game files: eboot.bin is modified, not the clean 01.09 build: its '
+                      f'{group_list(set(PATCH_GROUPS) - groups)} code differs, so those options are off; '
+                      f'{group_list(groups)} work')
+        patched = 'resolution' in groups
         # Sizes chosen below for the previous launch are recomputed after an in-game restart.
         if env.get('BB_AUTO_RENDER_RES') == '1':
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
                 env.pop(key, None)
-        fps = env.get('BB_FPS', 'uncap') if patched else '30'
+        fps = env.get('BB_FPS', 'uncap') if 'fps' in groups else '30'
         asked = fps
         online = env.get('BB_ONLINE') == '1'
         online_unlocked = env.get('BB_ONLINE_UNLOCKED_FPS') == '1'
@@ -387,6 +461,25 @@ def main():
         if scaled:
             print(f'Output {scaled_output}: scene {scaled_render}, direct memory {env["BB_DMEM_MB"]} MiB '
                   '(live_resolution=1: live changes)')
+        vram = low_vram_mb(env, probe.parent / 'bb-gpu-capabilities.exe')
+        if vram:
+            env.setdefault('BB_GC_BUDGET_MB', str(low_vram_budget_mb(vram)))
+            notes = [f'texture budget {env["BB_GC_BUDGET_MB"]} MiB']
+            # At 1080p output the live path keeps the game's targets native; here they shrink too.
+            wants_live = (env.get('BB_LIVE_RES') or ini_value(config, 'live_resolution')) == '1'
+            if (patched and not scaled_output and not env.get('BB_RENDER_RES') and not wants_live
+                    and ini_value(config, 'upscaler') != 'taa'):
+                size = run_script('patches.py', '--print-preset-size', '--settings', config, capture=True).strip()
+                if size:
+                    env.update(BB_RENDER_RES=size, BB_AUTO_RENDER_RES='1')
+                    notes.append(f'scene {size} patched at start (live_resolution=1: live changes)')
+                    # On this path most prepared draws go unused, and on four cores the workers
+                    # take time from the game: 53.0 FPS with 4 workers, 56.8 without (i5-11300H).
+                    # On 8 cores the workers win: 197 FPS without them, 234 with 4.
+                    if physical_cores() <= 4 and 'BB_PREP_WORKERS' not in env:
+                        env['BB_PREP_WORKERS'] = '0'
+                        notes.append('no draw-preparation workers')
+            print(f'Low-VRAM profile ({vram} MiB card): {", ".join(notes)}; BB_LOW_VRAM=0 turns it off')
         run_script('patches.py', '--out', out, '--fps', fps, '--extra', env.get('BB_PATCHES', ''),
                    '--settings', config, '--game-dir', game, '--render-res', env.get('BB_RENDER_RES', ''),
                    '--output-res', env.get('BB_OUTPUT_RES', ''),

@@ -13,6 +13,8 @@ using VideoCore::GcActionFor;
 using VideoCore::GcImageState;
 using VideoCore::HeapUse;
 using VideoCore::ArenaReserveBytes;
+using VideoCore::ArenaSpillsOutsideVram;
+using VideoCore::ObjectMotionFitsVram;
 using VideoCore::SystemMemoryTypesNearVramLimit;
 using VideoCore::TexturesPreferHost;
 using VideoCore::VramPlacement;
@@ -31,12 +33,32 @@ int main() {
     assert(VramPlacementFrom("", std::string("system")) == VramPlacement::System);
     // The reserve: 512 MiB, an eighth of smaller heaps, on discrete GPUs only, block aligned.
     constexpr std::uint64_t MB = 1ull << 20;
-    assert(ArenaReserveBytes(true, 12288 * MB, 64 * 1024) == 512 * MB);
-    assert(ArenaReserveBytes(true, 4096 * MB, 64 * 1024) == 512 * MB);
-    assert(ArenaReserveBytes(true, 2048 * MB, 64 * 1024) == 256 * MB);
-    assert(ArenaReserveBytes(true, 2048 * MB + 100, 64 * 1024) == 256 * MB);
-    assert(ArenaReserveBytes(false, 12288 * MB, 64 * 1024) == 0);
-    assert(ArenaReserveBytes(true, 0, 64 * 1024) == 0);
+    assert(ArenaReserveBytes(true, false, 12288 * MB, 64 * 1024) == 512 * MB);
+    assert(ArenaReserveBytes(true, false, 4096 * MB, 64 * 1024) == 512 * MB);
+    assert(ArenaReserveBytes(true, false, 2048 * MB, 64 * 1024) == 256 * MB);
+    assert(ArenaReserveBytes(true, false, 2048 * MB + 100, 64 * 1024) == 256 * MB);
+    assert(ArenaReserveBytes(false, false, 12288 * MB, 64 * 1024) == 0);
+    assert(ArenaReserveBytes(true, false, 0, 64 * 1024) == 0);
+    // Only where the game's memory cannot spill outside VRAM (NVIDIA, Supermedo 859f9e4): AMD and
+    // Intel take system memory for it first, and the RX 6500 XT report kept 478 MiB of its 4 GB
+    // as a reserve the whole session, 0 used.
+    assert(ArenaReserveBytes(true, true, 4096 * MB, 64 * 1024) == 0);
+    {
+        // NVIDIA: the arena binds to the VRAM types only (heap 0).
+        const std::uint32_t heaps[] = {1, 0, 0, 1, 1};
+        assert(!ArenaSpillsOutsideVram(0b00110, heaps, 0));
+        // AMD: also to a host-visible type of heap 1.
+        assert(ArenaSpillsOutsideVram(0b01010, heaps, 0));
+        // Bits past the type count are ignored.
+        assert(!ArenaSpillsOutsideVram(0b100010, heaps, 0));
+    }
+    // Object motion under 6 GB of VRAM (Supermedo d257021): its ~225 MiB go to textures on
+    // discrete GPUs, unless BB_OBJECT_MOTION=1 asks for it.
+    assert(ObjectMotionFitsVram(true, 8192 * MB, false));
+    assert(ObjectMotionFitsVram(true, 6144 * MB - 200 * MB, false)); // a 6 GB card as reported
+    assert(!ObjectMotionFitsVram(true, 4096 * MB, false));
+    assert(ObjectMotionFitsVram(true, 4096 * MB, true));
+    assert(ObjectMotionFitsVram(false, 2048 * MB, false)); // integrated: shared memory
 
     // Uploaded from guest memory only: rebuilt the same from it.
     assert(GcActionFor({}, false) == GcAction::Evict);
