@@ -2458,7 +2458,8 @@ void KeepEnemyDeathsInStep(bool sharing) {
         }
     }
     if (hosts_now) {
-        BringBackWhatTheHostBroughtBack(BroughtBackByTheHost(*hosts_now, dead_here, others, now_ms));
+        BringBackWhatTheHostBroughtBack(
+            BroughtBackByTheHost(*hosts_now, dead_here, others, now_ms));
     }
     TraceMemberKills(characters, pointers, hidden, others, died_for_others);
     size_t newly_hidden = 0;

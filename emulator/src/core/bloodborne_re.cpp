@@ -1069,6 +1069,7 @@ void TickPartyController() {
         TimeTickPart("KeepBossHpInStep", KeepBossHpInStep);
         TimeTickPart("LogNearbyEnemyControl", LogNearbyEnemyControl);
         TimeTickPart("LogEnemyTargets", LogEnemyTargets);
+        TimeTickPart("ClearStaleDeathMarks", ClearStaleDeathMarks);
         TimeTickPart("LogJoinTasksOnChange", LogJoinTasksOnChange);
         TimeTickPart("ReconcileMemberPresence", ReconcileMemberPresence);
         TimeTickPart("LogUnsharedNearbyCharacters", LogUnsharedNearbyCharacters);

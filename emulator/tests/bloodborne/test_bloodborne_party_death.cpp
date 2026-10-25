@@ -1574,10 +1574,59 @@ TEST(BloodbornePartyDeath, NamesTheAiRuleThatLeavesAPlayerOut) {
                   c.control = 2;
                   c.info_18 = 1;
               }),
-              "");
+              "marked dead (info 0x18 bit 0)")
+        << "past the control rule, the enemies' mode 0 skips it";
     EXPECT_EQ(with([](auto& c) { c.wake = 0; }), "wake 0 (not 4)");
     EXPECT_EQ(with([](auto& c) { c.info_d = 0x10; }), "info 0xd bit 0x10");
+    // Kaniel's play test 2026-10-25: both guests had it and Logarius held the host only.
+    EXPECT_EQ(with([](auto& c) { c.info_18 = 1; }), "marked dead (info 0x18 bit 0)");
+    EXPECT_EQ(with([](auto& c) { c.info_18 = 0x8; }), "") << "other bits are no rule";
     EXPECT_EQ(with([](auto& c) { c.has_info = false; }), "") << "no info: those rules pass";
+}
+
+// Kaniel's play test 2026-10-25: Logarius went for the host only. The guests' bodies on the host's
+// game kept the death mark after they got up again; one that is up with it for HoldMs loses it.
+TEST(BloodbornePartyDeath, ClearsTheDeathMarkOfABodyThatIsUpAgain) {
+    using Body = StaleDeathMarks::Body;
+    constexpr s64 hold = StaleDeathMarks::HoldMs;
+    StaleDeathMarks marks;
+    const Body up{.handle = 0x10044001, .marked = true};
+    EXPECT_TRUE(marks.Tick(std::array{up}, 1000).empty());
+    EXPECT_TRUE(marks.Tick(std::array{up}, 1000 + hold - 1).empty());
+    EXPECT_EQ(marks.Tick(std::array{up}, 1000 + hold), std::vector<u32>{0x10044001});
+    EXPECT_TRUE(marks.Tick(std::array{up}, 1000 + hold + 1).empty())
+        << "the game marked it again: a new hold";
+    EXPECT_EQ(marks.Tick(std::array{up}, 1000 + 2 * hold + 1), std::vector<u32>{0x10044001});
+}
+
+TEST(BloodbornePartyDeath, LeavesTheDeathMarkOfADeadDownedOrInvadingBody) {
+    using Body = StaleDeathMarks::Body;
+    constexpr s64 hold = StaleDeathMarks::HoldMs;
+    for (const Body body :
+         {Body{.handle = 1, .marked = true, .dead = true},
+          Body{.handle = 1, .marked = true, .downed = true},
+          Body{.handle = 1, .marked = true, .invader = true}, Body{.handle = 1, .marked = false}}) {
+        StaleDeathMarks marks;
+        EXPECT_TRUE(marks.Tick(std::array{body}, 0).empty());
+        EXPECT_TRUE(marks.Tick(std::array{body}, 10 * hold).empty());
+    }
+    // Dead again within the hold (a wipe): the hold starts over once it is up.
+    StaleDeathMarks marks;
+    const Body up{.handle = 2, .marked = true};
+    Body dead = up;
+    dead.dead = true;
+    EXPECT_TRUE(marks.Tick(std::array{up}, 0).empty());
+    EXPECT_TRUE(marks.Tick(std::array{dead}, hold - 10).empty());
+    EXPECT_TRUE(marks.Tick(std::array{up}, hold).empty());
+    EXPECT_EQ(marks.Tick(std::array{up}, 2 * hold), std::vector<u32>{2});
+    // Each body holds on its own; one that left is forgotten.
+    StaleDeathMarks two;
+    const Body other{.handle = 3, .marked = true};
+    EXPECT_TRUE(two.Tick(std::array{up}, 0).empty());
+    EXPECT_TRUE(two.Tick(std::array{up, other}, hold / 2).empty());
+    EXPECT_EQ(two.Tick(std::array{up, other}, hold), std::vector<u32>{2});
+    EXPECT_TRUE(two.Tick(std::array{up}, hold + hold / 2).empty());
+    EXPECT_TRUE(two.Tick(std::array{up, other}, 2 * hold).empty()) << "body 3 starts over";
 }
 
 // The others down on this map, where the board has them (the game finds their characters there).

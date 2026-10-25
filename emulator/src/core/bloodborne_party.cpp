@@ -6436,7 +6436,29 @@ std::string TargetCandidateBlock(const TargetCandidate& candidate) {
     if (candidate.has_info && (candidate.info_d & 0x10) != 0) {
         return "info 0xd bit 0x10";
     }
+    if (candidate.has_info && (candidate.info_18 & 1) != 0) {
+        return "marked dead (info 0x18 bit 0)";
+    }
     return "";
+}
+
+std::vector<u32> StaleDeathMarks::Tick(std::span<const Body> bodies, s64 now_ms) {
+    std::vector<u32> clear;
+    std::vector<std::pair<u32, s64>> kept;
+    for (const Body& body : bodies) {
+        if (!body.marked || body.dead || body.downed || body.invader) {
+            continue;
+        }
+        const auto seen = std::ranges::find(up_since, body.handle, &std::pair<u32, s64>::first);
+        const s64 since = seen != up_since.end() ? seen->second : now_ms;
+        if (now_ms - since >= HoldMs) {
+            clear.push_back(body.handle);
+        } else {
+            kept.emplace_back(body.handle, since);
+        }
+    }
+    up_since = std::move(kept);
+    return clear;
 }
 
 std::vector<LampPosition> OthersDownOnMap(std::span<const MemberVitals> board,

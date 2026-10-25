@@ -3950,8 +3950,10 @@ constexpr float ForgottenTargetTimer = 1.0e-4f;
 // [+0x30] +0x18 is 6 and +0x4B5, the model, is built) in [0x0553B098] +0x08; a search
 // (0x012ADC50) then skips one whose control ([+0x18]) is disabled (+0x20 bit 0, or bit 2), has
 // +0x20 bit 1 without its info's ([control +0x30]) +0x18 bit 0, is not awake (+0x10 not 4), or
-// whose info +0x0D has bit 0x10. The search's mode (info +0x18 bit 0 set or clear) and the team
-// table (0x05127B90) are the searcher's side and are left out.
+// whose info +0x0D has bit 0x10. Its mode (fourth argument) then picks by info +0x18 bit 0: the
+// enemies' own searches (0x012AB9C2, 0x012AE150) pass mode 0 and skip a character with the bit
+// set, one (0x012ADA78) passes 1 and takes only those. The team table (0x05127B90) is the
+// searcher's side and is left out.
 struct TargetCandidate {
     s32 state = 0;      // [character +0x30] +0x18
     bool built = false; // character +0x4B5
@@ -3964,6 +3966,29 @@ struct TargetCandidate {
 };
 // The first rule that leaves `candidate` out of the enemies' targets, "" when none does.
 std::string TargetCandidateBlock(const TargetCandidate& candidate);
+// Kaniel's play test 2026-10-25: Logarius went for the host only. A player's death sets its
+// info's +0x18 bit 0 (all three at a wipe, the local player as it falls into the void), and the
+// enemies' searches skip it (TargetCandidate). On the dying game a trip's load clears it; but a
+// teammate who died for real and got up again moves on its own game only, so its body here kept
+// the bit and no enemy on this game took it as a target until this game loaded a map. A body that
+// is up (dead byte +0x1E3 bits 0 and 2 clear, not a downed one on the invaders' team) and still has
+// the bit for HoldMs gets it cleared. Invaders' bodies are left be.
+class StaleDeathMarks {
+public:
+    static constexpr s64 HoldMs = 3000;
+    struct Body {
+        u32 handle = 0;
+        bool marked = false; // info +0x18 bit 0
+        bool dead = false;   // +0x1E3 bit 0 or 2
+        bool downed = false; // on DownedTeams::Hostile
+        bool invader = false;
+    };
+    // The bodies whose mark to clear now.
+    std::vector<u32> Tick(std::span<const Body> bodies, s64 now_ms);
+
+private:
+    std::vector<std::pair<u32, s64>> up_since; // marked bodies standing up, since when
+};
 // Where the board has the other members down on `map` (their characters in this world are found
 // there: the enemies near a downed guest may be run by the host's game).
 std::vector<LampPosition> OthersDownOnMap(std::span<const MemberVitals> board,
