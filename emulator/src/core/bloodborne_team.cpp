@@ -225,6 +225,9 @@ bbcoop::TeamRequest TeamMenuRequest(bbcoop::TeamRequest::Action action, const st
         break;
     case Action::NEW_CODE:
         break;
+    case Action::SEARCH:
+        request.set_query(id); // Amanises 2026-10-25: the player search's text
+        break;
     default:
         request.set_member(id);
         break;
