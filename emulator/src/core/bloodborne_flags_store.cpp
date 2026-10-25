@@ -667,10 +667,25 @@ void ClearLightRequestsThatLitNothing() {
     }
 }
 
+// See ClearsDollLevelUpFlag: the Doll's level-up flag, stuck on from a team's world or an old
+// save, off as a map loads (after the team's world went in).
+void ClearStuckDollLevelUpFlag() {
+    if (!ClearsDollLevelUpFlag(party_controller.has_value(), EventFlagOn(DollLevelUpFlag))) {
+        return;
+    }
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, DollLevelUpFlag, false);
+    LOG_INFO(Debug,
+             "Bloodborne party: the Doll's level-up flag {} was on as map {:#x} loaded; "
+             "cleared",
+             DollLevelUpFlag, GetCurrentPackedMap());
+}
+
 void SetGuestPickupsBeforeMapItems() {
     ApplyTeamWorldOnLoad();
     RepairRitualAltars();
     ClearLightRequestsThatLitNothing();
+    ClearStuckDollLevelUpFlag();
     static std::chrono::steady_clock::time_point last{};
     static OncePerTrip trip_load;
     const auto now = std::chrono::steady_clock::now();

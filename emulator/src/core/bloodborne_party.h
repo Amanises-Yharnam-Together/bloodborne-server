@@ -961,6 +961,12 @@ bool RefusesLampLight(s32 flag, std::optional<bool> lamp_character_off);
 // (its active flag off): the request lit nothing, or it came from another player's world. Cleared
 // as the map loads, so its event 7100 lights the lamp again.
 std::vector<s32> LightRequestsToClear(u32 packed_map, const std::function<bool(s32)>& on);
+// Kaniel's playtest 2026-10-25: right after the team connected nobody could level up at the
+// Doll. Her talk (m21_00 t210304) sets 6700 as her level-up menu opens and plays only her words
+// while it is on; the team's world held the host's 6700 on and put it in every save. No talk is
+// open while a map loads, so a 6700 on then is stuck: cleared as the map loads (in a party).
+constexpr s32 DollLevelUpFlag = 6700;
+bool ClearsDollLevelUpFlag(bool party_configured, bool flag_on);
 // The other player's "set this event flag" (0x017C0570) and "event ended" (0x017C0901) messages
 // leave these flags and events alone in a party: what one player received is not given to the
 // other (the Hunter's Dream messengers' gift events and flags, 12101020-12101029, and the
