@@ -335,6 +335,22 @@ TEST(BloodborneFlagRules, AMapsLoadResetFlagsStayOutOfTheWorld) {
     }
 }
 
+// Audit 2026-10-25: the League's covenant flags come from each player's own runes and items:
+// common events 6788 and 6789 count goods 1700 into 6780-6787 and 6790-6797 under SpEffect 6141
+// or 6143, 6800-6808 sum them, 6809 sets the ranks 6810-6812 from that; 6813 is the League
+// joined in the Forbidden Woods (m27_00 12700902), 6814 by Valtr's talk (t270503); 6815 and
+// 6816 put the League's effects on by them. As the host's world, a guest's rank and membership
+// followed the host's in a session.
+TEST(BloodborneFlagRules, TheLeaguesCovenantFlagsAreEachPlayersOwn) {
+    for (s32 flag = 6780; flag <= 6816; ++flag) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::PerPlayer) << flag;
+        EXPECT_TRUE(KeepsLocalFlag(true, flag)) << flag;
+        EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
+    }
+    EXPECT_NE(RuleFor(6779).owner, FlagOwner::PerPlayer);
+    EXPECT_NE(RuleFor(6817).owner, FlagOwner::PerPlayer);
+}
+
 TEST(BloodborneFlagRules, BossFoundFlagsArePerPlayer) {
     std::set<s32> found;
     for (const EncounterInsight& boss : EncounterInsights()) {

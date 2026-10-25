@@ -139,10 +139,17 @@ def patch_events(emevd: bytes, edits: list | None = None) -> tuple[bytes, int]:
 # m24_00 12401803 is Vicar Amelia's skull: the host's press plays the cutscene and brings the night
 # (2002:6, time of day 2); a guest's copy, kept in step, now follows it (its own press still waits
 # for an alive host, 4:3).
+# Story cutscenes that ended for a client before they played (audit 2026-10-25, Kaniel: "everyone
+# is moved but only the host sees the cutscene"): common 9422 the Hypogean Gaol's arrival after a
+# kidnapping (and its point of insight), m25_00 12500000 Cainhurst's arrival, m26_00 12601854 the
+# one after the Nightmare of Mensis' boss. The Dream's endings (m21_00 12100000, 12100002,
+# 12100180: they start the next playthrough, 2003:21) stay the host's.
 CLIENT_EVENTS = {
-    'common.emevd.dcx': {9350, 9400, 9404, 9421},
+    'common.emevd.dcx': {9350, 9400, 9404, 9421, 9422},
     'm21_00_00_00.emevd.dcx': {9401, 12105043, 12107100},
     'm24_00_00_00.emevd.dcx': {12401803},
+    'm25_00_00_00.emevd.dcx': {12500000},
+    'm26_00_00_00.emevd.dcx': {12601854},
 }
 INSIGHT_EVENT = 9350
 INITIALIZE_EVENT = (2000, 0)
