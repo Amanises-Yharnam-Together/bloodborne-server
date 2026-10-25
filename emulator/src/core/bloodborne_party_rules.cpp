@@ -185,7 +185,9 @@ namespace {
 // scaled in the loaded tables, which the game reads when it creates a character, so this runs
 // from the title screen on (the pad reader and the save slot's opening call it). Row 271000 of
 // each table (Father Gascoigne) shows whether the scaled values are still there; a table that
-// was loaded again is scaled again.
+// was loaded again is scaled again. Kaniel 2026-10-25 (the enemy scaling host rule): the rate
+// changes with the hunters on the map, so each table's own values are kept and every new rate
+// starts from them.
 const std::optional<HarderEnemies> harder_enemies = [] {
     const char* setting = std::getenv("SHADPS4_BLOODBORNE_HARDER_ENEMIES");
     return ParseHarderEnemies(setting != nullptr ? setting : "");
@@ -229,25 +231,116 @@ std::optional<std::pair<s32, s32>> HarderEnemiesMarker(std::span<const u8> param
 
 namespace Coop {
 
-bool EnemiesAreHarder() {
-    return harder_enemies.has_value();
+std::atomic<bool> enemies_harder_now{false};
+
+std::optional<std::span<u8>> WritableSpEffects(u64 table) {
+    return WritableParam(table, 0x210);
 }
 
-void MakeEnemiesHarder() {
-    if (!harder_enemies) {
-        return;
+std::size_t HuntersOnMyMap() {
+    // Held through a trip's load (its map reads 0, then the old one: the tables would flip).
+    static std::atomic<std::size_t> last{1};
+    const u32 map = PlayingMap();
+    if (map == 0 || PartyTripActive()) {
+        return last.load();
     }
+    std::scoped_lock lock{map_board_mutex};
+    const std::size_t hunters =
+        std::chrono::steady_clock::now() - map_board_time > std::chrono::seconds{3}
+            ? 1
+            : HuntersOnMap(map_board, map_board_member, map);
+    last.store(hunters);
+    return hunters;
+}
+
+bool EnemiesAreHarder() {
+    return enemies_harder_now.load();
+}
+
+namespace {
+
+bool SameRate(const std::optional<HarderEnemies>& a, const std::optional<HarderEnemies>& b) {
+    if (!a || !b) {
+        return a.has_value() == b.has_value();
+    }
+    return a->hp == b->hp && a->damage == b->damage && a->poise == b->poise;
+}
+
+std::string RateText(const std::optional<HarderEnemies>& rate) {
+    return rate ? fmt::format("x{:.2f} HP, x{:.2f} damage, x{:.2f} poise", rate->hp, rate->damage,
+                              rate->poise)
+                : std::string{"the normal game"};
+}
+
+// One loaded table as the game had it (its own values) and the rate it holds now.
+struct ScaledParam {
+    u64 table = 0;
+    std::vector<u8> own;
+    std::optional<std::pair<s32, s32>> marker; // as last written
+    std::optional<HarderEnemies> rate;
+};
+
+// Puts `wanted` into `table` (from its own values); whether it changed anything.
+template <typename Scale>
+bool ScaleParam(ScaledParam& kept, u64 address, std::span<u8> table,
+                std::optional<std::pair<s32, s32>> marker,
+                const std::optional<HarderEnemies>& wanted, Scale&& scale) {
+    const bool fresh = address != kept.table || marker != kept.marker;
+    if (fresh) {
+        // A new table (or one loaded again): its values are the game's own.
+        if (!wanted) {
+            kept = ScaledParam{.table = address, .marker = marker};
+            return false;
+        }
+        kept.table = address;
+        kept.own.assign(table.begin(), table.end());
+        kept.rate.reset();
+    } else if (SameRate(kept.rate, wanted)) {
+        return false;
+    }
+    if (kept.own.size() != table.size() && !kept.rate) {
+        kept.own.assign(table.begin(), table.end()); // still the game's own values
+    }
+    if (kept.own.size() == table.size()) {
+        std::memcpy(table.data(), kept.own.data(), table.size());
+    }
+    if (wanted) {
+        scale(table, *wanted);
+    }
+    kept.rate = wanted;
+    return true;
+}
+
+} // namespace
+
+void MakeEnemiesHarder() {
+    // Kaniel 2026-10-25: with the enemy scaling rule the team's size on this map picks the rate,
+    // over the player's own setting.
+    const HostRules rules = ActiveHostRules();
+    const std::size_t hunters = rules.enemy_scaling ? HuntersOnMyMap() : 0;
+    const std::optional<HarderEnemies> wanted =
+        rules.enemy_scaling ? TeamScaledEnemies(hunters) : harder_enemies;
+    static ScaledParam npc_kept;
+    static ScaledParam attack_kept;
+    static std::optional<std::vector<std::pair<s32, float>>> boss_bonus_own;
     std::scoped_lock lock{harder_enemies_mutex};
+    if (!wanted && !npc_kept.rate && !attack_kept.rate && !boss_bonus_own) {
+        enemies_harder_now.store(false);
+        return; // never scaled: the game's tables as they are
+    }
     static std::chrono::steady_clock::time_point last{};
-    static std::optional<std::pair<s32, s32>> npc_marker;
-    static std::optional<std::pair<s32, s32>> attack_marker;
-    static u64 npc_table = 0;
-    static u64 attack_table = 0;
+    static std::optional<HarderEnemies> last_wanted;
     const auto now = std::chrono::steady_clock::now();
-    if (now - last < std::chrono::seconds{1}) {
+    if (now - last < std::chrono::seconds{1} && SameRate(wanted, last_wanted)) {
         return;
     }
     last = now;
+    if (!SameRate(wanted, last_wanted) && rules.enemy_scaling) {
+        LOG_INFO(Debug, "Bloodborne enemy scaling: {} hunter(s) on this map: {}", hunters,
+                 RateText(wanted));
+    }
+    last_wanted = wanted;
+    enemies_harder_now.store(wanted.has_value());
     constexpr u64 NpcRowSize = 0x184;
     constexpr u64 AtkRowSize = 0xA4;
     const u64 npc = FindLoadedParam("NPC_PARAM_ST");
@@ -259,40 +352,55 @@ void MakeEnemiesHarder() {
     });
     const bool in_world = GetLocalPlayer() >= 0x10000;
     if (const auto table = npc != 0 ? WritableParam(npc, NpcRowSize) : std::nullopt) {
-        if (npc != npc_table ||
-            HarderEnemiesMarker(*table, NpcHpOffset, NpcPoiseOffset) != npc_marker) {
-            const std::size_t rows = MakeNpcParamHarder(*table, *harder_enemies);
-            npc_table = npc;
-            npc_marker = HarderEnemiesMarker(*table, NpcHpOffset, NpcPoiseOffset);
+        const auto marker = HarderEnemiesMarker(*table, NpcHpOffset, NpcPoiseOffset);
+        std::size_t rows = 0;
+        if (ScaleParam(npc_kept, npc, *table, marker, wanted,
+                       [&](std::span<u8> param, const HarderEnemies& rate) {
+                           rows = MakeNpcParamHarder(param, rate);
+                       })) {
+            npc_kept.marker = HarderEnemiesMarker(*table, NpcHpOffset, NpcPoiseOffset);
             LOG_INFO(Debug,
-                     "Bloodborne harder enemies: {} NpcParam rows x{} HP, x{} poise (Father "
-                     "Gascoigne HP {}, poise {}){}",
-                     rows, harder_enemies->hp, harder_enemies->poise,
-                     npc_marker ? npc_marker->first : -1, npc_marker ? npc_marker->second : -1,
+                     "Bloodborne harder enemies: {} NpcParam rows, {} (Father Gascoigne HP {}, "
+                     "poise {}){}",
+                     rows, RateText(wanted), npc_kept.marker ? npc_kept.marker->first : -1,
+                     npc_kept.marker ? npc_kept.marker->second : -1,
                      in_world ? "; enemies already on this map keep their old stats" : "");
         }
     }
     if (const auto table = attacks != 0 ? WritableParam(attacks, AtkRowSize) : std::nullopt) {
-        if (attacks != attack_table ||
-            HarderEnemiesMarker(*table, AtkPhysOffset, 0) != attack_marker) {
-            const std::size_t rows = MakeNpcAttacksHarder(*table, harder_enemies->damage);
-            attack_table = attacks;
-            attack_marker = HarderEnemiesMarker(*table, AtkPhysOffset, 0);
+        const auto marker = HarderEnemiesMarker(*table, AtkPhysOffset, 0);
+        std::size_t rows = 0;
+        if (ScaleParam(attack_kept, attacks, *table, marker, wanted,
+                       [&](std::span<u8> param, const HarderEnemies& rate) {
+                           rows = MakeNpcAttacksHarder(param, rate.damage);
+                       })) {
+            attack_kept.marker = HarderEnemiesMarker(*table, AtkPhysOffset, 0);
             LOG_INFO(Debug,
-                     "Bloodborne harder enemies: {} AtkParam_Npc rows x{} damage (Father "
+                     "Bloodborne harder enemies: {} AtkParam_Npc rows, x{:.2f} damage (Father "
                      "Gascoigne's first swing {}){}",
-                     rows, harder_enemies->damage, attack_marker ? attack_marker->first : -1,
+                     rows, wanted ? wanted->damage : 1.0f,
+                     attack_kept.marker ? attack_kept.marker->first : -1,
                      in_world ? "; enemies already on this map keep their old stats" : "");
         }
     }
-    // Checked every time: a reloaded SpEffectParam gets the bonus back.
+    // Checked every time: a reloaded SpEffectParam gets the bonus back. Back to the normal game
+    // (the scaling rule, alone on a map), the bonus is the game's again.
     if (const u64 effects = FindLoadedParam("SP_EFFECT_PARAM_ST"); effects != 0) {
         if (const auto table = WritableParam(effects, 0x210)) {
-            if (const std::size_t rows = RemoveCoopBossHpBonus(*table); rows != 0) {
-                LOG_INFO(Debug,
-                         "Bloodborne harder enemies: the co-op boss HP bonus (SpEffect "
-                         "7500-7503) is off in {} rows; bosses get x{} HP only",
-                         rows, harder_enemies->hp);
+            if (wanted) {
+                if (!boss_bonus_own) {
+                    boss_bonus_own = CoopBossHpRates(*table);
+                }
+                if (const std::size_t rows = RemoveCoopBossHpBonus(*table); rows != 0) {
+                    LOG_INFO(Debug,
+                             "Bloodborne harder enemies: the co-op boss HP bonus (SpEffect "
+                             "7500-7503) is off in {} rows; bosses get x{:.2f} HP only",
+                             rows, wanted->hp);
+                }
+            } else if (boss_bonus_own) {
+                SetCoopBossHpRates(*table, *boss_bonus_own);
+                boss_bonus_own.reset();
+                LOG_INFO(Debug, "Bloodborne harder enemies: the co-op boss HP bonus is back");
             }
         }
     }

@@ -1054,6 +1054,7 @@ void TickPartyController() {
     TimeTickPart("TickAutoplay", TickAutoplay);
     TimeTickPart("TickPartyTrip", TickPartyTrip);
     TimeTickPart("TickPlayersOnThisMap", TickPlayersOnThisMap);
+    TimeTickPart("TickHostRules", TickHostRules);
     TimeTickPart("TickMapScreen", TickMapScreen);
     TimeTickPart("CheckAutoplayWatch", CheckAutoplayWatch);
     TimeTickPart("LogJoinTaskChanges", LogJoinTaskChanges);

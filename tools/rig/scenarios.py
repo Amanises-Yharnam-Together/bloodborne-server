@@ -1828,6 +1828,93 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
+    # Kaniel 2026-10-25, the host rules (each off by default; the rig's games are in no team, so each
+# plays by its own SHADPS4_BLOODBORNE_HOST_RULES, the same for both).
+# Rot: the guest's real death (it gives up) adds a penalty, on it as its effect; picking up its own
+# bloodstain takes it away; a second death adds one again and a lamp takes that away.
+"rot-death-lamp": {
+        "about": "the Rot rule: a real death adds a penalty (its effect on), the own bloodstain and a "
+                 "lamp take it away",
+        "settings": {**PARTY_DEATH, "SHADPS4_BLOODBORNE_HOST_RULES": "rot"},
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital dead 180",
+                     "wait-member-vital up 60", "wait-member-vital dead 120",
+                     "wait-member-vital up 60", "wait 25", "expect-rot 0"],
+            "guest": [START, "wait-session 2 300", "trade-give echoes 500", "wait 15", *GIVE_UP,
+                      "wait-vital up 60", "expect-rot 1 20", "wait 6", "pickup-stain 15",
+                      "expect-rot 0 10", "wait 5", *GIVE_UP, "wait-vital up 60",
+                      "expect-rot 1 20", "use-lamp", "expect-rot 0 10", "wait 10"],
+        },
+        "expect": {"guest": [r"Co-op rot: died for real: .* \(1 of 5;",
+                             r"Co-op rot: cured by its own bloodstain",
+                             r"Co-op rot: cured by a lamp"]},
+        "forbid": {"host": SESSION_HOLDS + [r"Co-op rot: died for real"],
+                   "guest": [r"Co-op rot: SpEffect \d+ could not be written"]},
+        "timeout": 300,
+    },
+    # Travel together: the host's lamp asks first; With the team takes the guest to the Hunter's
+    # Dream too, in the same session.
+    "travel-together": {
+        "about": "the travel together rule: the host's lamp trip with the team takes the guest to the "
+                 "Hunter's Dream as well",
+        "settings": {"SHADPS4_BLOODBORNE_HOST_RULES": "travel"},
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", "use-lamp",
+                     "travel-answer yes 10", "wait-map 0x15000000 120", "wait 15",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait-map 0x15000000 180",
+                      "wait 15", "expect-session 2"],
+        },
+        "expect": {"host": [r"Co-op team trip: asks this player about travelling to 2102962",
+                            r"Co-op team trip 1: the team travels to 2102962"],
+                   "guest": [r"Co-op team trip 1: \w+ takes the team to 2102962",
+                             r"Co-op team trip: this player travels to 2102962"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
+    # With the vote, the guest's No stops the trip: nobody travels.
+    "travel-vote-no": {
+        "about": "the travel together vote: the guest says No to the host's team trip and nobody "
+                 "travels",
+        "settings": {"SHADPS4_BLOODBORNE_HOST_RULES": "travel,vote"},
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 10", "use-lamp",
+                     "travel-answer yes 10", "wait 20", f"expect-map {CENTRAL_YHARNAM}",
+                     "expect-session 2"],
+            "guest": [START, "godmode", "wait-session 2 300", "travel-answer no 60", "wait 20",
+                      f"expect-map {CENTRAL_YHARNAM}", "expect-session 2"],
+        },
+        "expect": {"host": [r"Co-op team trip 1: the team votes on 2102962 \(1 asked\)",
+                            r"Co-op team trip 1: \w+ says no",
+                            r"Co-op team trip 1: \w+ said no; nobody travels"],
+                   "guest": [r"Co-op team trip 1: \w+ asks the team to travel to 2102962",
+                             r"Co-op team trip 1: this player says no",
+                             r"Co-op team trip 1: \w+'s trip is off"]},
+        "forbid": {"host": [r"Co-op team trip: this player travels"],
+                   "guest": [r"Co-op team trip: this player travels"]},
+        "timeout": 300,
+    },
+    # Enemy scaling: two hunters on the map scale its enemies one step up from the normal game
+    # (x1.67 HP), back to it once the guest leaves for the Dream.
+    "scale-team-size": {
+        "about": "the enemy scaling rule: a second hunter on the map raises the enemies, its leaving "
+                 "brings back the normal game",
+        "settings": {"SHADPS4_BLOODBORNE_HOST_RULES": "scale"},
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-members 2 120", "wait 10",
+                     "wait 30", "wait 30", "wait 30"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait-members 2 120", "wait 10",
+                      f"travel {HUNTERS_DREAM}", "wait-map 0x15000000 120", "wait 10"],
+        },
+        "expect": {"host": [r"Bloodborne enemy scaling: 2 hunter\(s\) on this map: x1\.67 HP, "
+                            r"x1\.17 damage, x1\.67 poise",
+                            r"Bloodborne harder enemies: \d+ NpcParam rows, x1\.67 HP",
+                            r"Bloodborne enemy scaling: 1 hunter\(s\) on this map: the normal game",
+                            r"Bloodborne harder enemies: \d+ NpcParam rows, the normal game"],
+                   "guest": [r"Bloodborne enemy scaling: 2 hunter\(s\) on this map: x1\.67 HP"]},
+        "forbid": {"host": SESSION_HOLDS},
+        "timeout": 300,
+    },
     # A player's report on v1.1.2: a guest's own stain may not show on its compass. The guest's
     # deaths other than "bloodstain"'s give-up by the lamp, each ending where its stain lies.
     # Alone on its map (the host gone to the Ward): the fall is a real death, no down, and the

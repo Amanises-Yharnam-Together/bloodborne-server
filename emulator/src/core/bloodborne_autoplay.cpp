@@ -1558,6 +1558,59 @@ bool AutoplayExpectEffect(const AutoplayStep& step) {
     return true;
 }
 
+// Kaniel 2026-10-25, the host rules. use-lamp [<warp point>]: this player's trip from a lamp (the
+// Hunter's Dream) or a headstone (the point named), as the lamp's talk asks for it (the rig's X at
+// a lamp brings no prompt): the travel together question when the rule takes it, else a trip of
+// its own. A lamp counts as touched (the Rot rule's cure).
+bool AutoplayUseLamp(const AutoplayStep& step) {
+    const s32 point = static_cast<s32>(step.Number(0, HuntersDreamWarpPoint));
+    if (point == HuntersDreamWarpPoint) {
+        lamp_uses.fetch_add(1);
+    }
+    if (OfferTeamTravel(point)) {
+        LOG_INFO(Debug, "Bloodborne autoplay use-lamp: {} waits for the team question", point);
+    } else {
+        LOG_INFO(Debug, "Bloodborne autoplay use-lamp: travels alone to {}", point);
+        RequestTeamTrip(point);
+    }
+    return true;
+}
+
+// travel-answer <yes|no> [<timeout>]: the travel question's answer, once it shows.
+bool AutoplayTeamTravel(const AutoplayStep& step) {
+    const auto view = ReadTeamTravel();
+    if (view && view->question != TeamTravelView::Question::None) {
+        LOG_INFO(Debug, "Bloodborne autoplay travel-answer: {} to the {} question for {}",
+                 step.Arg(0),
+                 view->question == TeamTravelView::Question::Vote ? "vote" : "with the team",
+                 view->point);
+        AnswerTeamTravel(step.Arg(0) == "yes");
+        return true;
+    }
+    return step.WaitedOut(step.Number(1, 30));
+}
+
+// expect-rot <n> [<timeout>]: this player has n rot penalties, each on it as its effect, within
+// the time (the effects come on a moment after a death's respawn).
+bool AutoplayExpectRot(const AutoplayStep& step) {
+    const RotView view = ReadRotView();
+    const std::vector<s32> effects = LocalEffects();
+    bool on = true;
+    for (const u32 kind : view.kinds) {
+        on = on && kind >= 1 && kind <= RotKinds &&
+             std::ranges::find(effects, RotRows[kind - 1].row) != effects.end();
+    }
+    if (view.kinds.size() == static_cast<std::size_t>(step.Number(0, 0)) && on) {
+        LOG_INFO(Debug, "Bloodborne autoplay expect-rot: {} ({})", view.kinds.size(),
+                 view.text.empty() ? "none" : view.text);
+        return true;
+    }
+    if (step.WaitedOut(step.Number(1, 20))) {
+        step.failure = fmt::format("rot {} ({}), effects on={}", view.kinds.size(), view.text, on);
+    }
+    return false;
+}
+
 bool AutoplayExpectSession(const AutoplayStep& step) {
     const size_t members = AutoplaySessionMembers();
     if (members != static_cast<size_t>(step.Number(0, 1))) {
@@ -2153,6 +2206,9 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-max-hp", AutoplayExpectMaxHp},
     {"expect-effect", AutoplayExpectEffect},
     {"expect-session", AutoplayExpectSession},
+    {"use-lamp", AutoplayUseLamp},
+    {"travel-answer", AutoplayTeamTravel},
+    {"expect-rot", AutoplayExpectRot},
     {"expect-others-near", AutoplayExpectOthersNear},
     {"expect-others-shown", AutoplayExpectOthersShown},
     {"expect-compass", AutoplayExpectCompass},

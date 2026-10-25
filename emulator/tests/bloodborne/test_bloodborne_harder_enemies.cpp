@@ -172,3 +172,22 @@ TEST(BloodborneHarderEnemies, RemovesTheCoopBossHpBonus) {
     auto npc = MakeParam("NPC_PARAM_ST", 0x184, {7500});
     EXPECT_EQ(RemoveCoopBossHpBonus(npc), 0u);
 }
+
+// Kaniel 2026-10-25 (the enemy scaling rule): the co-op boss HP bonus comes back when a team is
+// scaled down to the normal game.
+TEST(BloodborneHarderEnemies, TheCoopBossBonusComesBack) {
+    constexpr std::size_t RowSize = 0x210;
+    std::vector<u8> param = MakeParam("SP_EFFECT_PARAM_ST", RowSize, {7500, 7501, 7502, 7503});
+    for (std::size_t row = 0; row < 4; ++row) {
+        const float rate = 1.5f + static_cast<float>(row);
+        std::memcpy(param.data() + 0x40 + 4 * 24 + row * RowSize + SpEffectMaxHpRateOffset, &rate,
+                    sizeof(rate));
+    }
+    const auto own = CoopBossHpRates(param);
+    ASSERT_EQ(own.size(), 4u);
+    EXPECT_EQ(own[1], (std::pair<s32, float>{7501, 2.5f}));
+    EXPECT_EQ(RemoveCoopBossHpBonus(param), 4u);
+    EXPECT_FLOAT_EQ(CoopBossHpRates(param)[3].second, 1.0f);
+    SetCoopBossHpRates(param, own);
+    EXPECT_EQ(CoopBossHpRates(param), own);
+}

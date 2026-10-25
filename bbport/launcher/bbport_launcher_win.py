@@ -3961,6 +3961,7 @@ class Launcher:
                     self.make_support_bundle).pack(side='left', padx=(px(8), 0))
         self.button(holder, _('Restore saves…', 'Восстановить сохранения…'),
                     self.open_save_backups).pack(side='left', padx=(px(8), 0))
+        self.build_coop_rules(card)
         self.note(card, _('Make or join a team in the game: Continue, Load Game or New Game opens the team screen. '
                           'Windows asks once to let co-op through its firewall.',
                           'Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают экран '
@@ -3977,6 +3978,43 @@ class Launcher:
         self.coop_changed()
         if not self.coop_game_folder():
             self.coop_search(None, quiet=True)
+
+    def build_coop_rules(self, card):
+        """Kaniel 2026-10-25: the host rules, each off by default. The team's leader's are the team's (the game
+        sends them to the server); the others see them on the team screen."""
+        tk, px = self.tk, self.px
+        cell = self.cell(card, self.next_row(card), 0,
+                         _('Host rules (yours count when you lead the team)',
+                           'Правила хоста (действуют, когда вы лидер команды)'), span=2)
+        rows = {}
+        for key, title in (
+                ('rule_rot', _('Rot: each real death adds a penalty (up to 5); a lamp, a level up, a boss, '
+                               'your killer or your bloodstain takes it away',
+                               'Гниль: каждая настоящая смерть даёт штраф (до 5); лампа, уровень, босс, '
+                               'ваш убийца или ваше пятно крови снимают его')),
+                ('rule_travel', _('Travel together: a lamp or headstone asks to take the whole team',
+                                  'Путь вместе: лампа или надгробие предлагают взять всю команду')),
+                ('rule_vote', _('…with a vote: the team has 20 s, one No stops the trip',
+                                '…с голосованием: у команды 20 с, одно «нет» отменяет путь')),
+                ('rule_scale', _('Enemies scale with the hunters on their map: normal alone, Harder for a full team',
+                                 'Враги сильнее с числом охотников на карте: обычные в одиночку, «Сильнее» для '
+                                 'полной команды'))):
+            text = tk.StringVar(value='1' if self.coop.get(key) == '1' else '')
+            text.trace_add('write', lambda *_a: self.coop_changed_soon())
+            self.coop_vars[key] = text
+            on = tk.BooleanVar(value=text.get() == '1')
+            on.trace_add('write', lambda *_a, on=on, text=text: text.set('1' if on.get() else ''))
+            row = self.switch(cell, on, title, px(680))
+            row.pack(anchor='w', pady=(px(4), 0), padx=(px(40), 0) if key == 'rule_vote' else 0)
+            rows[key] = (row, on)
+
+        def vote_follows(*_a):
+            travel = rows['rule_travel'][1].get()
+            row = rows['rule_vote'][0]
+            row.knob.set_enabled(travel)
+            row.caption.configure(fg=TEXT if travel else DIM)
+        rows['rule_travel'][1].trace_add('write', vote_follows)
+        vote_follows()
 
     def build_coop_custom(self, parent, start):
         """The player's own multipliers under the Enemies box, shown for Custom: each 1 to 10, as the game

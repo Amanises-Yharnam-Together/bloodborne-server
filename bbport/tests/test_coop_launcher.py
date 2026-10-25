@@ -71,6 +71,25 @@ class AnswersTests(unittest.TestCase):
         env = coop.game_environment({}, dict(coop.DEFAULTS, harder='2,1.25,4'), Path('.'), Path('.'))
         self.assertEqual(env['SHADPS4_BLOODBORNE_HARDER_ENEMIES'], '2,1.25,4')
 
+    def test_host_rules_are_off_until_the_host_turns_them_on(self):
+        """Kaniel 2026-10-25: the host rules (Rot, travel together with its vote, enemies scaling with
+        the team), each off by default; the leader's launcher's are the team's (the game sends them)."""
+        env = coop.game_environment({'SHADPS4_BLOODBORNE_HOST_RULES': 'rot'}, dict(coop.DEFAULTS),
+                                    Path('.'), Path('.'))
+        self.assertNotIn('SHADPS4_BLOODBORNE_HOST_RULES', env, 'off by default, whatever the env had')
+        self.assertEqual(coop.host_rules_value(coop.DEFAULTS), 'off')
+        on = dict(coop.DEFAULTS, rule_rot='1', rule_travel='1', rule_vote='1', rule_scale='1')
+        self.assertEqual(coop.host_rules_value(on), 'rot,travel,vote,scale')
+        env = coop.game_environment({}, on, Path('.'), Path('.'))
+        self.assertEqual(env['SHADPS4_BLOODBORNE_HOST_RULES'], 'rot,travel,vote,scale')
+        self.assertEqual(coop.host_rules_value(dict(coop.DEFAULTS, rule_vote='1')), 'off',
+                         'the vote is a part of travelling together')
+        self.assertEqual(coop.host_rules_value(dict(coop.DEFAULTS, rule_scale='1')), 'scale')
+        with tempfile.TemporaryDirectory() as folder:
+            coop.save_settings(folder, dict(coop.DEFAULTS, rule_travel='1'))
+            kept = coop.read_settings(folder)
+            self.assertEqual((kept['rule_travel'], kept['rule_rot']), ('1', ''))
+
     def test_missing_answers_are_named(self):
         # No party settings: teams are made in the game (phase 6), so no party name or password.
         self.assertNotIn('party_name', coop.DEFAULTS)

@@ -489,6 +489,22 @@ class CoopSettingsTests(unittest.TestCase):
         self.assertFalse(self.app.coop_custom.winfo_ismapped())
         self.assertEqual(self.app.coop['harder'], 'off')
 
+    def test_host_rules_are_switches_off_by_default(self):
+        """Kaniel 2026-10-25: the host rules in the co-op card, each off at first; the vote only goes with
+        travelling together; what is switched on is saved."""
+        for key in ('rule_rot', 'rule_travel', 'rule_vote', 'rule_scale'):
+            self.assertEqual(self.app.coop_vars[key].get(), '', key)
+        self.app.coop_vars['rule_scale'].set('1')
+        self.settle(0.5)
+        self.assertEqual(self.app.coop['rule_scale'], '1', 'saved')
+        self.assertEqual(bbport_coop.host_rules_value(self.app.coop), 'scale')
+        self.app.coop_vars['rule_vote'].set('1')
+        self.settle(0.5)
+        self.assertEqual(bbport_coop.host_rules_value(self.app.coop), 'scale', 'no vote without the trip')
+        self.app.coop_vars['rule_travel'].set('1')
+        self.settle(0.5)
+        self.assertEqual(bbport_coop.host_rules_value(self.app.coop), 'travel,vote,scale')
+
     def test_how_to_connect_shows_the_steps_and_gives_the_host_their_vpn_address(self):
         """Kaniel 2026-10-21: players got lost at the VPN step; the co-op card has a help button with the
         Radmin VPN steps, and the host can take this PC's Radmin address with one press."""

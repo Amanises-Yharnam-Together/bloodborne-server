@@ -1556,10 +1556,16 @@ void PS4_SYSV_ABI NoteHitApplied(u64, const GuestRegisterSnapshot* registers) {
     }
     const s32 taken = before - std::max(CharacterHp(victim), 0);
     const u64 player = GetLocalPlayer();
+    if (victim == player && player != 0 && taken > 0 && attacker >= 0x10000 && attacker != player) {
+        NoteHitOnMe(ReadValue<u32>(attacker, 0x08)); // the Rot rule's killer
+    }
     if (victim == player || player == 0) {
         return;
     }
     const u32 handle = ReadValue<u32>(victim, 0x08);
+    if (attacker == player && taken > 0 && before > 0 && CharacterHp(victim) <= 0) {
+        NoteOwnKill(handle);
+    }
     // A thrown item's hit names no character (Kaniel's fire bomb 2026-10-13: attacker handle 0).
     const bool named = attacker >= 0x10000 && ReadValue<u32>(attacker, 0x08) != 0;
     const HitBy by = attacker == player ? HitBy::Me : (named ? HitBy::OtherPlayer : HitBy::Nobody);

@@ -507,6 +507,14 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
     lobby->playing = Coop::TeamPlaying(&in_hunt) ? 1 : 0;
     lobby->in_hunt = in_hunt ? 1 : 0;
     CopyName(lobby->notice, sizeof(lobby->notice), state->notice());
+    {
+        // Kaniel 2026-10-25: the host rules the hunt plays by.
+        const Core::Bloodborne::HostRules rules = Coop::ActiveHostRules();
+        lobby->rule_rot = rules.rot ? 1 : 0;
+        lobby->rule_travel = rules.travel_together ? 1 : 0;
+        lobby->rule_vote = rules.travel_vote ? 1 : 0;
+        lobby->rule_scale = rules.enemy_scaling ? 1 : 0;
+    }
     if (state->has_team()) {
         const bbcoop::Team& team = state->team();
         lobby->in_team = 1;
@@ -759,4 +767,46 @@ extern "C" void bbcoop_file_opened(const char* guest_path) {
 
 extern "C" void bbcoop_trophy_unlocked(int32_t trophy_id) {
     Libraries::Np::NpTrophy::NotifyTrophyUnlocked(trophy_id);
+}
+
+extern "C" int bbcoop_rot_view(bbcoop_rot* rot) {
+    *rot = {};
+    const Core::Bloodborne::Coop::RotView view = Core::Bloodborne::Coop::ReadRotView();
+    if (!view.on) {
+        return 0;
+    }
+    for (const u32 kind : view.kinds) {
+        if (rot->count < BBCOOP_ROT_MAX) {
+            rot->kinds[rot->count++] = static_cast<int>(kind);
+        }
+    }
+    return rot->count > 0 ? 1 : 0;
+}
+
+extern "C" int bbcoop_team_travel_view(bbcoop_team_travel* travel) {
+    using namespace Core::Bloodborne;
+    *travel = {};
+    const auto view = Coop::ReadTeamTravel();
+    if (!view) {
+        return 0;
+    }
+    travel->question = view->question == TeamTravelView::Question::WithTheTeam ? 1
+                       : view->question == TeamTravelView::Question::Vote      ? 2
+                                                                               : 0;
+    travel->point = view->point;
+    travel->lamp_name_id = view->point == HuntersDreamWarpPoint ? -1 : LampNameId(view->point);
+    const std::string& from = view->question == TeamTravelView::Question::Vote ? view->from
+                                                                               : view->notice_from;
+    std::string name = Coop::CharacterNameOf(from);
+    CopyName(travel->from, sizeof(travel->from), name.empty() ? from : name);
+    travel->seconds_left = view->seconds_left;
+    travel->waiting = view->waiting ? 1 : 0;
+    travel->notice = view->notice == TeamTravelNotice::SaidNo    ? 1
+                     : view->notice == TeamTravelNotice::Stopped ? 2
+                                                                 : 0;
+    return 1;
+}
+
+extern "C" void bbcoop_team_travel_answer(int yes) {
+    Core::Bloodborne::Coop::AnswerTeamTravel(yes != 0);
 }

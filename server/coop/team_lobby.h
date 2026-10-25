@@ -34,6 +34,9 @@ constexpr s64 OfflineGraceMs = 10 * 60 * 1000;
 // the least lately played aside.
 constexpr size_t MaxWorlds = 16;
 
+// Kaniel 2026-10-25 (the Rot rule): a player's rot stacks up to this many penalties.
+constexpr size_t MaxRot = 5;
+
 // How far a world is, for the players: its lamps lit, from its world flags on (a lamp's active
 // flag, 10007810 + map * 10000 + lamp * 20, maps 210-399, lamps 0-19: the game's FlagTable).
 u32 LampsLit(std::span<const s32> on);
@@ -174,6 +177,8 @@ private:
         bool playing = false;
         // Kaniel 2026-10-17: the world it picked while in no team (the team it makes takes it).
         std::string world;
+        // Kaniel 2026-10-25: its launcher's host rules (the team it makes takes them).
+        bbcoop::TeamRules rules;
     };
 
     bbcoop::Team* FindTeam(const std::string& id);

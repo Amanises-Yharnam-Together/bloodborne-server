@@ -432,6 +432,7 @@ message Envelope {
         InvasionStart invasion_start = 45;
         InvaderJoined invader_joined = 46;
         InvasionEnd invasion_end = 47;
+        TeamTravel team_travel = 48;
     }
 }
 
@@ -522,6 +523,26 @@ message Ping {
     string member = 6; // server -> game: whose
 }
 
+// Kaniel 2026-10-25 (the travel together host rule): a member's lamp or headstone trip for the
+// whole party. The asker's game says ASK (with the vote: the others answer within 20 s, one No
+// stops it) and then GO or STOPPED; the server sends each on at once to the party's other members
+// (`member` set; server -> game). Nothing is kept.
+message TeamTravel {
+    enum Step {
+        NONE = 0;
+        ASK = 1;     // the asker's vote: go to `point`?
+        ANSWER = 2;  // a member's answer to trip `id` (`yes`)
+        GO = 3;      // everyone travels to `point` now
+        STOPPED = 4; // trip `id` is off (`member` said No)
+    }
+    Step step = 1;
+    uint32 id = 2;     // the asker's trip, counted in its run
+    sint32 point = 3;  // the warp point: a lamp's, or the Hunter's Dream
+    bool yes = 4;
+    string member = 5; // server -> game: whose; the asker's for ANSWER's `asker`
+    string asker = 6;  // ANSWER: the member whose trip it answers
+}
+
 // Phase 7, server -> game (after its hello): where this member last stood in the team's world
 // (its last vitals), for a guest's next run to come back there instead of at its save's lamp.
 message ResumeAt {
@@ -571,6 +592,12 @@ message TeamRequest {
         // Invasions (docs/INVASIONS.md): the leader allows invaders into the team's world
         // (`allow`), or turns them off (ending a running invasion).
         INVADERS = 15;
+        // Kaniel 2026-10-25 (host rules): the leader's rules for its team (`rules`), from its
+        // launcher. A player in no team sets them for the team it makes next.
+        RULES = 16;
+        // Kaniel 2026-10-25: the player's own rot (`rot`, the Rot rule), kept by the server while
+        // its team lives, so a restarted game gets it back.
+        ROT = 17;
     }
     Action action = 1;
     string member = 2;
@@ -581,6 +608,31 @@ message TeamRequest {
     string code = 7;
     string name = 8;
     bool allow = 9; // INVADERS
+    TeamRules rules = 10;
+    repeated uint32 rot = 11; // RotKind values, the oldest first
+}
+
+// Kaniel 2026-10-25: the host rules, the leader's choice for its whole team, all off by default.
+message TeamRules {
+    // A real death (not a down a teammate revives) adds a rot penalty, up to MaxRot.
+    bool rot = 1;
+    // A lamp or headstone trip asks "Travel with the team?" and takes everyone along.
+    bool travel_together = 2;
+    // With travel_together: the team votes on a trip, one No stops it.
+    bool travel_vote = 3;
+    // Enemies grow from the vanilla game (alone) to the harder defaults (a full team) with the
+    // hunters on their map, over the player's own enemy setting.
+    bool enemy_scaling = 4;
+}
+
+// The Rot rule's penalties (one each per death, picked at random).
+enum RotKind {
+    ROT_NONE = 0;
+    ROT_MAX_HP = 1;        // -10% max HP
+    ROT_MAX_STAMINA = 2;   // -10% max stamina
+    ROT_STAMINA_USE = 3;   // +10% stamina use
+    ROT_RALLY = 4;         // -15% rally
+    ROT_DISCOVERY = 5;     // -10 Item Discovery
 }
 
 message LobbyPlayer {
@@ -605,6 +657,8 @@ message TeamMember {
     // Phase 7: the player slot the server gives this guest (the sign it joins sessions with:
     // 7, 6, 5), kept while others come and go; 0 for the leader, who hosts.
     uint32 sign = 7;
+    // Kaniel 2026-10-25: its rot (RotKind values, the oldest first), as its game last said.
+    repeated uint32 rot = 8;
 }
 
 // Kaniel 2026-10-17: one of the server's worlds. Worlds are the server's, not a team's: any team
@@ -643,6 +697,7 @@ message Team {
     string code = 8;
     // Invasions (docs/INVASIONS.md): the leader allows invaders (off by default).
     bool allow_invaders = 9;
+    TeamRules rules = 10; // Kaniel 2026-10-25: the leader's host rules
 }
 
 message TeamInvite {
