@@ -257,7 +257,7 @@ void bbcoop_trophy_unlocked(int32_t trophy_id);
  * player's lobby member, a team's id). */
 enum { BBCOOP_LOBBY_TEAM = 4, BBCOOP_LOBBY_PLAYERS = 16, BBCOOP_LOBBY_INVITES = 8,
        BBCOOP_LOBBY_WORLDS = 16, BBCOOP_LOBBY_FRIENDS = 32, BBCOOP_LOBBY_REQUESTS = 8,
-       BBCOOP_LOBBY_SEARCH = 20 };
+       BBCOOP_LOBBY_SEARCH = 20, BBCOOP_LOBBY_OPEN = 12, BBCOOP_LOBBY_ASKS = 8 };
 enum { BBCOOP_LOBBY_OFFLINE, BBCOOP_LOBBY_TITLE, BBCOOP_LOBBY_PLAYING };
 /* Amanises 2026-10-25: what a listed player is to this one (LobbyPlayer.Relation). */
 enum { BBCOOP_FRIEND_NONE, BBCOOP_FRIEND_YES, BBCOOP_FRIEND_SENT, BBCOOP_FRIEND_RECEIVED,
@@ -270,6 +270,16 @@ typedef struct bbcoop_lobby_entry {
     int relation; /* BBCOOP_FRIEND_*: a player's, a friend's, a search result's */
     int in_my_team; /* a friend's or a search result's: in this player's team already */
 } bbcoop_lobby_entry;
+/* Amanises 2026-10-25: an open team as a player in no team sees it (`id` its team, `name` its
+ * leader's). */
+typedef struct bbcoop_lobby_open {
+    char name[40];
+    char id[40];
+    int members;
+    int started; /* its hunt is on */
+    int asked;   /* this player asked to join it */
+    int open;    /* anyone joins at once (else its leader takes the ones who ask) */
+} bbcoop_lobby_open;
 /* Kaniel 2026-10-17: one of the server's worlds (each kept apart on the server; any team plays
  * any of them). */
 typedef struct bbcoop_lobby_world {
@@ -314,6 +324,13 @@ typedef struct bbcoop_lobby {
     bbcoop_lobby_entry sent[BBCOOP_LOBBY_REQUESTS];
     bbcoop_lobby_entry search[BBCOOP_LOBBY_SEARCH];
     char search_query[40];
+    /* Amanises 2026-10-25, open teams: the most a team holds (the server's), the leader's team
+     * listed to all, the open teams (to a player in no team), who asked to join (to a leader). */
+    int team_size;
+    int join; /* BBCOOP_JOIN_*: how the team is joined (its leader says) */
+    int open_count, ask_count;
+    bbcoop_lobby_open open_teams[BBCOOP_LOBBY_OPEN];
+    bbcoop_lobby_entry asks[BBCOOP_LOBBY_ASKS];
 } bbcoop_lobby;
 /* Fills `lobby`; 0 when the team lobby is off. */
 int bbcoop_lobby_view(bbcoop_lobby *lobby);
@@ -330,7 +347,13 @@ enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
         * ("" clears the results). */
        BBCOOP_TEAM_FRIEND_ADD = 16 /* ask, or accept its request */,
        BBCOOP_TEAM_FRIEND_REMOVE = 17 /* unfriend, or take a sent request back */,
-       BBCOOP_TEAM_FRIEND_DECLINE = 18, BBCOOP_TEAM_SEARCH = 19 };
+       BBCOOP_TEAM_FRIEND_DECLINE = 18, BBCOOP_TEAM_SEARCH = 19,
+       /* Amanises 2026-10-25, open teams: OPEN's `id` is a BBCOOP_JOIN_* ("0" invite only,
+        * "1" ask, "2" open); ASK_JOIN (an open team: joins it) and ASK_CANCEL name a team,
+        * ASK_ACCEPT and ASK_DECLINE the one who asked. */
+       BBCOOP_TEAM_OPEN = 20, BBCOOP_TEAM_ASK_JOIN = 21, BBCOOP_TEAM_ASK_CANCEL = 22,
+       BBCOOP_TEAM_ASK_ACCEPT = 23, BBCOOP_TEAM_ASK_DECLINE = 24 };
+enum { BBCOOP_JOIN_INVITE_ONLY = 0, BBCOOP_JOIN_ASK = 1, BBCOOP_JOIN_OPEN = 2 };
 void bbcoop_lobby_request(int action, const char *id);
 /* The title holds a save's load for the team: the team screen is up (bbport_overlay.cpp). */
 int bbcoop_team_screen(void);
