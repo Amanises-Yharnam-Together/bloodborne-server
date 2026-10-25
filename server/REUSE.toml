@@ -36,6 +36,7 @@ path = [
     "documentation/signaling.md",
     "externals/CMakeLists.txt",
     "hosting/**",
+    "tests/fuzz/regressions/**",
 ]
 
 precedence = "aggregate"

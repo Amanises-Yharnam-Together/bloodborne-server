@@ -45,7 +45,7 @@ void QuitOnSignals(QCoreApplication& app) {
         qInfo() << "Stopping (signal)";
         app.quit();
     });
-    struct sigaction action {};
+    struct sigaction action{};
     action.sa_handler = OnQuitSignal;
     sigemptyset(&action.sa_mask);
     action.sa_flags = SA_RESTART;

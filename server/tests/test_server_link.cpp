@@ -57,7 +57,14 @@ std::map<std::string, QByteArray> ReadContracts(const char *path) {
 const Endpoint Ada127{0x7F000001, 0x1234};
 const QByteArray GameFrame = QByteArray::fromHex("75307531070000000200000"
                                                  "0abcd");
-const QByteArray Build = "92829ac4 events 1f protocol 9";
+// The contracts' hello carries the text before the build fingerprint.
+const QByteArray ContractBuild = "92829ac4 events 1f protocol 9";
+// Builds as the games say them (coop/build_fingerprint.h).
+const QByteArray Build =
+    "bb-build 1;version=1.2.0;revision=92829ac4;protocol=9;"
+    "events=1f;harder=off;fps=60;";
+const QByteArray OtherBuild = "bb-build 1;version=1.2.0;revision=13ddd14d;"
+                              "protocol=9;events=1f;harder=off;fps=60;";
 
 const Endpoint Kaniel{0x7F000001, 40001};
 const Endpoint Ada{0x7F000001, 40002};
@@ -187,11 +194,11 @@ int Contracts() {
 
   const QByteArray cookie(16, '\x11');
   const QByteArray nonce(16, '\x22');
-  CHECK(Encode(Hello{LinkVersion, "Kaniel", Build, "s3cr3t", cookie, nonce}) ==
-        datagram("hello"));
+  CHECK(Encode(Hello{LinkVersion, "Kaniel", ContractBuild, "s3cr3t", cookie,
+                     nonce}) == datagram("hello"));
   const auto hello = DecodeHello(datagram("hello"));
   CHECK(hello && hello->version == 3 && hello->online_id == "Kaniel" &&
-        hello->build == Build && hello->secret == "s3cr3t" &&
+        hello->build == ContractBuild && hello->secret == "s3cr3t" &&
         hello->cookie == cookie && hello->nonce == nonce);
   // Link version 3: the cookie, and a datagram's counter and tag (the keys from
   // the hello's secret, nonce, cookie and id; the game's first datagram).
@@ -275,13 +282,19 @@ int HelloAndBuilds() {
   CHECK(hub->Members() == 2);
 
   // One build for everyone: the 0x60 record carries a raw vtable pointer.
-  result = hub.Receive(Eileen, HelloFrom("Eileen", "13ddd14d"), 20);
+  result = hub.Receive(Eileen, HelloFrom("Eileen", OtherBuild), 20);
   const auto refused = DecodeWelcome(SentTo(result, Eileen).value(0));
   CHECK(refused && !refused->accepted);
-  CHECK(refused->text.contains("13ddd14d") && refused->text.contains(Build));
-  CHECK(refused->text.contains(
-      "everyone needs the same release")); // said on the team screen
+  // The team screen's line first, then the whole reason (as logged).
+  CHECK(refused->text ==
+        "Co-op refused: your game is build 13ddd14d, the games here run "
+        "92829ac4: use the same release\n"
+        "another build: your game is build 13ddd14d, the games here run "
+        "92829ac4: use the same release");
   CHECK(hub->Members() == 2);
+  CHECK(result.log.join('\n').contains(
+      "refused Eileen (192.168.1.5:40003): another build: your game is build "
+      "13ddd14d"));
 
   // Another link version cannot read a tagged answer, and an untagged one
   // would go to any source: it hears nothing.
@@ -303,7 +316,7 @@ int HelloAndBuilds() {
   result = fresh.Receive(Ada, HelloFrom("Ada"), 46);
   CHECK(DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
   CHECK(fresh->Build() == Build);
-  result = fresh.Receive(Kaniel, HelloFrom("Kaniel", "13ddd14d"), 47);
+  result = fresh.Receive(Kaniel, HelloFrom("Kaniel", OtherBuild), 47);
   CHECK(!DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
   result = fresh.Receive(Kaniel, HelloFrom("Kaniel"), 48);
   CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
@@ -319,6 +332,77 @@ int HelloAndBuilds() {
   result = hub.Receive(Eileen, old, 50);
   CHECK(result.sends.isEmpty() && hub.unopened == 0);
   std::cout << "server link hello: ok\n";
+  return 0;
+}
+
+// Build check on join: each field that differs, against the games here and
+// the server's own build.
+int BuildChecks() {
+  // A setting that changes the game, against the games here.
+  Net hub;
+  hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
+  QByteArray harder = Build;
+  harder.replace("harder=off", "harder=3,1.5,3");
+  auto result = hub.Receive(Ada, HelloFrom("Ada", harder), 10);
+  auto refused = DecodeWelcome(SentTo(result, Ada).value(0));
+  CHECK(refused && !refused->accepted);
+  CHECK(refused->text.endsWith(
+      "\nanother build: your harder-enemies setting is HP x3 damage x1.5 "
+      "poise x3, the games here use off: change it in the launcher's co-op "
+      "settings"));
+  CHECK(refused->text.startsWith(
+      "Co-op refused: your harder enemies are HP x3 damage x1.5 poise x3"));
+  CHECK(hub->Members() == 1);
+
+  // What is only logged (the frame rate) does not refuse; the server says it.
+  QByteArray faster = Build;
+  faster.replace("fps=60", "fps=90 unlocked");
+  result = hub.Receive(Ada, HelloFrom("Ada", faster), 20);
+  CHECK(DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
+  CHECK(result.log.join('\n').contains(
+      "Ada (127.0.0.1:40002) runs other settings than the games here (not "
+      "checked: frame rate 90 unlocked, theirs 60)"));
+
+  // A hello in the text before the fingerprint: an older release.
+  result = hub.Receive(Eileen, HelloFrom("Eileen", ContractBuild), 30);
+  refused = DecodeWelcome(SentTo(result, Eileen).value(0));
+  CHECK(refused && !refused->accepted);
+  CHECK(refused->text.startsWith("Co-op refused: your game is another "
+                                 "release: update in the launcher\n"));
+  CHECK(refused->text.contains(ContractBuild));
+
+  // The server's own release: refused alone on the server, with nobody here.
+  Net server;
+  server->SetServerBuild(
+      "bb-build 1;version=1.2.0;revision=92829ac4;protocol=9;");
+  QByteArray older = Build;
+  older.replace("version=1.2.0", "version=1.1.9");
+  result = server.Receive(Kaniel, HelloFrom("Kaniel", older), 0);
+  refused = DecodeWelcome(SentTo(result, Kaniel).value(0));
+  CHECK(refused && !refused->accepted);
+  CHECK(refused->text ==
+        "Co-op refused: your game is version 1.1.9, the server runs 1.2.0: "
+        "update in the launcher\n"
+        "another build: your game is version 1.1.9, the server runs 1.2.0: "
+        "update in the launcher");
+  CHECK(server->Members() == 0);
+  result = server.Receive(Kaniel, HelloFrom("Kaniel"), 10);
+  CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
+  // The server does not know a game's settings or files.
+  result = server.Receive(Ada, HelloFrom("Ada", harder), 20);
+  CHECK(!DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
+  Net alone;
+  alone->SetServerBuild(
+      "bb-build 1;version=1.2.0;revision=92829ac4;protocol=9;");
+  result = alone.Receive(Ada, HelloFrom("Ada", harder), 30);
+  CHECK(DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
+  // A server that does not check its own (a rig's, built apart): the games
+  // here only.
+  Net apart;
+  apart->SetServerBuild({});
+  result = apart.Receive(Kaniel, HelloFrom("Kaniel", older), 0);
+  CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
+  std::cout << "server link build checks: ok\n";
   return 0;
 }
 
@@ -475,7 +559,7 @@ int Liveness() {
   CHECK(hub->Members() == 1);
   hub.Tick(200000);
   CHECK(hub->Members() == 0 && hub->Build().isEmpty());
-  result = hub.Receive(Eileen, HelloFrom("Eileen", "13ddd14d"), 200001);
+  result = hub.Receive(Eileen, HelloFrom("Eileen", OtherBuild), 200001);
   CHECK(DecodeWelcome(SentTo(result, Eileen).value(0))->accepted);
 
   // The counters every 10 s.
@@ -847,13 +931,43 @@ int Handshake() {
   std::cout << "server link handshake: ok\n";
   return 0;
 }
+
+// Two PCs with one player id (a copied install, player report 2026-10-24): the
+// second one's hello no longer takes the link from the first while that one is
+// still heard.
+int TwoPCsOneId() {
+  Net hub;
+  const Endpoint home{0x1A0BABBA, 59881};
+  const Endpoint friends_pc{0x1AFE174E, 50084};
+  auto result = hub.Receive(home, HelloFrom("Eloise"), 0);
+  CHECK(DecodeWelcome(SentTo(result, home).value(0))->accepted);
+  result = hub.Receive(friends_pc, HelloFrom("Eloise"), 1000);
+  const auto refused = DecodeWelcome(SentTo(result, friends_pc).value(0));
+  CHECK(refused && !refused->accepted && refused->text.contains("another PC") &&
+        refused->text.contains("coop.json"));
+  CHECK(result.gone.isEmpty() && hub->Members() == 1 && hub->VirtualOf(home) &&
+        !hub->VirtualOf(friends_pc));
+  // Its link still works.
+  hub.Receive(home, Encode(Kind::Ping, Ping{1, 2500}), 2500);
+  result = hub.Receive(friends_pc, HelloFrom("Eloise"), 5000);
+  CHECK(!DecodeWelcome(SentTo(result, friends_pc).value(0))->accepted);
+  // The first PC gone quiet (its game closed, or its connection moved): the id
+  // links from there.
+  result = hub.Receive(friends_pc, HelloFrom("Eloise"), 5600);
+  CHECK(DecodeWelcome(SentTo(result, friends_pc).value(0))->accepted);
+  CHECK(result.gone.size() == 1 && result.gone[0] == home &&
+        hub->Members() == 1);
+  std::cout << "server link one id on two PCs: ok\n";
+  return 0;
+}
 } // namespace
 
 int main() {
-  if (Contracts() != 0 || HelloAndBuilds() != 0 || Relays() != 0 ||
-      Liveness() != 0 || TeamOnly() != 0 || VirtualMembers() != 0 ||
-      RoutesGamePackets() != 0 || SignsIn() != 0 ||
-      ALongSilenceEndsTheSignIn() != 0 || Crypto() != 0 || Handshake() != 0) {
+  if (Contracts() != 0 || HelloAndBuilds() != 0 || BuildChecks() != 0 ||
+      Relays() != 0 || Liveness() != 0 || TeamOnly() != 0 ||
+      VirtualMembers() != 0 || RoutesGamePackets() != 0 || SignsIn() != 0 ||
+      ALongSilenceEndsTheSignIn() != 0 || TwoPCsOneId() != 0 || Crypto() != 0 ||
+      Handshake() != 0) {
     return 1;
   }
   return 0;

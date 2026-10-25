@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "Upplösning, uppskalare, skärpa och modelldetaljer (bbport)",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "Scenupplösning: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "RCAS efter uppskalaren: 0 av, 10 starkast",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "Slutlig bild: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
  "Frame rate in the top right corner": "Bildfrekvens i övre högra hörnet",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "Efter omstart: 0-1 högsta, 2-4 spelets standard, 5-7 lägre, 8-10 lägsta",
  "Highest": "Högsta",
@@ -383,5 +382,17 @@
  "Team code": "Lagkod",
  "Invite by name": "Bjud in med namn",
  "New code": "Ny kod",
- "Join by code": "Gå med med kod"
+ "Join by code": "Gå med med kod",
+ "Auto (the output's)": "Auto (som utdata)",
+ "16:9 (bars)": "16:9 (svarta fält)",
+ "Aspect ratio": "Bildformat",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: en bredare skärm (21:9, 32:9) visar mer på sidorna, en högre (16:10, 4:3) mer ovanför och nedanför; HUD:en flyttas ut till skärmens kanter. 16:9: spelets bild med svarta fält. Gäller efter att spelet startats om.",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: en bredare skärm (21:9, 32:9) visar mer på sidorna, en högre (16:10, 4:3) mer ovanför och nedanför; HUD:en flyttas ut till skärmens kanter. 16:9: spelets bild med svarta fält. Ändras från nästa bildruta.",
+ "Final frame": "Färdig bild",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: en bredare eller högre skärm visar mer av världen. 16:9: spelets bild, svarta fält",
+ "Team pings": "Lagmarkeringar",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Markera en plats för ditt lag i 20 sekunder: tryck två gånger på pekplattan eller tryck på markeringstangenten där du siktar (på fienden du låst), {Square} på kartan. Laget ser den i världen, på kompassen och på kartan.",
+ "Ping key": "Markeringstangent",
+ "The keyboard key that pings where you aim.": "Tangenten som markerar där du siktar.",
+ "Ping": "Markera"
 }

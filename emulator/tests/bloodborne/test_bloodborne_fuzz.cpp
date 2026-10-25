@@ -140,8 +140,12 @@ TEST(BloodborneFuzz, WhatTheEmulatorWritesReadsBackTheSame) {
 
         std::map<s32, bool> world;
         for (int index = count(random); index > 0; --index) {
-            // Map flags (1MMMxxxx and up) carry to a guest's world.
-            world[12400000 + (any_s32(random) & 0xFFFFF)] = (any_u32(random) & 1) != 0;
+            // Map flags (1MMMxxxx and up) carry to a guest's world, but for a map's load-reset
+            // 4xxx and 5xxx ones (FlagResetsOnLoad).
+            const s32 flag = 12400000 + (any_s32(random) & 0xFFFFF);
+            if (CarriesToGuestWorld(flag)) {
+                world[flag] = (any_u32(random) & 1) != 0;
+            }
         }
         EXPECT_EQ(ParseWorldChanges(FormatWorldChanges(world)), world);
 

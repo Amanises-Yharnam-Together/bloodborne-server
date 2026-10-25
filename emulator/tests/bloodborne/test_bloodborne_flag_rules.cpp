@@ -241,6 +241,43 @@ TEST(BloodborneFlagRules, SessionFlagsAreNeitherKeptNorShared) {
 // as a lamp's do: Old Yharnam's gates (m28 12800480: object act flags 12800201..., done flags
 // 12800480 + slot), Cathedral Ward's doors (12400130: 12400112, 12400130...) and its gate
 // (12400760 sets 12400160).
+// Kaniel's test 2026-10-23: a guest alone in Cathedral Ward killed the hag and opened a door; the
+// host who came later found her alive and the door shut. A lone guest's game runs its map's story,
+// so the changes it makes to that map's flags (once the load settled) go to the whole team.
+TEST(BloodborneFlagRules, ALoneGuestsMapStepsGoToTheTeam) {
+    constexpr u32 CathedralWard = 0x18000000;
+    const FlagChanges changes{{12400800, 12400565, 12410602, 52411000, 2011, 12400112},
+                              {12400701, 1101}};
+    EXPECT_EQ(
+        LoneGuestFlagsToShare(changes, CathedralWard),
+        (std::vector<std::pair<s32, bool>>{{12400565, true}, {12400701, false}, {12400800, true}}));
+    // A door's flag goes to the party anyway (FlagsToShare); another map's flags, pickups, the
+    // game's own and the story's other flags stay its own.
+    EXPECT_TRUE(
+        LoneGuestFlagsToShare(FlagChanges{{12410602, 52411000, 2011}, {1101}}, CathedralWard)
+            .empty());
+}
+
+// Kaniel's test 2026-10-23 again: the hag died 9 s after the guest's load and stayed alive for the
+// host; with no wait the map's own load flags (the boss's per-visit 12414802...) went out too.
+TEST(BloodborneFlagRules, ALoneGuestSharesItsMapStepsButNotItsLoadsFlags) {
+    constexpr u32 CentralYharnam = 0x18010000;
+    LoneGuestShares shares;
+    // The load sets up the map: nothing goes, those flags are its load's.
+    EXPECT_TRUE(
+        shares.Take(FlagChanges{{12414802, 12414803}, {12410286}}, CentralYharnam, 3'000).empty());
+    EXPECT_TRUE(shares.Take(FlagChanges{{12414810}, {}}, CentralYharnam, 7'900).empty());
+    // After it, a step goes at once; the load's flags (late this time) still do not.
+    EXPECT_EQ(
+        shares.Take(FlagChanges{{12410999, 12414802, 12414810}, {12410286}}, CentralYharnam, 9'100),
+        (std::vector<std::pair<s32, bool>>{{12410999, true}}));
+    // Another visit's load: remembered from the first.
+    EXPECT_TRUE(shares.Take(FlagChanges{{12414803}, {}}, CentralYharnam, 20'000).empty());
+    // Another map's load flags are its own.
+    EXPECT_EQ(shares.Take(FlagChanges{{12400800}, {}}, 0x18000000, 9'100),
+              (std::vector<std::pair<s32, bool>>{{12400800, true}}));
+}
+
 TEST(BloodborneFlagRules, DoorsOneMemberOpenedOpenForTheParty) {
     for (const s32 flag : {12800201, 12800202, 12800209, 12800480, 12800481, 12800484, 12400112,
                            12400130, 12400190, 12400760, 12400160}) {
@@ -274,6 +311,28 @@ TEST(BloodborneFlagRules, AnAmbushAGuestWokeRisesForTheHost) {
     }
     EXPECT_FALSE(SharedWithParty(12204009));
     EXPECT_FALSE(SharedWithParty(12204011)); // the ambush armed: the host's Insight decides
+}
+
+// Kaniel's playtest 2026-10-22: the party wiped in Darkbeast Paarl's fight; the host's reload
+// put his fight flags (a map's 4xxx and 5xxx flags: 12304700 the fog entered, 12304702 and 12304704
+// his start) off, as every load does, but the team's world and the guests' kept changes still had
+// them on, so each guest's trip load set them again and his fight started over at the lamp (his
+// health bar up, rig 2026-10-23). A map's load-reset flags are no world flags: the team's world
+// leaves them out, a guest does not keep them, and a guest loading the host's map does not take
+// them; the fog's entry is still shared with the party while it holds.
+TEST(BloodborneFlagRules, AMapsLoadResetFlagsStayOutOfTheWorld) {
+    for (const s32 flag :
+         {12304700, 12304702, 12304704, 12304732, 12305021, 12305701, 12805465, 12805676}) {
+        EXPECT_FALSE(IsWorldFlag(flag)) << flag;
+        EXPECT_FALSE(CarriesToGuestWorld(flag)) << flag;
+        EXPECT_FALSE(TakesHostMapFlag(flag)) << flag;
+    }
+    EXPECT_TRUE(IsBossFogEntryFlag(12304700));
+    EXPECT_TRUE(SharedWithParty(12304700)) << "a guest entering the fog starts the boss";
+    for (const s32 flag : {12301700, 12301702, 12300100, 12303999, 12306000, 12204000}) {
+        EXPECT_TRUE(IsWorldFlag(flag)) << flag;
+        EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
+    }
 }
 
 TEST(BloodborneFlagRules, BossFoundFlagsArePerPlayer) {
@@ -524,21 +583,90 @@ TEST(BloodborneFlagRules, HeldItemFlagFollowsThePlayersItems) {
     EXPECT_EQ(HeldItemFlagFix(false, false, true), std::nullopt);
 }
 
+// An outside player on v1.1.4 (2026-10-23): a party guest never learned Eileen's and Alfred's
+// gestures, the host did. Each talk's "gesture get" step (talk scripts 01.09) skips its gesture
+// while its flag is on and sets it with the gesture; as world flags, the guest's copy was the
+// host's. Each of them is the player's own, kept for its own world.
+TEST(BloodborneFlagRules, GestureFlagsAreEachPlayersOwn) {
+    // Every talk's gesture step: (gesture, its flag).
+    const std::vector<std::pair<s32, s32>> talks{
+        {4, 6744},  {5, 6745},  {6, 6746},  {7, 6747},  {7, 70000007}, {9, 6749},
+        {10, 6750}, {11, 6751}, {13, 6753}, {14, 6754}, {15, 6755},    {16, 6756},
+        {17, 6757}, {18, 6758}, {19, 6759}, {20, 6760}, {22, 6770},
+    };
+    std::vector<std::pair<s32, s32>> table;
+    for (const GestureFlag& gesture : GestureFlags) {
+        table.emplace_back(gesture.gesture, gesture.flag);
+    }
+    EXPECT_EQ(table, talks);
+    for (const GestureFlag& gesture : GestureFlags) {
+        EXPECT_EQ(RuleFor(gesture.flag).owner, FlagOwner::PerPlayer) << gesture.flag;
+        EXPECT_TRUE(KeepsLocalFlag(true, gesture.flag)) << gesture.flag;
+        EXPECT_TRUE(CarriesToGuestWorld(gesture.flag)) << gesture.flag;
+        EXPECT_FALSE(TakesHostMapFlag(gesture.flag)) << gesture.flag;
+        EXPECT_FALSE(SharedWithParty(gesture.flag)) << gesture.flag;
+    }
+    // The flags around them stay the host's.
+    for (const s32 flag : {6743, 6748, 6752, 6761, 6769, 6771, 70000006, 70000008}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Host) << flag;
+    }
+}
+
+// A gesture's flag says this player learned it: on without the gesture (a save that took the
+// host's value from a team world), it goes off, so the NPC's talk gives the gesture again. A
+// gesture learned with its flag off stays so: two talks give Church Bow (Female), each by its own
+// flag, and the other one's step must still run.
+TEST(BloodborneFlagRules, GestureFlagGoesOffWithoutTheGesture) {
+    EXPECT_EQ(GestureFlagFix(true, true, false), std::optional<bool>{false});
+    EXPECT_EQ(GestureFlagFix(true, false, true), std::nullopt);
+    EXPECT_EQ(GestureFlagFix(true, true, true), std::nullopt);
+    EXPECT_EQ(GestureFlagFix(true, false, false), std::nullopt);
+    EXPECT_EQ(GestureFlagFix(false, true, false), std::nullopt);
+}
+
+// The gesture list's slots (PlayerGameData +0x5B8, 30 at +0x10), as talk command 66 (0x02042AD1)
+// reads them: bit 0 learned, the bits above it a row of the gesture table (0x014EC980: row 0 is
+// none, row k gesture k - 1, its goods 800 + k - 1).
+TEST(BloodborneFlagRules, GestureSlotsAsTheTalkReadsThem) {
+    EXPECT_EQ(DecodeGestureSlot(0x14), (GestureSlot{9, false})) << "Pray, row 10";
+    EXPECT_EQ(DecodeGestureSlot(0x15), (GestureSlot{9, true}));
+    EXPECT_EQ(DecodeGestureSlot(0x02), (GestureSlot{0, false}));
+    EXPECT_EQ(DecodeGestureSlot(0x2F), (GestureSlot{22, true})) << "League Oath, row 23";
+    EXPECT_EQ(DecodeGestureSlot(0x3D), (GestureSlot{29, true})) << "the last row, 30";
+    EXPECT_EQ(DecodeGestureSlot(0x00010015), (GestureSlot{9, true})) << "the high half aside";
+    EXPECT_EQ(DecodeGestureSlot(0x00), std::nullopt) << "row 0";
+    EXPECT_EQ(DecodeGestureSlot(0x01), std::nullopt);
+    EXPECT_EQ(DecodeGestureSlot(0x3E), std::nullopt) << "past the table";
+    EXPECT_EQ(DecodeGestureSlot(0x8000), std::nullopt) << "a negative row";
+    EXPECT_EQ(DecodeGestureSlot(0xFFFFFFFF), std::nullopt);
+    EXPECT_EQ(DecodeGestureSlot(0xFFFF0014), std::nullopt);
+    EXPECT_EQ(DecodeGestureSlot(0x0000FFFE), std::nullopt);
+}
+
 // Team altars (Kaniel 2026-10-17): a ritual at any member's altar puts its dungeon on every
-// member's altar. Ritual altar k keeps its dungeon in event flags 94k00000-94k05999 (8-bit values
-// packed into the flags, and switches such as "a chalice on it", 94k05001): those are the party's,
-// clears as well as sets, so the other altars take the same values.
+// member's altar. Ritual altar k keeps its dungeon in event flags 94k00000-94k05999 (a record
+// packed into the flags, and switches such as "a chalice on it", 94k05001): the world's, in the
+// team world as the host has them, and a ritual's record goes to the team whole, never flag by
+// flag (Kaniel's playtest 2026-10-24: the diffs merged the records). The current altar's view
+// (92900000-92905999) is each game's own: neither in the team world nor shared.
 TEST(BloodborneFlagRules, RitualAltarsAreTheTeams) {
     for (s32 altar = 0; altar < 10; ++altar) {
         const s32 base = 94000000 + altar * 100000;
         for (const s32 flag :
              {base, base + 31, base + 5000, base + 5001, base + 5500, base + 5999}) {
-            EXPECT_TRUE(SharedWithParty(flag)) << flag;
-            EXPECT_TRUE(RuleFor(flag).Has(FlagSharesClears)) << flag;
+            EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Host) << flag;
+            EXPECT_FALSE(SharedWithParty(flag)) << flag;
+            EXPECT_TRUE(IsWorldFlag(flag)) << flag;
+            EXPECT_TRUE(CarriesToGuestWorld(flag)) << flag;
         }
-        EXPECT_FALSE(SharedWithParty(base + 6000)) << base + 6000;
-        EXPECT_FALSE(SharedWithParty(base - 1)) << base - 1;
     }
+    for (const s32 flag : {92900000, 92900031, 92905001, 92905999}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Session) << flag;
+        EXPECT_FALSE(SharedWithParty(flag)) << flag;
+        EXPECT_FALSE(IsWorldFlag(flag)) << flag;
+        EXPECT_FALSE(CarriesToGuestWorld(flag)) << flag;
+    }
+    EXPECT_NE(RuleFor(92906000).owner, FlagOwner::Session);
 }
 
 // Kaniel 2026-10-18: a teammate holding no chalice is given the chalice of the dungeon that came

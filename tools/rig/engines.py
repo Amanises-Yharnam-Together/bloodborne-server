@@ -64,14 +64,23 @@ tweak_no_camera_rotation=1
 """
 
 
-def low_spec(current: str) -> str:
-    """`current` (a bbport.ini) with every LOW_SPEC_SETTINGS key at the rig's value."""
+def low_spec(current: str, overrides: dict[str, str] | None = None) -> str:
+    """`current` (a bbport.ini) with every LOW_SPEC_SETTINGS key at the rig's value, and a
+    scenario's own `overrides` over them (its "ini.<key>" settings: aspect-hud's 1680x720)."""
     forced = dict(line.split("=", 1) for line in LOW_SPEC_SETTINGS.splitlines()
                   if "=" in line and not line.startswith("#"))
+    if overrides:
+        profile = "".join(f"{key}={overrides[key]}\n" if key in overrides else f"{line}\n"
+                          for line in LOW_SPEC_SETTINGS.splitlines()
+                          for key in [line.split("=", 1)[0]])
+        profile += "".join(f"{key}={value}\n" for key, value in overrides.items() if key not in forced)
+        forced.update(overrides)
+    else:
+        profile = LOW_SPEC_SETTINGS
     kept = [line for line in current.splitlines()
             if line.split("=", 1)[0].strip() not in forced and line.strip() and
             line != LOW_SPEC_SETTINGS.splitlines()[0]]
-    return LOW_SPEC_SETTINGS + "".join(f"{line}\n" for line in kept)
+    return profile + "".join(f"{line}\n" for line in kept)
 
 
 class Emulator:
@@ -118,7 +127,7 @@ class Emulator:
     def environment(self, role: str) -> dict[str, str]:
         return {}  # its settings are in the role's user folder (rig-setup.ps1)
 
-    def prepare(self, role: str, backend_port: int = BACKEND_PORT):
+    def prepare(self, role: str, backend_port: int = BACKEND_PORT, ini: dict[str, str] | None = None):
         pass
 
     def missing(self) -> str | None:
@@ -197,13 +206,13 @@ class Port(Emulator):
                     "(tools/rig/run_scenario.py --engine port --setup)")
         return None
 
-    def prepare(self, role: str, backend_port: int = BACKEND_PORT):
+    def prepare(self, role: str, backend_port: int = BACKEND_PORT, ini: dict[str, str] | None = None):
         """The role's settings, and its game server: the rig's backend, or what stands in front
         of it at `backend_port` (run.py uses host_overrides.custom.json as it is)."""
         self.user_dir(role).mkdir(parents=True, exist_ok=True)
         settings = self.role_dir(role) / "bbport.ini"
         settings.write_text(low_spec(settings.read_text(encoding="utf-8")
-                                     if settings.exists() else ""),
+                                     if settings.exists() else "", ini),
                             encoding="utf-8", newline="\n")
         overrides = {GAME_SERVER: f"http://127.0.0.1:{backend_port}"}
         (self.user_dir(role) / "host_overrides.custom.json").write_text(

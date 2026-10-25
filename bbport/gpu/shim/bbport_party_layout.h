@@ -21,6 +21,38 @@ inline float Scale(float display_h) {
     return std::max(display_h / 1080.0f, 0.75f);
 }
 
+/// Kaniel 2026-10-24: the game's 16:9 screen inside a frame of another shape (21:9, 32:9, 16:10, 4:3):
+/// its middle, as high as a wider frame and as wide as a taller one; the frame itself at 16:9. The
+/// game's UI coordinates (its 1920x1080 stage) map onto it, the same scale both ways.
+inline Rect Stage(const Rect& frame) {
+    if (frame.w * 9.0f > frame.h * 16.0f + 0.5f) {
+        const float w = frame.h * 16.0f / 9.0f;
+        return {frame.x + (frame.w - w) * 0.5f, frame.y, w, frame.h};
+    }
+    if (frame.w * 9.0f + 0.5f < frame.h * 16.0f) {
+        const float h = frame.w * 9.0f / 16.0f;
+        return {frame.x, frame.y + (frame.h - h) * 0.5f, frame.w, h};
+    }
+    return frame;
+}
+
+/// How far the game's HUD groups are moved toward the frame's edges on another shape than 16:9, in
+/// the stage's pixels (BbGuestHooks::HudEdgeShift): the player's own bars and items (PlayerHUD) go
+/// left by dx and up by dy.
+struct Shift {
+    float dx = 0.0f, dy = 0.0f;
+};
+
+/// A point of the player's HUD on screen: (x, y) on the 1920x1080 stage, moved with PlayerHUD.
+inline float HudX(const Rect& frame, float x, const Shift& shift) {
+    const Rect stage = Stage(frame);
+    return stage.x + (x - shift.dx) * stage.h / 1080.0f;
+}
+inline float HudY(const Rect& frame, float y, const Shift& shift) {
+    const Rect stage = Stage(frame);
+    return stage.y + (y - shift.dy) * stage.h / 1080.0f;
+}
+
 /// The game's own HUD, as fractions of its frame's height (measured on the rig's 1080p pictures):
 /// the top-left quick items, their counts and the small round marker under them end about here...
 inline constexpr float GameQuickItemsBottom = 210.0f / 1080.0f;
@@ -29,12 +61,12 @@ inline constexpr float GameQuickItemsBottom = 210.0f / 1080.0f;
 inline constexpr float GameNoticeTop = 700.0f / 1080.0f;
 inline constexpr float GameNoticeBottom = 780.0f / 1080.0f;
 
-/// The party list: its top left corner.
-inline float ListLeft(const Rect& game, float scale) {
-    return game.x + 48.0f * scale;
+/// The party list: its top left corner, beside the player's bars (with them at the frame's edges).
+inline float ListLeft(const Rect& game, float scale, const Shift& shift = {}) {
+    return HudX(game, 0.0f, shift) + 48.0f * scale;
 }
-inline float ListTop(const Rect& game) {
-    return std::round(game.y + game.h * 0.225f);
+inline float ListTop(const Rect& game, const Shift& shift = {}) {
+    return std::round(HudY(game, 0.0f, shift) + Stage(game).h * 0.225f);
 }
 
 /// The downed player's own screen, from its revive ring's centre down to the give-up bar: the
@@ -48,7 +80,8 @@ inline constexpr float DownBarHeight = 4.0f;
 
 /// The ring's centre, so that the give-up bar ends well above the game's notices.
 inline float DownRingY(const Rect& game, float scale) {
-    return std::round(game.y + game.h * 0.64f - (DownBarBelow + DownBarHeight) * scale);
+    const Rect stage = Stage(game);
+    return std::round(stage.y + stage.h * 0.64f - (DownBarBelow + DownBarHeight) * scale);
 }
 
 /// The party HUD's prompt (CoopPrompt, hud_patch.py PROMPT_AT): where the game's own prompt has its
@@ -61,7 +94,8 @@ inline constexpr float PromptGlyphStageSize = 28.0f;
 
 /// The prompt to strike a downed member: low in the middle, as the game's own prompts.
 inline float RevivePromptY(const Rect& game) {
-    return std::round(game.y + game.h * 0.74f);
+    const Rect stage = Stage(game);
+    return std::round(stage.y + stage.h * 0.74f);
 }
 
 } // namespace BbPartyLayout
