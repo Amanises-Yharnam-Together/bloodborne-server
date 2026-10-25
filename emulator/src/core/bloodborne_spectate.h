@@ -150,9 +150,13 @@ bool FreeCameraHotkey(u32 before, u32 now);
 // slot with a boss's handle (-1 none; 0 never one either).
 bool BossBarsUp(std::span<const u8> gauges);
 // A boss fight (its bars up in this game) with a teammate standing in it: another member up on
-// `map` within BossLeaveMetres of this player (`me`; nothing while it is not known).
+// `map` within BossLeaveMetres of the boss (`boss`, its bar's character), or of this player (`me`)
+// while the boss's place is not known; nothing while neither is.
 bool BossFightCatchesDeath(bool bars_up, std::span<const MemberVitals> board, std::string_view self,
-                           u32 map, const std::optional<LampPosition>& me);
+                           u32 map, const std::optional<LampPosition>& me,
+                           const std::optional<LampPosition>& boss = std::nullopt);
+// The first boss the bars show (its handle), if any.
+std::optional<u32> BossBarHandle(std::span<const u8> gauges);
 // What the IsNoDead hook makes of a check that would kill the player: nothing (the game's own
 // answer), a down's catch (party death's rule, KeepsPlayerAlive: the team's death mode follows),
 // or a boss fight's: its lethal checks and the game's kills (Instant) while `boss_fight`

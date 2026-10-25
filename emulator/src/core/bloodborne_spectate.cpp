@@ -253,15 +253,28 @@ bool BossBarsUp(std::span<const u8> gauges) {
 }
 
 bool BossFightCatchesDeath(bool bars_up, std::span<const MemberVitals> board, std::string_view self,
-                           u32 map, const std::optional<LampPosition>& me) {
-    if (!bars_up || !me || map == 0) {
+                           u32 map, const std::optional<LampPosition>& me,
+                           const std::optional<LampPosition>& boss) {
+    const std::optional<LampPosition> centre = boss ? boss : me;
+    if (!bars_up || !centre || map == 0) {
         return false;
     }
     return std::ranges::any_of(board, [&](const MemberVitals& member) {
         return member.member != self && member.map == map && member.vital == Vital::Up &&
-               std::hypot(member.at[0] - (*me)[0], member.at[1] - (*me)[1],
-                          member.at[2] - (*me)[2]) <= BossLeaveMetres;
+               std::hypot(member.at[0] - (*centre)[0], member.at[1] - (*centre)[1],
+                          member.at[2] - (*centre)[2]) <= BossLeaveMetres;
     });
+}
+
+std::optional<u32> BossBarHandle(std::span<const u8> gauges) {
+    for (size_t slot = 0; (slot + 1) * BossGaugeSize <= gauges.size(); ++slot) {
+        s32 handle = 0;
+        std::memcpy(&handle, gauges.data() + slot * BossGaugeSize + 4, sizeof(handle));
+        if (handle != -1 && handle != 0) {
+            return static_cast<u32>(handle);
+        }
+    }
+    return std::nullopt;
 }
 
 DeathCatch CatchOf(NoDeadCheck check, bool armed, bool down, bool answer, bool boss_fight,

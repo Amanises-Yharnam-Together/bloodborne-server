@@ -2021,9 +2021,24 @@ void TickPartyDeath() {
             LOG_INFO(Debug, "Bloodborne party death: the boss bars are {}",
                      bars_up ? "up" : "down");
         }
+        // Where the bar's boss stands: the fighters are those near it (a big arena's are apart).
+        std::optional<LampPosition> boss;
+        if (const auto handle =
+                bars_up
+                    ? BossBarHandle({reinterpret_cast<const u8*>(holder + BossGaugesOffset), Size})
+                    : std::nullopt) {
+            const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+            if (world >= 0x10000) {
+                ForEachWorldCharacter(world, [&](u64 character) {
+                    if (!boss && ReadValue<u32>(character, 0x08) == *handle) {
+                        boss = CharacterPosition(character);
+                    }
+                });
+            }
+        }
         const bool boss_fight =
             tick.in_session && BossFightCatchesDeath(bars_up, tick.board, tick.view.member,
-                                                     tick.map, LocalPlayerPosition());
+                                                     tick.map, LocalPlayerPosition(), boss);
         if (party_death_boss_fight.exchange(boss_fight) != boss_fight) {
             LOG_INFO(Debug, "Bloodborne party death: boss fight with a teammate in it {} (bars {})",
                      boss_fight ? "on: a death the down does not catch spectates" : "off",

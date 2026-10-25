@@ -4913,7 +4913,8 @@ SCENARIOS["free-camera"] = {
 # own lamp; the host's death is the party's wipe for both. (Gascoigne's fight raised no boss bar on
 # the rig: an approach does not cross his arena's region; Paarl's does, paarl-after-wipe.)
 BOSS_HOST_IN = [*PAARL_START, "wait-session 2 300", "wait 5", *INTO_PAARL_MAP, "wait 5",
-                f"teleport {PAARL_SPOT}", "wait 8", f"hurt {PAARL} 9000", "wait 3", "sync bd-fight"]
+                f"teleport {PAARL_SPOT}", "wait 8", f"hurt {PAARL} 9000", "wait 3", "sync bd-fight",
+                f"approach {PAARL} 6 3.14", "wait 2"]  # the host fights beside him
 BOSS_GUEST_IN = [*PAARL_START, "wait-session 2 300", "wait 5", *INTO_PAARL_MAP, "wait 5",
                  "sync bd-fight", f"approach {PAARL} 5 0", "wait 6", "godmode off", "kill self",
                  "wait-vital spectate 20", "expect-hp self > 0"]

@@ -293,3 +293,19 @@ TEST(BloodborneBossFightDeath, ABossFightCatchesTheGamesKills) {
     EXPECT_EQ(CatchOf(C::Lethal, true, true, true, true, true), DeathCatch::None)
         << "the game said no death itself";
 }
+
+// Rig 2026-10-25 (Paarl's arena): two fighters can stand further apart than BossLeaveMetres, each
+// near the boss. A teammate is in the fight when it stands within BossLeaveMetres of the boss
+// (where its bar's character is), and of this player only while the boss's place is not known.
+TEST(BloodborneBossFightDeath, InTheFightIsNearTheBoss) {
+    const LampPosition me{0.0f, 0.0f, 0.0f};
+    const LampPosition boss{40.0f, 0.0f, 0.0f};
+    MemberVitals teammate = Member("ada", Vital::Up);
+    teammate.at = {75.0f, 0.0f, 0.0f}; // 75 m from me, 35 m from the boss
+    const std::vector board{Member("me", Vital::Up), teammate};
+    EXPECT_TRUE(BossFightCatchesDeath(true, board, "me", Map, me, boss));
+    EXPECT_FALSE(BossFightCatchesDeath(true, board, "me", Map, me, std::nullopt));
+    teammate.at = {100.0f, 0.0f, 0.0f};
+    EXPECT_FALSE(BossFightCatchesDeath(true, std::vector{Member("me", Vital::Up), teammate}, "me",
+                                       Map, me, boss));
+}
