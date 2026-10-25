@@ -775,22 +775,28 @@ bool AutoplayGlide(const AutoplayStep& step) {
 
 // pickup [<meters>] [<timeout>]: onto the nearest usable map item within reach (30 m), then
 // X for 0.3 s of every 1.5 s until the item leaves the usable list: a real pickup through the
-// item button (the host could not pick up items in the Forbidden Woods, 2026-10-09).
+// item button (the host could not pick up items in the Forbidden Woods, 2026-10-09). Only an
+// item on the player's own floor: one 21 m below the first lamp lies in another map's block,
+// whose ground is not loaded, and the player teleported there fell into it (rig 2026-10-25).
+constexpr float PickupFloorMetres = 8.0f;
 bool AutoplayPickup(const AutoplayStep& step) {
     const auto position = MapItemSearchPlayerPosition();
     const auto items =
         position ? UsableMapItemsNear(*position) : std::vector<std::pair<float, MapItemSpot>>{};
     if (!step.begun) {
-        if (items.empty() || items.front().first > step.Number(0, 30)) {
+        const auto on_floor = std::ranges::find_if(items, [&](const auto& item) {
+            return std::abs(item.second.at[1] - (*position)[1]) <= PickupFloorMetres;
+        });
+        if (on_floor == items.end() || on_floor->first > step.Number(0, 30)) {
             step.failure = "no usable map item near";
             return false;
         }
-        const MapItemSpot& spot = items.front().second;
+        const MapItemSpot& spot = on_floor->second;
         autoplay_run.pickup_handle = spot.handle;
         autoplay_run.pickup_at = {spot.at[0], spot.at[1] + 0.2f, spot.at[2]};
         TeleportLocalPlayer(autoplay_run.pickup_at);
         LOG_INFO(Debug, "Bloodborne autoplay: picking up map item {:#x} {:.1f} m away", spot.handle,
-                 items.front().first);
+                 on_floor->first);
     }
     const bool there = std::ranges::any_of(
         items, [](const auto& item) { return item.second.handle == autoplay_run.pickup_handle; });

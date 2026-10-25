@@ -1085,8 +1085,9 @@ SUITES = {
                              "after a friend left)",
                     {"guest": ["sync leave-ready", RESTART, "wait 1"],
                      # The item by the lamp went in an earlier chapter (rig 2026-10-13: "no
-                     # usable map item near" within 20 m): the nearest within 45 m.
-                     "host": ["sync leave-ready", "wait-solo 120", "wait 10", "pickup 45",
+                     # usable map item near" within 20 m), and the next ones within 45 m lie
+                     # on other floors (rig 2026-10-25): the nearest on the lamp's floor, 58 m.
+                     "host": ["sync leave-ready", "wait-solo 120", "wait 10", "pickup 70",
                               "wait 3", "snapshot"]},
                     # Since phase 6 the host notes the member gone and reopens its session.
                     expect={"host": [r"(?:lost a member; staying where it is|member left, session "
