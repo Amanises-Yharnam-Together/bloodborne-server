@@ -4525,3 +4525,17 @@ SCENARIOS["aspect-hud-16x9"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 300,
 }
+
+# Kaniel 2026-10-25: frame generation to look at (#395: the generated frames wait for the GPU,
+# the status says what really runs). One visible host with frame generation on (FSR 3, x2),
+# the guest headless beside it; run with --play, not --headless.
+SCENARIOS["frame-gen-look"] = {
+    "about": "a visible host with frame generation on (FSR 3, x2) at 1280x720 and a headless guest "
+             "joined: to look at the generated frames and the FPS status (run with --play)",
+    "settings": {"ini.frame_generation": "1", "ini.frame_gen_provider": "fsr3",
+                 "ini.frame_gen_multiplier": "2", "rig.headless_roles": "guest"},
+    "roles": {"host": [START, "wait-session 2 300", "wait 10", "expect-session 2"],
+              "guest": [START, "wait-session 2 300", "wait 10", "expect-session 2"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
+}

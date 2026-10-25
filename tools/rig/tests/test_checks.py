@@ -164,6 +164,26 @@ class GamesTest(unittest.TestCase):
         self.assertEqual(results, {"a": True, "b": True, "c": True})
         self.assertEqual(set(seen), {1, 3})
 
+    def test_a_lane_blocked_mid_batch_takes_no_more_runs(self):
+        # Rig 2026-10-25: a game left half-closed on lane 5 after a run kept its ports; every
+        # later run the batch gave lane 5 timed out in the lobby. A lane blocked after a run
+        # stops; the other lanes take the rest.
+        seen = []
+        blocked = set()
+
+        def runner(lane: int, name: str) -> bool:
+            seen.append((lane, name))
+            if lane == 3:
+                blocked.add(3)  # its first run left a stuck game behind
+            time.sleep(0.05)
+            return True
+
+        results = run_scenario.run_in_lanes(["a", "b", "c", "d"], [1, 3], runner, stagger=0,
+                                            sleep=lambda _: None,
+                                            usable=lambda lane: lane not in blocked)
+        self.assertEqual(results, {"a": True, "b": True, "c": True, "d": True})
+        self.assertEqual(len([lane for lane, _ in seen if lane == 3]), 1)
+
 
 def census(handle: str, y: float) -> str:
     return (f"Bloodborne autoplay census: {handle} hp 484/484 dead 0x0 hidden 0 disabled 0 at "
