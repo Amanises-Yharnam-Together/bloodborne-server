@@ -1036,6 +1036,21 @@ struct PartyDeathRun {
 extern PartyDeathRun party_death_run;
 // Co-op work on the game's threads, logged next to the port's Perf lines (see CoopTimeMeter).
 extern CoopTimeMeter coop_time;
+// The co-op tick's parts, the slowest few logged after the Co-op time line.
+extern CoopTimeMeter coop_tick_parts;
+// One part of the co-op tick, into coop_tick_parts (AtiniirSpectre 2026-10-23: the tick grew
+// after a death and the log could not say which part), until the end of the scope.
+class TickPartTimer {
+public:
+    explicit TickPartTimer(std::string_view name) : name{name} {}
+    TickPartTimer(const TickPartTimer&) = delete;
+    TickPartTimer& operator=(const TickPartTimer&) = delete;
+    ~TickPartTimer();
+
+private:
+    std::string_view name;
+    std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+};
 void ReportCoopTime(s64 now_ms);
 void InstallPartyDeath(u64 base, u64 image_size);
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers);

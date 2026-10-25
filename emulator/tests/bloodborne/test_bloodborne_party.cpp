@@ -61,6 +61,21 @@ TEST(BloodborneCoopTime, ReportsEachSectionOncePerPeriod) {
     EXPECT_EQ(meter.Report(30'001), std::nullopt) << "counts start over";
 }
 
+// AtiniirSpectre 2026-10-23 (v1.2.0): after a death the co-op tick's longest call went from 21 ms
+// to 111 ms. The tick's parts are measured too, and only the slowest few are named, by their
+// total time, so a player's log says which part grew.
+TEST(BloodborneCoopTime, NamesOnlyTheSlowestSectionsWhenAsked) {
+    CoopTimeMeter meter{30'000};
+    meter.Add("place", 100'000, 0);
+    meter.Add("map screen", 9'000'000, 0);
+    meter.Add("trip", 2'000'000, 0);
+    meter.Add("trip", 2'000'000, 0);
+    EXPECT_EQ(meter.Report(30'000, 2),
+              std::optional<std::string>{
+                  "map screen avg 9.00 ms max 9.00 ms (1 calls), trip avg 2.00 ms max 2.00 ms "
+                  "(2 calls) over 30 s"});
+}
+
 using namespace Core::Bloodborne;
 
 // Kaniel 2026-10-15: the host and a guest went to the Hunter's Dream and the guest left behind

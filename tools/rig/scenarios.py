@@ -4241,6 +4241,26 @@ GUEST_WIPE = ["sync pw-hurt", "godmode off", *TO_PAARL_HITS, "wait-vital down 90
 GUEST_BACK = ["wait-vital dead 90", "wait-vital up 150", "godmode",
               f"ensure-map {PAARL_LAMP_MAP} {PAARL_LAMP} 60", "wait-members 3 120",
               "sync pw-back", *PAARL_BACK[1:], "sync pw-checked", "expect-session 3"]
+# A host alone dies by a fall, from wipe3's open-sky spot by the first Central Yharnam lamp: a rise
+# from the lamp itself lands on a ledge 11 m above the ground there, and after a respawn no rise
+# from the lamp killed (rig 2026-10-24).
+SOLO_DEATH = [f"teleport {WIPE3_SPOT['host']}", "wait 2", "hurt self 1", "rise 40",
+              "wait-vital dead 30"]
+SCENARIOS["solo-death-tick"] = {
+    "about": "AtiniirSpectre 2026-10-23 (v1.2.0): a host alone stuttered after a death, its "
+             "co-op tick's longest call 21 ms before and 111 ms after. The host plays a minute "
+             "and dies three times, 100 s apart: the co-op tick's slowest parts and the busiest "
+             "threads (beside each Perf line) before and after each death say what grew",
+    "settings": PARTY_DEATH,
+    "roles": {
+        "host": [START, "wait 70", *SOLO_DEATH, "wait 100", *SOLO_DEATH, "wait 100", *SOLO_DEATH,
+                 "wait 100", "snapshot"],
+    },
+    "expect": {"host": [r"Co-op tick slowest parts: "]},
+    "console_expect": {"host": [r"Runtime: CPU over the window: .*busiest: GameMain"]},
+    "timeout": 720,
+}
+
 SCENARIOS["paarl-after-wipe"] = {
     "about": "Kaniel 2026-10-22: the party of three hurts Paarl and wipes on his map, wakes at the "
              "lamp on the next map and walks back across the border: Paarl stands, his defeat "
