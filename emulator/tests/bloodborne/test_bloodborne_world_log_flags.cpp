@@ -88,28 +88,16 @@ TEST(WorldLogFlags, FramesReadBackAndFitTheLink) {
     }
 }
 
-// A ritual altar's flags go to the team as they change, clears too: its dungeon is a byte pattern
-// in them, and a teammate's altar takes the whole pattern (see RitualAltarsAreTheTeams).
-TEST(WorldLogFlags, AnAltarsClearsAreSharedToo) {
+// Kaniel's playtest 2026-10-24: a ritual altar's flags (94k) and the current altar's view (929)
+// went to the team flag by flag, as diffs, and merged the records into ones that named no
+// dungeon. Neither goes on the log now: a record goes whole (bloodborne_altar.h).
+TEST(WorldLogFlags, NoAltarRecordGoesFlagByFlag) {
     FlagChanges changes;
-    changes.set = {94105001, 94100003};
-    changes.cleared = {94100000, 12417811};
-    EXPECT_EQ(FlagsToShare(changes), (std::vector<std::pair<s32, bool>>{
-                                         {94105001, true}, {94100003, true}, {94100000, false}}));
-}
-
-// A ritual or a join writes "the current altar" (929xxxxx, a view of the altar the player talks
-// to): its changes go to the team as that altar's own flags (94k), which the other members' games
-// keep; without a known altar they go nowhere.
-TEST(WorldLogFlags, TheCurrentAltarsChangesAreThatAltars) {
-    const FlagChanges changes{{92900003, 92905001, 12417830}, {92900000}};
-    const FlagChanges altar_one = AsAltarFlags(changes, 1);
-    EXPECT_EQ(altar_one.set, (std::vector<s32>{94100003, 94105001, 12417830}));
-    EXPECT_EQ(altar_one.cleared, (std::vector<s32>{94100000}));
-    const FlagChanges unknown = AsAltarFlags(changes, std::nullopt);
-    EXPECT_EQ(unknown.set, (std::vector<s32>{12417830}));
-    EXPECT_TRUE(unknown.cleared.empty());
-    EXPECT_FALSE(SharedWithParty(92900003)) << "the view itself is each game's own";
+    changes.set = {94105001, 94100003, 92900003, 92905001, 12417830};
+    changes.cleared = {94100000, 92900000, 12417811};
+    EXPECT_EQ(FlagsToShare(changes), (std::vector<std::pair<s32, bool>>{{12417830, true}}));
+    EXPECT_FALSE(SharedWithParty(92900003)) << "the view is each game's own";
+    EXPECT_FALSE(SharedWithParty(94100003));
 }
 
 // The log carries what the flag boards carried: the flag table's Shared flags that turned on (a

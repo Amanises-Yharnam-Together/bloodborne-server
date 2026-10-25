@@ -423,15 +423,22 @@ inline constexpr std::array LastRows{
               .why = "a lamp's \"travel to the Hunter's Dream\" (7MMM01LL, map codes 211-399; "
                      "the Dream's 721001xx is the Doll's, 70000140 Gilbert's talk, 799001xx "
                      "the NPCs'): a request, not progress"},
+    Range(92900000, 92905999, FlagOwner::Session, 0,
+          "the current altar (bloodborne_altar.h): the game's view of the altar the player talks "
+          "to and of the dungeon a chalice map loads, each game's own; its changes on a load into "
+          "a dungeon and from the team world's sync went to the team mapped onto an altar and "
+          "merged the records (Kaniel's playtest 2026-10-24: altar 6 named no dungeon, crashes)"),
     FlagRange{.first = 94000000,
               .last = 94905999,
               .period = 100000,
               .low = 0,
               .high = 5999,
-              .rule = {FlagOwner::Shared, FlagCarriesHome | FlagSharesClears},
+              .rule = {FlagOwner::Host, FlagCarriesHome},
               .why = "a ritual altar's dungeon (altar k: 94k00000-94k05999, its record packed "
                      "into the flags, 94k05001 a chalice on it): team altars, a ritual or a join "
-                     "at one member's altar puts the dungeon on every member's"},
+                     "at one member's altar puts the dungeon on every member's, the record whole "
+                     "(an AltarRecord message, never flag by flag), and the team world carries "
+                     "the host's"},
 };
 
 constexpr std::array<FlagRange, BossFogEntryFlags.size() * 2> BossFogRows() {

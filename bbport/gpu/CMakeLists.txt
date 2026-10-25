@@ -236,6 +236,7 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_party_rules.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_party_death.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_portrait.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_altar.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_compass.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map_screen.cpp

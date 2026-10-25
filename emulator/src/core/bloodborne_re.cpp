@@ -455,14 +455,8 @@ std::mutex flag_board_mutex;
 std::vector<std::pair<s32, bool>> flags_to_post;
 
 void PostWorldChanges(const FlagChanges& changes) {
-    const bool altar_changed = std::ranges::any_of(changes.set, IsCurrentAltarFlag) ||
-                               std::ranges::any_of(changes.cleared, IsCurrentAltarFlag);
-    const std::optional<s32> altar = altar_changed ? CurrentRitualAltar() : std::nullopt;
-    if (altar_changed) {
-        LOG_INFO(Debug, "Bloodborne party: the current altar's flags changed (altar {})",
-                 altar ? fmt::to_string(*altar) : std::string{"unknown"});
-    }
-    auto shared = FlagsToShare(altar_changed ? AsAltarFlags(changes, altar) : changes);
+    // A ritual altar's record goes whole on its own (ShareRitualAltarRecord), never here.
+    auto shared = FlagsToShare(changes);
     // A guest running its map without the host (two guests there both do, each in its own copy):
     // its game ran the map's story, so the team takes the map's steps it made, all but its loads'
     // own (LoneGuestShares).

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "coop.pb.h"
+#include "core/bloodborne_altar.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
@@ -314,10 +315,18 @@ std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost();
 bool EventFlagOn(s32 flag);
 // `bits` bits of event flags from `flag` (the game's own read), or nothing without the manager.
 std::optional<u32> EventFlagBits(s32 flag, u32 bits);
-// The ritual altar the player talks to (see AsAltarFlags), if its record is there.
+// The ritual altar the player talks to (its record the current altar's view), if it is there.
 std::optional<s32> CurrentRitualAltar();
 // Ritual altar `altar` (0-6) loads its dungeon again from its flags.
 void ReloadRitualAltar(s32 altar);
+// Team altars (bloodborne_altar.h): the current altar's view changed (`changed` flags); a ritual's
+// or a join's record goes to the team whole (SharesAltarRecord), anything else stays here.
+void ShareRitualAltarRecord(size_t changed);
+// As a save or a map loads: every altar record (and the view) that names no dungeon is repaired
+// (RepairAltarRecord), before the map's events and items read them.
+void RepairRitualAltars();
+// Every second: RepairRitualAltars as soon as any record's first words name no dungeon.
+void KeepRitualAltarsWhole();
 void LogBloodstainStateChanges();
 // Kaniel 2026-10-20 (bloodstains on the compass and map): this player's bloodstain as the game
 // keeps it (BloodstainOf), nothing in a load.
@@ -483,6 +492,15 @@ struct EnemyHitNews {
 };
 void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max);
 std::vector<EnemyHitNews> TakeEnemyHits();
+// Team altars: a ritual's record to the others through the server (relayed as it is), and the
+// others' as they came (taken once).
+struct AltarRecordNews {
+    s32 altar = 0;
+    AltarRecord record{};
+    std::string member;
+};
+void SendAltarRecord(s32 altar, const AltarRecord& record);
+std::vector<AltarRecordNews> TakeAltarRecords();
 // Phase 8: the owner's activation pass wakes the groups around the other players too (its entry
 // adds their groups to its block's record, its end puts the record back; see WithOthersGroups).
 void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers);

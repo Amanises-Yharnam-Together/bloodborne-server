@@ -37,6 +37,8 @@ member's, on the vitals board). shot <name>: the port's picture of its next fram
 all (the party HUD), kept in the run's folder as <role>-<name>.png; the emulator skips it.
 """
 
+import os
+
 HUNTERS_DREAM = 2102962
 
 # The Doll (0x10000001, team 26: a friendly NPC), 6.8 m from the Dream's lamp. From her east side,
@@ -1119,7 +1121,7 @@ SCENARIOS = {
         "roles": {"host": [START, "wait 150", "snapshot"]},
         "settings": {"SHADPS4_BLOODBORNE_SAVE_BACKUPS": "1,2"},
         "expect": {"host": [r"Bloodborne save backups: every 1 min", r"Bloodborne save backup: "]},
-        "timeout": 420,
+        "timeout": 300,
     },
     "boss-putdown": {
         "about": "the reverse of boss-refight (Kaniel 2026-10-11, Prey Slaughtered after a "
@@ -3338,6 +3340,38 @@ SCENARIOS["chalice-ritual"] = {
     "timeout": 300,
 }
 
+
+def ALTAR_RECORDS(when: str) -> list[str]:
+    """Every ritual altar's record and the current altar's view, logged (altar-record; only a log
+    line with BB_RIG_NO_ALTAR_RECORD=1, for a build from before the verb)."""
+    if os.environ.get("BB_RIG_NO_ALTAR_RECORD") == "1":
+        return [f"log altar records {when}"]
+    return [f"log altar records {when}", *[f"altar-record {altar}" for altar in range(7)],
+            "altar-record view"]
+
+
+# Kaniel's playtest 2026-10-24: a team altar's record merged with a stale one named no dungeon and
+# the game crashed loading it. The records of a clean Pthumeru story chalice ritual: before it,
+# after it, in its Layer One and back in the Dream (what a standard record holds).
+SCENARIOS["altar-record-capture"] = {
+    "about": "a Pthumeru Chalice ritual alone, every altar record logged before, after, in the "
+             "dungeon and back in the Dream",
+    "roles": {"host": [START, "godmode", f"trade-stock {PTHUMERU_CHALICE} 1",
+                       f"trade-stock {RITUAL_BLOOD_1} 10", "trade-stock echoes 20000",
+                       f"travel {HUNTERS_DREAM}", "wait 5", *ALTAR_RECORDS("before"),
+                       f"teleport {ALTAR_SPOT}", "wait 2", "press cross 200", "wait 7",
+                       *[step for _ in range(4) for step in ("press cross 200", "wait 7")],
+                       "press left 200", "wait 1", "press cross 200", "wait 20",
+                       "log host ritual done", *ALTAR_RECORDS("after the ritual"),
+                       *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
+                       f"wait-map {CHALICE_DUNGEON} 180", "wait 10", "log host in the dungeon",
+                       *ALTAR_RECORDS("in the dungeon"), f"travel {HUNTERS_DREAM}", "wait 15",
+                       "expect-map 0x15000000", *ALTAR_RECORDS("back in the Dream")]},
+    "expect": {"host": [r"host ritual done", r"host in the dungeon"]},
+    "settings": {"BB_FILE_TRACE": "1"},
+    "timeout": 300,
+}
+
 # Each member of a team of two conducts the same chalice's ritual at its own altar; the server
 # gives both the one dungeon it keeps for that chalice, and each enters Layer One alone: they
 # meet in it.
@@ -3427,6 +3461,102 @@ SCENARIOS["chalice-altar-no-chalice"] = {
     "allow": CRASH_CLEANUP,
     "timeout": 1200,
 }
+
+# Kaniel 2026-10-24: a save left inside a chalice dungeon crashed as it loaded again (guests for
+# sure). The host's ritual, the guest enters from its own altar, they meet; then one game starts
+# again (its save in the dungeon), loads into the dungeon beside the other, and every altar record
+# stays the ritual's.
+def CHALICE_INSIDE_FIRST(role: str) -> list[str]:
+    head = (["team-create", "team-invite rig_guest", "team-wait 2", "team-start"] if role == "host"
+            else ["team-accept", "team-ready"])
+    enter = (CHALICE_ENTER("host") if role == "host"
+             else ["wait 30", "wait 30", "wait 30", "wait 30", "wait 30",
+                   *CHALICE_FROM_OWN_ALTAR("guest")])
+    return [*head, START, "godmode", "wait-session 2 300", "wait 10", *enter,
+            "wait-members 2 400", "wait 20", "expect-session 2", *ALTAR_RECORDS(f"{role} inside")]
+
+
+def CHALICE_INSIDE_AGAIN(role: str) -> list[str]:
+    head = ["title-wait 20", "team-start"] if role == "host" else ["team-ready"]
+    return [*head, "godmode", "wait-session 2 420", "wait-members 2 180", "wait 20",
+            f"expect-map {CHALICE_DUNGEON}", f"log {role} loaded inside again",
+            *ALTAR_RECORDS(f"{role} loaded inside"), "expect-session 2"]
+
+
+def CHALICE_INSIDE_STAY(role: str) -> list[str]:
+    return [*CHALICE_INSIDE_FIRST(role), "wait-solo 240", "wait-session 2 420",
+            "wait-members 2 180", "wait 20", f"expect-map {CHALICE_DUNGEON}",
+            *ALTAR_RECORDS(f"{role} after the other's load"), "expect-session 2"]
+
+
+# Kaniel 2026-10-24: the team's altar records stay the ritual's through every trip. The host's
+# ritual; both enter; then twice both go back to the Dream and enter again from their own altars.
+# Every game logs every altar record at each step (the rig's check compares them: all the same).
+def CHALICE_REENTER(role: str, times: int) -> list[str]:
+    steps = []
+    for time in range(times):
+        steps += [f"travel {HUNTERS_DREAM}", "wait 20", "expect-map 0x15000000",
+                  *ALTAR_RECORDS(f"{role} back in the Dream {time + 1}"),
+                  *CHALICE_FROM_OWN_ALTAR(role, hold=False), "wait-members 2 300", "wait 15",
+                  *ALTAR_RECORDS(f"{role} inside again {time + 1}")]
+    return steps
+
+
+# The playtest's merged record (1D 0F FF FF) set on an altar (or the view) by flags.
+def MERGE_RECORD(base: int) -> list[str]:
+    return [f"set-flag {base + flag} 1" for flag in (13, 15, *range(16, 32))]
+
+
+# Kaniel's playtest 2026-10-24: the merged record on the altar in the Dream right after the ritual
+# (on main it crashed at eboot+0x155ac3f, m29_15_i5_00 not found, as the playtest did): it is
+# repaired within a second, and the Layer One it then opens loads the ritual's dungeon.
+SCENARIOS["chalice-enter-broken"] = {
+    "about": "a ritual alone; its altar's record merged as the playtest's was; its Layer One "
+             "loads without a crash",
+    "roles": {"host": [START, "godmode", f"trade-stock {PTHUMERU_CHALICE} 1",
+                       f"trade-stock {RITUAL_BLOOD_1} 10", "trade-stock echoes 20000",
+                       f"travel {HUNTERS_DREAM}", "wait 5", f"teleport {ALTAR_SPOT}", "wait 2",
+                       "press cross 200", "wait 7",
+                       *[step for _ in range(4) for step in ("press cross 200", "wait 7")],
+                       "press left 200", "wait 1", "press cross 200", "wait 20",
+                       "log host ritual done", *MERGE_RECORD(92900000), *MERGE_RECORD(94100000),
+                       *ALTAR_RECORDS("merged"),
+                       *[step for _ in range(3) for step in ("press cross 200", "wait 10")],
+                       f"wait-map {CHALICE_DUNGEON} 180", "wait 10", "log host in the dungeon",
+                       *ALTAR_RECORDS("in the dungeon")]},
+    "expect": {"host": [r"host in the dungeon", r"named no dungeon \(1D 0F FF FF"]},
+    "settings": {"BB_FILE_TRACE": "1"},
+    "console_expect": {"host": [r"m29_10_90_00"]},
+    "timeout": 300,
+}
+
+SCENARIOS["chalice-altar-same"] = {
+    "about": "the host's ritual, both enter, then twice both go back to the Dream and enter "
+             "again; every altar record stays the ritual's in both games",
+    "roles": {role: [*CHALICE_INSIDE_FIRST(role), *CHALICE_REENTER(role, 2), "expect-session 2"]
+              for role in ("host", "guest")},
+    "expect": {role: [rf"{role} in the dungeon", rf"altar records {role} inside again 2"]
+               for role in ("host", "guest")},
+    "forbid": {role: [r"named no dungeon"] for role in ("host", "guest")},
+    "allow": CRASH_CLEANUP,
+    "timeout": 1500,
+}
+
+for _restarts in ("guest", "host"):
+    _stays = "host" if _restarts == "guest" else "guest"
+    SCENARIOS[f"chalice-load-inside-{_restarts}"] = {
+        "about": f"a team in a chalice dungeon from the host's ritual; the {_restarts}'s game "
+                 "starts again with its save inside and loads back into the dungeon",
+        "roles": {
+            _restarts: [[*CHALICE_INSIDE_FIRST(_restarts), "wait 10", "snapshot", "done"],
+                        CHALICE_INSIDE_AGAIN(_restarts)],
+            _stays: CHALICE_INSIDE_STAY(_stays),
+        },
+        "expect": {_restarts: [rf"{_restarts} in the dungeon", rf"{_restarts} loaded inside again"],
+                   _stays: [rf"{_stays} in the dungeon"]},
+        "allow": CRASH_CLEANUP,
+        "timeout": 1500,
+    }
 
 # Kaniel 2026-10-20: random (root) chalice dungeons with team altars, both players by the altar.
 # The host conducts the Pthumeru Root Chalice's ritual (the game makes a random dungeon and uploads
@@ -3845,7 +3975,7 @@ SCENARIOS["witch-summons"] = {
     "expect": {role: [r"census: 0x1000801[cd] [^\n]* disabled 0 at [^\n]* "
                       r"draw 0x[0-9a-f]*[014589cd] team"] for role in ("host", "guest")},
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
-    "timeout": 420,
+    "timeout": 300,
 }
 
 # Kaniel 2026-10-20: back in the Dream the guests' headstones said "no place to awaken". Each

@@ -73,6 +73,8 @@ std::atomic<bool> inbox_news{false};
 // The others' hits (bbcoop::EnemyHit) as they came, for the next enemy step.
 std::mutex enemy_hits_mutex;
 std::vector<EnemyHitNews> enemy_hits;
+std::mutex altar_records_mutex;
+std::vector<AltarRecordNews> altar_records;
 std::string hello_party;
 std::string hello_member;
 bool hello_due = true;
@@ -448,6 +450,20 @@ void StreamTick(s64 now_ms) {
                         inbox_news.store(true);
                         continue;
                     }
+                    if (envelope->has_altar_record()) {
+                        const bbcoop::AltarRecord& news = envelope->altar_record();
+                        if (news.bits().size() == AltarRecordBytes) {
+                            AltarRecordNews record{.altar = static_cast<s32>(news.altar()),
+                                                   .member = news.member()};
+                            std::copy(news.bits().begin(), news.bits().end(),
+                                      record.record.begin());
+                            std::scoped_lock records_lock{altar_records_mutex};
+                            if (altar_records.size() < 16) {
+                                altar_records.push_back(std::move(record));
+                            }
+                        }
+                        continue;
+                    }
                     if (IsTradeMessage(*envelope)) {
                         TakeServerTrade(std::move(*envelope));
                     } else if (IsBoard(*envelope)) {
@@ -740,6 +756,22 @@ void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max) {
 std::vector<EnemyHitNews> TakeEnemyHits() {
     std::scoped_lock lock{enemy_hits_mutex};
     return std::exchange(enemy_hits, {});
+}
+
+void SendAltarRecord(s32 altar, const AltarRecord& record) {
+    if (!ServerWorldOn()) {
+        return;
+    }
+    bbcoop::Envelope envelope;
+    bbcoop::AltarRecord& message = *envelope.mutable_altar_record();
+    message.set_altar(static_cast<u32>(altar));
+    message.set_bits(std::string(record.begin(), record.end()));
+    Queue(std::move(envelope));
+}
+
+std::vector<AltarRecordNews> TakeAltarRecords() {
+    std::scoped_lock lock{altar_records_mutex};
+    return std::exchange(altar_records, {});
 }
 
 void RequestServerHello() {

@@ -4,6 +4,7 @@
 // Phase 5: the title's load held for the team (TeamGate) and a party controller that waits for
 // the team to say its role.
 #include <algorithm>
+#include <array>
 #include <set>
 
 #include <thread>
@@ -369,6 +370,30 @@ TEST(TeamWorld, AGuestFollowsTheStoryStepsTheHostChanged) {
     WorldFlags other = after;
     other.blocks = {1, 9};
     EXPECT_TRUE(TeamStoryToFollow(before, other).empty());
+}
+
+// Kaniel's playtest 2026-10-24: the team world's sync set the host's current altar view
+// (92900000-92905999) on a guest ("-92900000 ..." in krolebord's log), which read as a ritual
+// there and went to the team as an altar record. The view is each game's own: not captured into
+// the team world, not set from it, never followed; the altars' own records (94k) are the world's.
+TEST(TeamWorld, TheCurrentAltarIsNoTeamWorlds) {
+    constexpr u32 PerBlock = 1000;
+    std::array<u8, PerBlock / 8> view{};
+    view[0] = 0x1D;
+    std::array<u8, PerBlock / 8> altar{};
+    altar[0] = 0x1D;
+    const std::array blocks{FlagBlockBits{92900, view}, FlagBlockBits{94600, altar}};
+    const WorldFlags world = CaptureWorldFlags(PerBlock, blocks);
+    EXPECT_EQ(world.on, (std::vector<s32>{94600003, 94600004, 94600005, 94600007}));
+    // An older team world that holds the host's view: nothing of it goes in.
+    WorldFlags team = world;
+    team.on.insert(team.on.begin(), {92900000, 92900001});
+    std::array<u8, PerBlock / 8> empty_view{};
+    const std::array guest{FlagBlockBits{92900, empty_view}, FlagBlockBits{94600, altar}};
+    EXPECT_TRUE(WorldFlagChanges(PerBlock, guest, team).empty());
+    WorldFlags before = team;
+    before.on = {94600003};
+    EXPECT_EQ(TeamStoryToFollow(before, team), (std::vector<std::pair<s32, bool>>{}));
 }
 
 // The 2026-10-23 gestures case (rig gesture-own): the host learned Alfred's Pray (flag 6749), and

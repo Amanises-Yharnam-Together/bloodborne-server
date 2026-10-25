@@ -173,6 +173,8 @@ struct Game {
       loads[envelope.load_progress().member()] = envelope.load_progress();
     } else if (envelope.has_enemy_hit()) {
       hits.push_back(envelope.enemy_hit());
+    } else if (envelope.has_altar_record()) {
+      altar_records.push_back(envelope.altar_record());
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -240,6 +242,7 @@ struct Game {
   int sessions = 0;
   std::map<std::string, bbcoop::LoadProgress> loads;
   std::vector<bbcoop::EnemyHit> hits;
+  std::vector<bbcoop::AltarRecord> altar_records;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -1169,6 +1172,40 @@ int AHitReachesTheOthersAtOnce() {
   }
   CHECK(guest.hits.empty());
   CHECK(host.member.Hp().empty());
+  return 0;
+}
+
+// Kaniel's playtest 2026-10-24 (team altars): a ritual's altar record goes to
+// every other member whole and as it is, under its sender's name.
+int AnAltarRecordReachesTheOthersWhole() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  const std::vector<Game *> games{&host, &guest, &other};
+  qint64 now = 1'000'000;
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  std::string bits(750, '\0');
+  bits[0] = '\x1d';
+  bits[1] = '\x0a';
+  bits[2] = '\x5a';
+  bits[749] = '\x01';
+  bbcoop::Envelope record;
+  record.mutable_altar_record()->set_altar(6);
+  record.mutable_altar_record()->set_bits(bits);
+  record.mutable_altar_record()->set_member("spoofed");
+  guest.Send(record, now + 10);
+  Pump(service, games, now + 10);
+  for (Game *game : {&host, &other}) {
+    CHECK(game->altar_records.size() == 1);
+    CHECK(game->altar_records[0].member() == "guest");
+    CHECK(game->altar_records[0].altar() == 6);
+    CHECK(game->altar_records[0].bits() == bits);
+  }
+  CHECK(guest.altar_records.empty());
   return 0;
 }
 
@@ -2211,6 +2248,8 @@ int main() {
       {"EachMembersLoadReachesTheOthers", EachMembersLoadReachesTheOthers},
       {"AFollowersHpIsNeverTheLogs", AFollowersHpIsNeverTheLogs},
       {"AHitReachesTheOthersAtOnce", AHitReachesTheOthersAtOnce},
+      {"AnAltarRecordReachesTheOthersWhole",
+       AnAltarRecordReachesTheOthersWhole},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"GamePacketsGoByMapAndOwner", GamePacketsGoByMapAndOwner},
