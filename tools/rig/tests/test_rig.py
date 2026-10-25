@@ -48,8 +48,9 @@ VERBS = {
     "talk-gesture", "expect-gesture",  # an NPC talk's gesture step
     "cut-link",  # phase 7: a dropped connection
     "watch-unseen",  # a story NPC never drawn after a load
+    "death-mode", "wait-death-mode", "free-camera", "lamp-use",  # Kaniel 2026-10-25: spectating
 }
-VITALS = {"up", "down", "dead"}
+VITALS = {"up", "down", "dead", "spectate"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
            "l1", "r1", "l2", "r2", "l3", "r3"}
 

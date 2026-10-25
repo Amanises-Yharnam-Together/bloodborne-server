@@ -68,9 +68,15 @@ expect rough edges and keep backups of your saves. New builds come out as GitHub
 - **Team pings.** Double tap the touchpad (or press the ping key, T by default) to mark where you
   aim, or the enemy you are locked on to; press Square on the map to mark any spot. Your team sees
   the mark for 20 seconds in the world, on the compass and on the map.
-- **Going down** (from Elden Ring Nightreign, always on): a killing blow puts you down instead of
+- **Going down** (from Elden Ring Nightreign, the default): a killing blow puts you down instead of
   killing you while a partner is near. They revive you by striking you; when the whole party is
   down, it wipes and wakes at the host's lamp, and the area resets.
+- **Or spectate** (the team leader's pick on the team screen, **Death mode**): a killing blow while
+  a partner stands near takes you out of the fight instead. You watch your teammates (L1 / R1 the
+  next one) until one of them uses a lamp or the area's boss dies, then wake at your own lamp;
+  holding Circle wakes you there at once. The whole team falling is still a wipe.
+- **Free camera** (optional, Insert > Controls): F7, or Square with L3 held, flies the camera away
+  from your hunter for a look around (or a screenshot), and back.
 - **Giving items.** Hand items, weapons and Blood Echoes to a teammate from the **Give** menu.
 - **Chalice dungeons together.** Team altars: the team shares its chalice dungeons, and teammates
   join a running dungeon from the altar.

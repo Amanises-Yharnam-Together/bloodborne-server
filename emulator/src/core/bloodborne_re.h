@@ -47,6 +47,16 @@ bool AutoplayPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& sticks);
 // camera stick. Called by the pad reader on what the game will read (autoplay's buttons in).
 void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& sticks,
                          std::uint8_t& l2, std::uint8_t& r2);
+// Kaniel 2026-10-25: the co-op cameras (spectating teammates, the free camera). The mouse's motion
+// (counts) while one drives the view: true when it took it (the game's mouse camera gets none).
+// The free camera: allowed by the port's setting (bbport.ini free_camera), toggled by its hotkey
+// (F7, or Square with L3 held: FreeCameraPad sees that one), and while it flies the pad is its
+// own: true, and the game gets nothing.
+bool CoopCameraMouse(float dx, float dy);
+void SetFreeCameraAllowed(bool allowed);
+void ToggleFreeCamera();
+bool FreeCameraPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& sticks, std::uint8_t& l2,
+                   std::uint8_t& r2);
 // Party death's panel (bloodborne_party.h) as of the last party tick, for the port's overlay:
 // false when there is nothing to draw (no party session, nobody else on the board, not down).
 bool ReadPartyPanel(PartyPanel& panel);

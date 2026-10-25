@@ -111,7 +111,8 @@ bool LocalPlayerDown() {
     }
     PartyPanel panel;
     ReadPartyPanel(panel);
-    return panel.vital == Vital::Down || panel.vital == Vital::Dead;
+    return panel.vital == Vital::Down || panel.vital == Vital::Dead ||
+           panel.vital == Vital::Spectate; // Kaniel 2026-10-25: no trip while spectating
 }
 
 bool Travelling() {

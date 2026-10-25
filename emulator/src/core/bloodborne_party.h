@@ -3031,8 +3031,9 @@ NoDeadCheck NoDeadCheckAt(NoDeadCheck check, s32 hp);
 bool KeepsPlayerAlive(NoDeadCheck check, bool armed, bool down, bool answer);
 
 // A party member's state on the vitals board: not playing party death, standing, down, or dead
-// for real until it wakes at its lamp.
-enum class Vital : u8 { Off, Up, Down, Dead };
+// for real until it wakes at its lamp. Kaniel 2026-10-25: or out of the fight, spectating its
+// teammates (the team's death mode, bloodborne_spectate.h): neither standing nor down.
+enum class Vital : u8 { Off, Up, Down, Dead, Spectate };
 std::string_view VitalName(Vital vital);
 std::optional<Vital> ParseVital(std::string_view name);
 // What this member posts on the vitals board, for the log on change only (the rig checks
@@ -3313,6 +3314,9 @@ public:
     void GetUp(s64 now_ms);
     // A real death (give up, wipe, or a death that skips the down), until the respawn.
     void Died();
+    // Kaniel 2026-10-25: a lethal hit in a team that spectates (DeathMode::Spectate): out of the
+    // fight until it wakes at its lamp (GetUp) or dies with the party (Died). No down is counted.
+    void Spectate();
     void Alive(s64 now_ms);
     void ClearPenalty();
 
@@ -3400,6 +3404,9 @@ struct MemberVitals {
     // Kaniel 2026-10-18: its Blood Vials and Quicksilver Bullets (the server only, as cutscene).
     u32 vials = 0;
     u32 bullets = 0;
+    // Kaniel 2026-10-25: the lamps it used this run (the server only, as cutscene): a spectating
+    // teammate wakes once it goes up (LampUseWatch).
+    u32 lamp_uses = 0;
     bool operator==(const MemberVitals&) const = default;
 };
 // Where the team's host stands (up or down, on a map) on the vitals board, as a resume point.
@@ -3884,6 +3891,9 @@ struct PartyPanel {
     // Kaniel 2026-10-20: the local player's own bloodstain (map 0: none) and its map (0 loading).
     Bloodstain own_stain;
     u32 map = 0;
+    // Kaniel 2026-10-25: while the local player spectates, the name of the teammate it watches
+    // (none while nobody stands to watch).
+    std::optional<std::string> watching;
 };
 // The panel's members from the board; `me` is where the local player stands while it can revive
 // someone (nothing while it is down or dead). The local player's own fields are left to fill.

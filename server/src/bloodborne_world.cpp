@@ -908,13 +908,13 @@ void Service::TakeBoard(Member& member, PartyWorld& world, const bbcoop::Envelop
         answer(world.boards.Vitals(member.name, envelope.vitals(), now_ms),
                PartyBoards::VitalsBoard);
         // Logged when someone's state or the wipes change, not for every HP change.
-        static constexpr const char* Vitals[] = {"off", "up", "down", "dead"};
+        static constexpr const char* Vitals[] = {"off", "up", "down", "dead", "spectate"};
         const bbcoop::VitalsBoard board = world.boards.VitalsMessage();
         QStringList parts;
         for (const auto& entry : board.members()) {
             parts.append(QStringLiteral("%1 %2 %3")
                              .arg(QString::fromStdString(entry.member()))
-                             .arg(Vitals[std::min<u32>(entry.vitals().vital(), 3)])
+                             .arg(Vitals[std::min<u32>(entry.vitals().vital(), 4)])
                              .arg(Hex(entry.vitals().map())));
         }
         for (const auto& wipe : board.wipes()) {

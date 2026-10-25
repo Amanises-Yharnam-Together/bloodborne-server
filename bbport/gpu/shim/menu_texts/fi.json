@@ -388,5 +388,17 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Merkitse paikka tiimillesi 20 sekunniksi: napauta kosketuslevyä kahdesti tai paina merkkinäppäintä sinne, mihin tähtäät (lukittuun viholliseen), kartalla {Square}. Tiimi näkee sen maailmassa, kompassissa ja kartalla.",
  "Ping key": "Merkkinäppäin",
  "The keyboard key that pings where you aim.": "Näppäin, joka merkitsee kohdan, johon tähtäät.",
- "Ping": "Merkitse"
+ "Ping": "Merkitse",
+ "Free camera hotkey": "Vapaan kameran näppäin",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, tai {Square} {L3} pohjassa, irrottaa kameran metsästäjästäsi: vasen sauva tai WASD liikuttaa sitä, oikea sauva tai hiiri kääntää, {R1} ja {L1} nostavat ja laskevat, {R2} pohjassa se lentää nopeasti ja {L2} hitaasti. Metsästäjäsi pysyy sillä aikaa paikallaan; sama näppäin tuo kameran takaisin.",
+ "Death mode": "Kuolematila",
+ "Spectate teammates": "Katso tiimiä",
+ "Go down (revive)": "Maahan (elvytys)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Katso: kaatunut metsästäjä seuraa tiimiläistä, kunnes joku käyttää lyhtyä tai pomo kuolee, ja herää sitten omalla lyhdyllään. Kaikki maassa on yhä tappio.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Maahan: kaatunut metsästäjä jää maahan, kunnes tiimiläinen lyö hänet takaisin jaloilleen, tai luovuttaa {Circle}.",
+ "Spectating %s": "Katsot pelaajaa %s",
+ "No teammate stands here": "Täällä ei seiso yhtään tiimiläistä",
+ "Next teammate": "Seuraava tiimiläinen",
+ "hold to wake at your lamp": "pidä pohjassa herätäksesi lyhdylläsi",
+ "or F7: back to your hunter": "tai F7: takaisin metsästäjääsi"
 }

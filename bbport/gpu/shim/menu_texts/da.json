@@ -388,5 +388,17 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Markér et sted for dit hold i 20 sekunder: tryk to gange på touchpladen eller tryk på markeringstasten, hvor du sigter (på den fjende, du har låst), {Square} på kortet. Holdet ser den i verden, på kompasset og på kortet.",
  "Ping key": "Markeringstast",
  "The keyboard key that pings where you aim.": "Tasten, der markerer, hvor du sigter.",
- "Ping": "Markér"
+ "Ping": "Markér",
+ "Free camera hotkey": "Tast til fri kamera",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, eller {Square} mens du holder {L3}, løsner kameraet fra din jæger: venstre stik eller WASD flytter det, højre stik eller musen drejer det, {R1} og {L1} kører op og ned, med {R2} nede går det hurtigt og med {L2} langsomt. Din jæger står stille imens; samme tast henter kameraet tilbage.",
+ "Death mode": "Dødstilstand",
+ "Spectate teammates": "Se holdet",
+ "Go down (revive)": "Gå ned (genopliv)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Se: en jæger der falder, følger en holdkammerat, indtil nogen bruger en lygte eller bossen dør, og vågner så ved sin egen lygte. Alle nede er stadig et nederlag.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Gå ned: en jæger der falder, bliver liggende, indtil en holdkammerat slår vedkommende op igen, eller giver op med {Circle}.",
+ "Spectating %s": "Du ser %s",
+ "No teammate stands here": "Ingen holdkammerat står her",
+ "Next teammate": "Næste holdkammerat",
+ "hold to wake at your lamp": "hold for at vågne ved din lygte",
+ "or F7: back to your hunter": "eller F7: tilbage til din jæger"
 }

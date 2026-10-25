@@ -388,5 +388,17 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "チームに20秒間、場所を知らせます。狙った場所（ロックオン中は敵）にタッチパッドをすばやく2回押すか、ピンキーを押します。マップでは{Square}。チームはワールド、コンパス、マップで見られます。",
  "Ping key": "ピンキー",
  "The keyboard key that pings where you aim.": "狙った場所にピンを置くキーボードのキー。",
- "Ping": "ピン"
+ "Ping": "ピン",
+ "Free camera hotkey": "フリーカメラのキー",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7、または{L3}を押しながら{Square}で、カメラを狩人から切り離します。左スティックかWASDで移動、右スティックかマウスで回転、{R1}と{L1}で上下、{R2}を押している間は速く、{L2}で遅く動きます。その間、狩人はその場に留まります。同じキーでカメラが戻ります。",
+ "Death mode": "死亡時の扱い",
+ "Spectate teammates": "仲間を観戦",
+ "Go down (revive)": "ダウン（蘇生）",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "観戦：倒れた狩人は、仲間が灯りを使うかボスが倒れるまで仲間を見守り、その後自分の灯りで目覚めます。全員が倒れれば全滅です。",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "ダウン：倒れた狩人は、仲間に攻撃で起こされるまで倒れたままです。{Circle}で諦めることもできます。",
+ "Spectating %s": "観戦中：%s",
+ "No teammate stands here": "ここに立っている仲間はいません",
+ "Next teammate": "次の仲間",
+ "hold to wake at your lamp": "長押しで自分の灯りで目覚める",
+ "or F7: back to your hunter": "またはF7：狩人に戻る"
 }

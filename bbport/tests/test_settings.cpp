@@ -186,6 +186,26 @@ int main() {
     }
     std::puts("PASS: team ping settings");
 
+    // Kaniel 2026-10-25: the free camera, off by default (opt-in), kept in bbport.ini.
+    {
+        const BbSettings::Values fresh;
+        assert(!fresh.free_camera);
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int file = mkstemp(path);
+        const char text[] = "free_camera=1\n";
+        assert(write(file, text, sizeof(text) - 1) == ssize_t(sizeof(text) - 1));
+        close(file);
+        setenv("BB_CONFIG", path, 1);
+        BbSettings::Load();
+        assert(s.free_camera);
+        s.free_camera = false;
+        BbSettings::Save();
+        assert(Read(path).find("free_camera=0\n") != std::string::npos);
+        unlink(path);
+    }
+    std::puts("PASS: free camera setting");
+
     // Kaniel 2026-10-19 ("a setting to remove fog of war, so I will be able to see the whole map"):
     // the map's fog, on by default, kept in bbport.ini.
     {

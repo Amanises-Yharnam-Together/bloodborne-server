@@ -381,7 +381,7 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
             board.members.push_back(
                 MemberVitals{.member = entry.member(),
                              .map = vitals.map(),
-                             .vital = static_cast<Vital>(std::min<u32>(vitals.vital(), 3)),
+                             .vital = static_cast<Vital>(std::min<u32>(vitals.vital(), 4)),
                              .hp = vitals.hp(),
                              .max = vitals.max(),
                              .down = vitals.down(),
@@ -391,7 +391,8 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
                              .revive_damage = entry.revive_damage(),
                              .cutscene = vitals.cutscene(),
                              .vials = vitals.vials(),
-                             .bullets = vitals.bullets()});
+                             .bullets = vitals.bullets(),
+                             .lamp_uses = vitals.lamp_uses()});
         }
         for (const auto& wipe : envelope.vitals_board().wipes()) {
             board.wipes.push_back(
@@ -1031,6 +1032,7 @@ void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> 
     vitals.set_cutscene(mine.cutscene);
     vitals.set_vials(mine.vials);
     vitals.set_bullets(mine.bullets);
+    vitals.set_lamp_uses(mine.lamp_uses);
     PutPosition(mine.at, vitals.mutable_at());
     for (const ReviveHitTotal& hit : hits) {
         bbcoop::ReviveHit* out = vitals.add_hits();
@@ -1476,6 +1478,12 @@ bool TeamMenuBackPressed() {
     return team_menu_back.Pressed(SteadyMilliseconds());
 }
 
+DeathMode TeamDeathModeNow() {
+    std::scoped_lock lock{team_mutex};
+    const std::optional<bbcoop::LobbyState>& lobby = team_gate.Lobby();
+    return lobby ? TeamDeathMode(*lobby) : DeathMode::GoDown;
+}
+
 bool TeamPlaying(bool* in_hunt) {
     std::scoped_lock lock{team_mutex};
     if (in_hunt != nullptr) {
@@ -1848,6 +1856,8 @@ void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id)
     } else if (action == bbcoop::TeamRequest::WORLD ||
                action == bbcoop::TeamRequest::FORGET_WORLD) {
         request.set_world(id);
+    } else if (action == bbcoop::TeamRequest::DEATH_MODE) {
+        request.set_death_mode(id == "1" ? 1 : 0); // Kaniel 2026-10-25: "1" spectate, "0" down
     } else {
         request.set_member(id);
     }

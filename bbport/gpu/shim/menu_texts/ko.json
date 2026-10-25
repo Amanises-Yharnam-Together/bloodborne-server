@@ -388,5 +388,17 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "20초 동안 팀에게 위치를 알립니다. 조준한 곳(록온 중이면 그 적)에 터치패드를 두 번 누르거나 핑 키를 누르고, 맵에서는 {Square}. 팀은 월드, 나침반, 맵에서 봅니다.",
  "Ping key": "핑 키",
  "The keyboard key that pings where you aim.": "조준한 곳에 핑을 찍는 키보드 키.",
- "Ping": "핑"
+ "Ping": "핑",
+ "Free camera hotkey": "자유 카메라 키",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, 또는 {L3}를 누른 채 {Square}로 카메라를 사냥꾼에게서 떼어냅니다. 왼쪽 스틱이나 WASD로 이동, 오른쪽 스틱이나 마우스로 회전, {R1}과 {L1}로 위아래, {R2}를 누르면 빠르게, {L2}를 누르면 느리게 움직입니다. 그동안 사냥꾼은 제자리에 있으며, 같은 키로 카메라가 돌아옵니다.",
+ "Death mode": "사망 방식",
+ "Spectate teammates": "팀원 관전",
+ "Go down (revive)": "다운 (부활)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "관전: 쓰러진 사냥꾼은 누군가 등불을 사용하거나 보스가 쓰러질 때까지 팀원을 지켜본 뒤, 자신의 등불에서 깨어납니다. 모두 쓰러지면 여전히 전멸입니다.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "다운: 쓰러진 사냥꾼은 팀원이 공격해 일으켜 줄 때까지 쓰러져 있으며, {Circle}로 포기할 수 있습니다.",
+ "Spectating %s": "관전 중: %s",
+ "No teammate stands here": "여기에 서 있는 팀원이 없습니다",
+ "Next teammate": "다음 팀원",
+ "hold to wake at your lamp": "길게 눌러 자신의 등불에서 깨어나기",
+ "or F7: back to your hunter": "또는 F7: 사냥꾼에게 돌아가기"
 }

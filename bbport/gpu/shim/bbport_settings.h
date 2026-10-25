@@ -156,6 +156,9 @@ struct Values {
     /// places one where the camera aims (ping_key, an index into PingKeyNames, kept by name).
     std::atomic<bool> team_pings{true};
     std::atomic<int> ping_key{0};
+    /// Kaniel 2026-10-25: the free camera (bbport.ini free_camera, off by default): its hotkey
+    /// (F7, or {Square} with {L3} held) flies the view apart from the player.
+    std::atomic<bool> free_camera{false};
     /// Kaniel 2026-10-19 ("make it opt in, so low vram cards will not prerender it", "an opt in
     /// option to view rendered in real time 3d map"): the map screen's 3D view (bbport.ini map_3d,
     /// Map3d*, off by default): prerendered pictures, or the models drawn live on the GPU.

@@ -388,5 +388,17 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Marca un lugar para tu equipo durante 20 segundos: toca dos veces el panel táctil o pulsa la tecla de marca donde apuntas (sobre el enemigo fijado), {Square} en el mapa. Tu equipo la ve en el mundo, en la brújula y en el mapa.",
  "Ping key": "Tecla de marca",
  "The keyboard key that pings where you aim.": "La tecla que pone una marca donde apuntas.",
- "Ping": "Marcar"
+ "Ping": "Marcar",
+ "Free camera hotkey": "Tecla de cámara libre",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, o {Square} mientras mantienes {L3}, separa la cámara de tu cazador: el stick izquierdo o WASD la mueven, el stick derecho o el ratón la giran, {R1} y {L1} suben y bajan, con {R2} pulsado va rápido y con {L2} despacio. Tu cazador se queda quieto mientras tanto; la misma tecla devuelve la cámara.",
+ "Death mode": "Modo de muerte",
+ "Spectate teammates": "Observar al equipo",
+ "Go down (revive)": "Caer (reanimar)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Observar: un cazador que cae sigue a un compañero hasta que alguno usa un farol o muere el jefe, y luego despierta en su propio farol. Si caen todos, sigue siendo una derrota.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Caer: un cazador que cae sigue en el suelo hasta que un compañero lo levanta a golpes, o se rinde con {Circle}.",
+ "Spectating %s": "Observando a %s",
+ "No teammate stands here": "Aquí no queda ningún compañero en pie",
+ "Next teammate": "Siguiente compañero",
+ "hold to wake at your lamp": "mantén para despertar en tu farol",
+ "or F7: back to your hunter": "o F7: volver a tu cazador"
 }

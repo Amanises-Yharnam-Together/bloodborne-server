@@ -107,6 +107,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"floor guard", false},
     {"flag block guard", false},
     {"packet guard", false},
+    {"co-op camera", false},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -580,6 +581,12 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // The game's per-character receive of a remote player's state (InstallMemberPacketGuard): only
     // the newest copy of a member takes its packets (Kaniel's playtest 2026-10-19).
     {"member receive", "packet guard", CoopSiteKind::Hook, 0x01A6D390, "55 48 89 E5 41 57"},
+
+    // Kaniel 2026-10-25: the frame step's read of the camera manager after its update (0x014368B0,
+    // 0x014377D0), before the frame's cameras are copied from it (InstallCoopCamera): the
+    // spectator's and the free camera go in there.
+    {"camera manager result", "co-op camera", CoopSiteKind::Hook, 0x0193BE5A,
+     "49 8B 85 28 01 00 00"},
 });
 
 // The flag block guard's choice: a block that is there, else the zeros it reads instead.

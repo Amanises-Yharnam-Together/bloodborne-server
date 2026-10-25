@@ -934,6 +934,36 @@ int ThePartyIsWipedWhenNobodyOnTheMapStands() {
   return 0;
 }
 
+// Kaniel 2026-10-25: a member spectating its teammates (vital 4) neither
+// stands for the others nor is in a wipe: alone on its map nothing is wiped,
+// and a wipe of the members down there leaves it out (its own game sees the
+// map's party gone and wakes it). Its lamp count reaches the others.
+int ASpectatorIsNoOneTheServerWipes() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  constexpr u32 Down = 2;
+  constexpr u32 Spectate = 4;
+  bbcoop::Envelope spectating = VitalsOf(0x18010000, Spectate);
+  spectating.mutable_vitals()->set_lamp_uses(3);
+  guest.Send(spectating, now);
+  Pump(service, {&host, &guest}, now);
+  CHECK(host.vitals_board.wipes_size() == 0);
+  CHECK(VitalsFor(host, "guest") != nullptr &&
+        VitalsFor(host, "guest")->vitals().vital() == Spectate &&
+        VitalsFor(host, "guest")->vitals().lamp_uses() == 3);
+  host.Send(VitalsOf(0x18010000, Down, 5), now + 100);
+  Pump(service, {&host, &guest}, now + 100);
+  CHECK(host.vitals_board.wipes_size() == 1);
+  CHECK(host.vitals_board.wipes(0).members_size() == 1 &&
+        host.vitals_board.wipes(0).members(0) == "host");
+  return 0;
+}
+
 // Whatever a client sends (the HTTP boards' parsers had a fuzz test; the
 // stream's frames and our messages have this one): random bytes, random frames
 // and messages with random fields never crash the service, and a member that
@@ -2284,6 +2314,7 @@ int main() {
       {"TheBoardsGoToEveryMember", TheBoardsGoToEveryMember},
       {"ThePartyIsWipedWhenNobodyOnTheMapStands",
        ThePartyIsWipedWhenNobodyOnTheMapStands},
+      {"ASpectatorIsNoOneTheServerWipes", ASpectatorIsNoOneTheServerWipes},
       {"AMembersOwnWipeKeepsThePartysLog", AMembersOwnWipeKeepsThePartysLog},
       {"AWipeOfOneMapStartsThatMapOverAlone",
        AWipeOfOneMapStartsThatMapOverAlone},

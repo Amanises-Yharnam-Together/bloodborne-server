@@ -40,6 +40,10 @@ void bbcoop_ping_aim(void) {}
 void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2) {
     (void)buttons; (void)sticks; (void)l2; (void)r2;
 }
+void bbcoop_free_camera_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2) {
+    (void)buttons; (void)sticks; (void)l2; (void)r2;
+}
+int bbcoop_camera_mouse(float dx, float dy) { (void)dx; (void)dy; return 0; }
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;

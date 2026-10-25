@@ -24,6 +24,15 @@ void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, u
     sticks[0]=sticks[1]=128;
     *l2=*r2=0;
 }
+/* Kaniel 2026-10-25: the free camera flies: the pad is its own, the game gets nothing. */
+static int flying;
+void bbcoop_free_camera_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2) {
+    if (!flying) return;
+    *buttons=0;
+    memset(sticks,128,4);
+    *l2=*r2=0;
+}
+int bbcoop_camera_mouse(float dx, float dy) { (void)dx; (void)dy; return 0; }
 /* A cutscene under the team's loading screen: Options pressed for its skip. */
 static int skip;
 int bbcoop_cutscene_skip(void) { return skip; }
@@ -129,6 +138,15 @@ int main(void) {
     assert(pad_read_state(1,&data)==0 && data.buttons==BTN_OPTIONS && data.r2==0);
     assert(data.left_x==128 && data.left_y==128 && data.right_x==60 && data.right_y==128);
     downed=0; autoplay=0; autoplay_sticks[0]=128; autoplay_sticks[2]=128;
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    /* The free camera after party death: while it flies, nothing reaches the game. */
+    flying=1;
+    inject(path,"cross r2");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.r2==0 && data.left_x==128);
+    flying=0;
+    inject(path,"cross");
+    assert(pad_read_state(1,&data)==0 && data.buttons==BTN_CROSS);
     inject(path,"");
     assert(pad_read_state(1,&data)==0 && data.buttons==0);
 

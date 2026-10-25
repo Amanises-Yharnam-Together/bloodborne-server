@@ -4525,3 +4525,109 @@ SCENARIOS["aspect-hud-16x9"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 300,
 }
+
+# Kaniel 2026-10-25 ("that should be an option to configure instead of nightreign deaths, this one
+# should be off by default"): the team's death mode. The leader picks Spectate on the team's lobby
+# (death-mode), the guest's game takes it from its own lobby (wait-death-mode); the guest's lethal
+# fall while the host stands leaves it out of the fight, its camera over the host's shoulder, until
+# it wakes at its own lamp, without a reload.
+SPECTATE_HOST = [START, "godmode", "wait-session 2 300", "death-mode spectate 60",
+                 "wait-member-vital spectate 120"]
+SPECTATE_GUEST = [START, "wait-session 2 300", "wait-death-mode spectate 90", "wait 5",
+                  f"teleport {WIPE3_SPOT['guest']}", "wait 3", *LETHAL_FALL,
+                  "wait-vital spectate 30", "expect-hp self > 0", "wait 3", "shot spectating",
+                  "press r1 200", "wait 2"]
+SPECTATE_OUT = r"spectate: out of the fight on map 0x18010000 \(the team's death mode\)"
+SPECTATE_SEEN = r"spectate: .+ spectates: its character 0x[0-9a-f]+ here is unseen"
+SPECTATE_FORBID = [r"party death: down \d+", r"party guest died"]
+SCENARIOS["spectate-lamp"] = {
+    "about": "the team spectates (the leader's pick): the guest's lethal fall while the host stands "
+             "is no down: it watches the host (camera over the host's shoulder, unseen in the host's "
+             "world) until the host uses a lamp (the rig counts the lamp use: its X at a lamp brings "
+             "no prompt), then wakes at its own lamp with its HP, no reload",
+    "settings": PARTY_DEATH,
+    "roles": {
+        "host": [*SPECTATE_HOST, "wait 12", "lamp-use", "wait-member-vital up 60", "wait 5",
+                 "snapshot", "expect-session 2"],
+        "guest": [*SPECTATE_GUEST, "wait-vital up 90", "wait 5", "snapshot", "expect-hp self > 1",
+                  "expect-session 2"],
+    },
+    "expect": {
+        "host": [r"Co-op team lobby: the menu asks DEATH_MODE 1", SPECTATE_SEEN,
+                 r"spectate: player 0x[0-9a-f]+ is back in the fight: shown again"],
+        "guest": [SPECTATE_OUT, r"spectate: watching .+ \(1 of 1 teammates standing here\)",
+                  r"Bloodborne camera: over .+'s shoulder",
+                  r"spectate: a teammate's lamp wakes this player at its own lamp \d+ \(moved there\)",
+                  r"Bloodborne camera: the game's camera is its own again"],
+    },
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + SPECTATE_FORBID + [r"reset=true"]},
+    "timeout": 300,
+}
+SCENARIOS["spectate-give-up"] = {
+    "about": "spectating, the guest holds Circle 3 s: it wakes at its own lamp at once (no death, no "
+             "reload), the host still standing",
+    "settings": PARTY_DEATH,
+    "roles": {
+        "host": [*SPECTATE_HOST, "wait-member-vital up 60", "wait 5", "snapshot", "expect-session 2"],
+        "guest": [*SPECTATE_GUEST, "press circle 3600", "wait-vital up 15", "wait 5", "snapshot",
+                  "expect-hp self > 1", "expect-session 2"],
+    },
+    "expect": {
+        "guest": [SPECTATE_OUT, r"spectate: giving up wakes this player at its own lamp \d+"],
+    },
+    "forbid": {"host": SESSION_HOLDS,
+               "guest": SESSION_HOLDS + SPECTATE_FORBID + [r"reset=true", r"spectate: killed"]},
+    "timeout": 300,
+}
+SCENARIOS["spectate-wipe"] = {
+    "about": "spectating, the guest sees the host fall with nobody left standing: the party's wipe "
+             "as today, both die and wake at their lamps with the map reloaded",
+    "settings": PARTY_DEATH,
+    "roles": {
+        "host": [START, "wait-session 2 300", "death-mode spectate 60",
+                 "wait-member-vital spectate 120", "wait 5", f"teleport {WIPE3_SPOT['host']}",
+                 "wait 3", *LETHAL_FALL, "wait-vital dead 30",
+                 "wait-vital up 120", "wait-members 2 240", "wait 10", "snapshot",
+                 "expect-session 2"],
+        "guest": [*SPECTATE_GUEST, "wait-vital dead 60", "wait-vital up 120", "wait-members 2 240",
+                  "wait 10", "snapshot", "expect-session 2"],
+    },
+    "expect": {
+        "host": [r"party death: died for real on map 0x18010000 \(reset=true\)"],
+        "guest": [SPECTATE_OUT,
+                  r"spectate: the party's wipe ends spectating; dies \(reset=true",
+                  r"travelling there \(reset=true, void fall=false\)"],
+    },
+    # The wipe's death is the game's own (a party guest's death and revive): no down before it.
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party death: down [0-9]+"]},
+    "timeout": 300,
+}
+SCENARIOS["spectate-default-down"] = {
+    "about": "the death mode's default (no pick) is party death as before: the guest's lethal fall "
+             "puts it down, and it gives up",
+    "settings": PARTY_DEATH,
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 120", "wait 30",
+                 "snapshot", "expect-session 2"],
+        "guest": [START, "wait-session 2 300", "wait 15", "wait-death-mode down 5",
+                  f"teleport {WIPE3_SPOT['guest']}", "wait 3", *GIVE_UP,
+                  "wait-vital up 90", "wait 5", "snapshot", "expect-session 2"],
+    },
+    "expect": {"guest": [r"party death: down \d+ on map 0x18010000",
+                         r"party death: giving up ends down \d+; dies \(reset=false"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"spectate:"]},
+    "timeout": 300,
+}
+# Kaniel 2026-10-25: the free camera (the setting on, its hotkey): the view flies with the left
+# stick while the player stands still, and comes back.
+SCENARIOS["free-camera"] = {
+    "about": "the free camera (bbport.ini free_camera=1): its hotkey takes the view away, the left "
+             "stick flies it ahead while the player stays where it was, the hotkey brings it back",
+    "settings": {"ini.free_camera": "1"},
+    "roles": {"host": [START, "wait 10", "free-camera on", "wait 2", "stick 128 0 2500", "wait 1",
+                       "shot flying", "free-camera off", "wait 3", "shot back", "snapshot"]},
+    "expect": {"host": [r"Bloodborne camera: the free camera is on at",
+                        r"the free camera is off: it flew (?:[3-9]|\d\d)\.\d m from where it began; "
+                        r"the player moved 0\.\d m meanwhile"]},
+    "timeout": 240,
+}

@@ -169,7 +169,32 @@ extern "C" void bbcoop_party_death_pad(uint32_t* buttons, uint8_t sticks[4], uin
 static_assert(BBCOOP_VITAL_OFF == static_cast<int>(Core::Bloodborne::Vital::Off) &&
               BBCOOP_VITAL_UP == static_cast<int>(Core::Bloodborne::Vital::Up) &&
               BBCOOP_VITAL_DOWN == static_cast<int>(Core::Bloodborne::Vital::Down) &&
-              BBCOOP_VITAL_DEAD == static_cast<int>(Core::Bloodborne::Vital::Dead));
+              BBCOOP_VITAL_DEAD == static_cast<int>(Core::Bloodborne::Vital::Dead) &&
+              BBCOOP_VITAL_SPECTATE == static_cast<int>(Core::Bloodborne::Vital::Spectate));
+
+extern "C" void bbcoop_set_free_camera(int allowed) {
+    Core::Bloodborne::SetFreeCameraAllowed(allowed != 0);
+}
+
+extern "C" void bbcoop_free_camera_toggle(void) {
+    Core::Bloodborne::ToggleFreeCamera();
+}
+
+extern "C" int bbcoop_free_camera_on(void) {
+    return Core::Bloodborne::Coop::FreeCameraOn() ? 1 : 0;
+}
+
+extern "C" void bbcoop_free_camera_pad(uint32_t* buttons, uint8_t sticks[4], uint8_t* l2,
+                                       uint8_t* r2) {
+    std::array<std::uint8_t, 4> moved{};
+    std::memcpy(moved.data(), sticks, moved.size());
+    Core::Bloodborne::FreeCameraPad(*buttons, moved, *l2, *r2);
+    std::memcpy(sticks, moved.data(), moved.size());
+}
+
+extern "C" int bbcoop_camera_mouse(float dx, float dy) {
+    return Core::Bloodborne::CoopCameraMouse(dx, dy) ? 1 : 0;
+}
 
 extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
     *panel = bbcoop_panel{.revive_target = -1};
@@ -202,6 +227,11 @@ extern "C" int bbcoop_party_panel(bbcoop_panel* panel) {
     panel->native_list = Core::Bloodborne::NativePartyListShown() ? 1 : 0;
     panel->native_prompt = Core::Bloodborne::NativePartyPromptShown() ? 1 : 0;
     panel->native_supplies = Core::Bloodborne::NativePartySuppliesShown() ? 1 : 0;
+    if (party.watching) {
+        panel->watching = 1;
+        std::snprintf(panel->watching_name, sizeof(panel->watching_name), "%s",
+                      party.watching->c_str());
+    }
     return 1;
 }
 
@@ -511,6 +541,7 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
         lobby->in_team = 1;
         lobby->leader = team.leader() == me;
         lobby->started = team.started();
+        lobby->death_mode = static_cast<int>(Core::Bloodborne::TeamDeathMode(*state));
         // The leader first.
         std::vector<const bbcoop::TeamMember*> members;
         for (const bbcoop::TeamMember& m : team.members()) {
@@ -701,7 +732,9 @@ extern "C" void bbcoop_team_choose(int what) {
 }
 
 static_assert(BBCOOP_TEAM_WORLD == bbcoop::TeamRequest::WORLD &&
-              BBCOOP_TEAM_FORGET_WORLD == bbcoop::TeamRequest::FORGET_WORLD);
+              BBCOOP_TEAM_FORGET_WORLD == bbcoop::TeamRequest::FORGET_WORLD &&
+              BBCOOP_TEAM_DEATH_MODE == bbcoop::TeamRequest::DEATH_MODE &&
+              BBCOOP_DEATH_SPECTATE == int(Core::Bloodborne::DeathMode::Spectate));
 
 extern "C" void bbcoop_lobby_request(int action, const char* id) {
     Core::Bloodborne::Coop::TeamLobbyRequest(static_cast<bbcoop::TeamRequest::Action>(action),

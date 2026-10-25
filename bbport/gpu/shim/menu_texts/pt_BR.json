@@ -388,5 +388,17 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Marque um local para sua equipe por 20 segundos: toque duas vezes no touchpad ou pressione a tecla de marcação onde você mira (no inimigo travado), {Square} no mapa. Sua equipe vê no mundo, na bússola e no mapa.",
  "Ping key": "Tecla de marcação",
  "The keyboard key that pings where you aim.": "A tecla que marca onde você mira.",
- "Ping": "Marcar"
+ "Ping": "Marcar",
+ "Free camera hotkey": "Tecla da câmera livre",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, ou {Square} enquanto segura {L3}, separa a câmera do seu caçador: o analógico esquerdo ou WASD a movem, o analógico direito ou o mouse a giram, {R1} e {L1} sobem e descem, com {R2} pressionado vai rápido e com {L2} devagar. Seu caçador fica parado enquanto isso; a mesma tecla traz a câmera de volta.",
+ "Death mode": "Modo de morte",
+ "Spectate teammates": "Observar a equipe",
+ "Go down (revive)": "Cair (reviver)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Observar: um caçador que cai acompanha um colega até alguém usar uma lanterna ou o chefe morrer, e então acorda na própria lanterna. Todos caídos continua sendo uma derrota.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Cair: um caçador que cai fica no chão até um colega levantá-lo com golpes, ou desiste com {Circle}.",
+ "Spectating %s": "Observando %s",
+ "No teammate stands here": "Nenhum colega de pé aqui",
+ "Next teammate": "Próximo colega",
+ "hold to wake at your lamp": "segure para acordar na sua lanterna",
+ "or F7: back to your hunter": "ou F7: voltar ao seu caçador"
 }

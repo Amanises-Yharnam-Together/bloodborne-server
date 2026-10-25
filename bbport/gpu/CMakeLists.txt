@@ -240,6 +240,8 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_compass.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_pings.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_pings_game.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_spectate.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_camera.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map_screen.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_boards.cpp

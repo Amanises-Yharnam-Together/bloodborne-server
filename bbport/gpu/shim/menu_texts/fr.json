@@ -388,5 +388,17 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Signalez un endroit à votre équipe pendant 20 secondes : touchez deux fois le pavé tactile ou appuyez sur la touche de signal là où vous visez (sur l'ennemi verrouillé), {Square} sur la carte. Votre équipe le voit dans le monde, sur la boussole et sur la carte.",
  "Ping key": "Touche de signal",
  "The keyboard key that pings where you aim.": "La touche du clavier qui place un signal là où vous visez.",
- "Ping": "Signal"
+ "Ping": "Signal",
+ "Free camera hotkey": "Touche de caméra libre",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, ou {Square} en maintenant {L3}, détache la caméra de votre chasseur : le stick gauche ou WASD la déplace, le stick droit ou la souris la tourne, {R1} et {L1} montent et descendent, {R2} maintenu va vite et {L2} lentement. Votre chasseur reste immobile pendant ce temps ; la même touche ramène la caméra.",
+ "Death mode": "Mode de mort",
+ "Spectate teammates": "Observer l'équipe",
+ "Go down (revive)": "À terre (relevé)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Observer : un chasseur qui tombe suit un coéquipier jusqu'à ce que l'un d'eux utilise une lanterne ou que le boss meure, puis se réveille à sa propre lanterne. Tout le monde à terre reste une défaite.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "À terre : un chasseur qui tombe reste à terre jusqu'à ce qu'un coéquipier le relève en le frappant, ou abandonne avec {Circle}.",
+ "Spectating %s": "Vous observez %s",
+ "No teammate stands here": "Aucun coéquipier debout ici",
+ "Next teammate": "Coéquipier suivant",
+ "hold to wake at your lamp": "maintenez pour vous réveiller à votre lanterne",
+ "or F7: back to your hunter": "ou F7 : retour à votre chasseur"
 }

@@ -228,6 +228,12 @@ std::string TeamWorldName(const bbcoop::TeamWorldInfo& world) {
     return world.character().empty() ? "A world" : world.character() + "'s world";
 }
 
+DeathMode TeamDeathMode(const bbcoop::LobbyState& lobby) {
+    return lobby.has_team() && lobby.team().death_mode() == static_cast<u32>(DeathMode::Spectate)
+               ? DeathMode::Spectate
+               : DeathMode::GoDown;
+}
+
 std::string TitleLoadCharacterName(bool fresh, std::string_view slot_name) {
     while (!slot_name.empty() && (slot_name.back() == '\n' || slot_name.back() == '\r')) {
         slot_name.remove_suffix(1);

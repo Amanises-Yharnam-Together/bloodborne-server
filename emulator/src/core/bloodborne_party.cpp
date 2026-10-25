@@ -4911,6 +4911,8 @@ std::string_view VitalName(Vital vital) {
         return "down";
     case Vital::Dead:
         return "dead";
+    case Vital::Spectate:
+        return "spectate";
     case Vital::Off:
         break;
     }
@@ -4918,7 +4920,7 @@ std::string_view VitalName(Vital vital) {
 }
 
 std::optional<Vital> ParseVital(std::string_view name) {
-    for (const Vital vital : {Vital::Off, Vital::Up, Vital::Down, Vital::Dead}) {
+    for (const Vital vital : {Vital::Off, Vital::Up, Vital::Down, Vital::Dead, Vital::Spectate}) {
         if (VitalName(vital) == name) {
             return vital;
         }
@@ -5128,7 +5130,8 @@ std::array<PartyListEntry, PartyListSize> PartyListEntries(const PartyPanel& pan
             entry.hp = static_cast<s32>(std::max(percent, 1L));
             entry.max = 100;
             entry.icon = PartyListIconDowned0 + static_cast<u32>((percent + 5) / 10);
-        } else if (member.vital == Vital::Dead) {
+        } else if (member.vital == Vital::Dead || member.vital == Vital::Spectate) {
+            // Kaniel 2026-10-25: a spectating member is out of the fight as a dead one is.
             entry.hp = 0;
             entry.icon = PartyListIconFallen;
         } else if (!member.here) {
@@ -5175,6 +5178,9 @@ u32 SupplyFrame(const PartyListEntry& entry) {
 }
 
 PartyPrompt PartyPromptFor(const PartyPanel& panel) {
+    if (panel.vital == Vital::Spectate) {
+        return {}; // the overlay's spectating line says what the buttons do
+    }
     if (panel.vital == Vital::Down) {
         return PartyPrompt{.shown = true, .text = "Hold to give up", .input = PromptInputCircle};
     }
@@ -5311,6 +5317,11 @@ void DownedState::GetUp(s64 now_ms) {
 
 void DownedState::Died() {
     vital = Vital::Dead;
+    landed = 0;
+}
+
+void DownedState::Spectate() {
+    vital = Vital::Spectate;
     landed = 0;
 }
 
@@ -5846,11 +5857,13 @@ VitalsBoard MergeDirectVitals(const VitalsBoard& board, std::span<const DirectVi
         const u32 board_damage = same_down ? same->revive_damage : 0;
         const u32 board_cutscene = same->cutscene;
         const u32 board_vials = same->vials, board_bullets = same->bullets;
+        const u32 board_lamp_uses = same->lamp_uses;
         *same = update.self;
         same->revive_damage = board_damage;
         same->cutscene = board_cutscene; // the direct line does not carry these
         same->vials = board_vials;
         same->bullets = board_bullets;
+        same->lamp_uses = board_lamp_uses;
     }
     for (MemberVitals& member : merged.members) {
         u32 hits = 0;
@@ -6354,7 +6367,10 @@ PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view
             .max = entry.max,
             .landed = entry.landed,
             .needed = entry.needed,
-            .at = map != 0 && entry.map == map ? std::optional{entry.at} : std::nullopt,
+            // Kaniel 2026-10-25: a spectator is nowhere to go to (its body lies unseen).
+            .at = map != 0 && entry.map == map && entry.vital != Vital::Spectate
+                      ? std::optional{entry.at}
+                      : std::nullopt,
             .map = entry.map,
             .vials = entry.vials,
             .bullets = entry.bullets,

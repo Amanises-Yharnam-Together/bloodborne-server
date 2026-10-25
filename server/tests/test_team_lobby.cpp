@@ -667,8 +667,41 @@ int AWorldsLampsAreCounted() {
   return 0;
 }
 
+// Kaniel 2026-10-25: how a member's death plays out is the team's, one for
+// all of it: going down for a revive (the default) or spectating the
+// teammates. Only the leader picks it, at any time (also while the team
+// plays), and every member's state carries the leader's pick.
+int TheLeaderPicksTheTeamsDeathMode() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  const auto pick = [&](const std::string &member, uint32_t mode) {
+    bbcoop::TeamRequest request = Request(Action::DEATH_MODE);
+    request.set_death_mode(mode);
+    return lobby.Request(member, request);
+  };
+  CHECK(lobby.TeamOf("a")->death_mode() == 0);
+  CHECK(lobby.StateFor("b").team().death_mode() == 0);
+  CHECK(!pick("b", 1).notice.empty()); // the leader only
+  CHECK(lobby.TeamOf("a")->death_mode() == 0);
+  CHECK(pick("a", 1).changed);
+  CHECK(lobby.StateFor("a").team().death_mode() == 1);
+  CHECK(lobby.StateFor("b").team().death_mode() == 1);
+  CHECK(!pick("a", 1).changed);        // the same again changes nothing
+  CHECK(!pick("a", 7).notice.empty()); // no such mode
+  CHECK(lobby.TeamOf("a")->death_mode() == 1);
+  // While the team plays, too.
+  t.Start();
+  CHECK(pick("a", 0).changed);
+  CHECK(lobby.StateFor("b").team().death_mode() == 0);
+  // In no team there is no team's mode to pick.
+  lobby.Arrive("c", "Lisa", false);
+  CHECK(!pick("c", 1).notice.empty());
+  return 0;
+}
+
 int main() {
   int failed = 0;
+  failed |= TheLeaderPicksTheTeamsDeathMode();
   failed |= PlayersAreSeenByTheirCharactersName();
   failed |= TeamFormsByInvite();
   failed |= TeamHoldsFour();

@@ -388,5 +388,17 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "為隊伍標記一個地點，持續20秒：在瞄準處（鎖定時為該敵人）連按兩下觸控板或按標記鍵，地圖上按{Square}。隊伍可在世界、羅盤與地圖上看到。",
  "Ping key": "標記鍵",
  "The keyboard key that pings where you aim.": "在瞄準處放置標記的鍵盤按鍵。",
- "Ping": "標記"
+ "Ping": "標記",
+ "Free camera hotkey": "自由鏡頭按鍵",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "按F7，或按住{L3}時按{Square}，鏡頭便離開你的獵人：左搖桿或WASD移動，右搖桿或滑鼠轉向，{R1}和{L1}上升下降，按住{R2}加速，按住{L2}減速。這段時間獵人會原地不動；按同一個鍵讓鏡頭回來。",
+ "Death mode": "死亡方式",
+ "Spectate teammates": "觀戰隊友",
+ "Go down (revive)": "倒地（救起）",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "觀戰：倒下的獵人會看著隊友，直到有人使用燈或頭目死亡，然後在自己的燈醒來。所有人倒下仍算全滅。",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "倒地：倒下的獵人會一直倒地，直到隊友以攻擊將他救起，或按{Circle}放棄。",
+ "Spectating %s": "觀戰中：%s",
+ "No teammate stands here": "這裡沒有站著的隊友",
+ "Next teammate": "下一位隊友",
+ "hold to wake at your lamp": "按住即在自己的燈醒來",
+ "or F7: back to your hunter": "或F7：回到你的獵人"
 }

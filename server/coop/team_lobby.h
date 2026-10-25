@@ -34,6 +34,9 @@ constexpr s64 OfflineGraceMs = 10 * 60 * 1000;
 // the least lately played aside.
 constexpr size_t MaxWorlds = 16;
 
+// Kaniel 2026-10-25: the team's death modes (Team.death_mode): 0 down for a revive, 1 spectate.
+constexpr u32 MaxDeathMode = 1;
+
 // How far a world is, for the players: its lamps lit, from its world flags on (a lamp's active
 // flag, 10007810 + map * 10000 + lamp * 20, maps 210-399, lamps 0-19: the game's FlagTable).
 u32 LampsLit(std::span<const s32> on);

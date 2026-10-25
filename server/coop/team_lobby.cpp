@@ -479,6 +479,24 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
         }
         return {.changed = true, .forgotten = {request.world()}};
     }
+    case Action::DEATH_MODE: {
+        // Kaniel 2026-10-25: one mode for the whole team, so its members' deaths play out alike;
+        // the leader may change it while the team plays (each game takes it on its next death).
+        if (!mine) {
+            return refuse("you are not in a team");
+        }
+        if (mine->leader() != member) {
+            return refuse("only the team's leader picks how its deaths play out");
+        }
+        if (request.death_mode() > MaxDeathMode) {
+            return refuse("no such death mode");
+        }
+        if (mine->death_mode() == request.death_mode()) {
+            return {};
+        }
+        mine->set_death_mode(request.death_mode());
+        return {.changed = true};
+    }
     case Action::START: {
         if (!mine || mine->leader() != member) {
             return refuse("only the team's leader starts");

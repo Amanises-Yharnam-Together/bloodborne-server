@@ -1190,3 +1190,16 @@ TEST(TeamLobbyName, TheNameIsReadOnceTheLoadedSaveIsIn) {
     EXPECT_FALSE(CharacterNameReadable(10'000, 12'000, 12'000 + CharacterNameSettleMs - 1));
     EXPECT_TRUE(CharacterNameReadable(10'000, 12'000, 12'000 + CharacterNameSettleMs));
 }
+
+// Kaniel 2026-10-25: the team's death mode is the leader's pick, the same for every member; a
+// game in no team (or with a mode it does not know) goes down for a revive, as before.
+TEST(TeamDeathMode, EveryMemberPlaysTheLeadersPick) {
+    bbcoop::LobbyState solo;
+    EXPECT_EQ(TeamDeathMode(solo), DeathMode::GoDown);
+    bbcoop::LobbyState team = InTeam("a");
+    EXPECT_EQ(TeamDeathMode(team), DeathMode::GoDown);
+    team.mutable_team()->set_death_mode(1);
+    EXPECT_EQ(TeamDeathMode(team), DeathMode::Spectate);
+    team.mutable_team()->set_death_mode(9);
+    EXPECT_EQ(TeamDeathMode(team), DeathMode::GoDown);
+}
