@@ -174,14 +174,15 @@ does not give it again at home. The host's own events give the host its own, unc
 | Nightmare Frontier NPC (m32) | rune | common 9040 | 9077 -> 39010 | no / yes |
 | The Doll (m21) | Tear Stone (for the Small Hair Ornament) | m21 12100123 | 72100112 -> 14000 | no / yes (the ornament stays with the guest: no item removal yet) |
 | Cathedral Ward NPC (m24_00) | Madman's Knowledge | m24_00 12400403 | 72400441 -> 37000 | no / yes |
-| Valtr (m27) | rune; League Staff | m27 12700906 | 72700321 -> 43120; 72700322 -> 43130 | no / yes |
+| Valtr (m27) | rune; League Staff | m27 12700906 | 72700321 -> 43120; 72700322 -> 43130 | no / yes (the lots give nothing while their flags 6676 / 6678 are on, and the host's came over from the team world: a guest's own gift clears them first, `ClearsNpcGiftLotFlag`, playtest 2026-10-25) |
 | Hunter's Nightmare NPC (m34) | Holy Moonlight Sword | m34 13400980 | 73400424 -> 43211 | no / yes |
 | Research Hall (m35) | Balcony Key; rune; Blood of Adeline | m35 13501920, 13501940 | 73500321 -> 43010; 73500322 -> 43020; 73500320 -> 43000 | no / yes |
 | Fishing Hamlet (m36) | Accursed Brew | m36 13600943 | 73600300 -> 43600 | no / yes |
 | Valtr (m27) | One-eyed Iron Helm | m27 12700908 (also his death flag 1790) | 72700330 -> 43110 | no / no |
 | Simon (m34, m35, m36) | Simon's Bowblade | 13400953, 13500953, 13600954 (also his death flags 1710-1713) | 73400430/31, 73500630, 73600530 -> 43200-43220 | no / no |
 | Micolash (m26) | Mensis Cage | m26 12601850 (a boss kill event) | 72600301 -> 21000 | unknown (check the boss event patch) |
-| Many window NPCs; Blood Vial and Blood of Adella givers | Tonsil Stone, Blood Vial, Blood of Adella | the talk script itself (c1_52 adds, c1_65 the popup) | none | yes (runs in the guest's own game; not rig-tested) |
+| Tonsil Stone voices (17: m24_00, m24_01, m22, m27's Forbidden Woods house) | Tonsil Stone | the talk script itself, on the first talk only (its flag 73200330-35, 40-44, 50-55) | none | no / yes (the first-talk flags were the host's world, so a guest got the "talked before" line: per player now, `GiftTalkFlags`, and off while the player holds no stone, `KeepGiftTalkFlagsOwn`; playtest 2026-10-25) |
+| Blood Vial and Blood of Adella givers (the shelter) | Blood Vial, Blood of Adella | the talk script itself (c1_52 adds, c1_65 the popup) | none | yes (runs in the guest's own game; its cooldown flags 72400390-98 are still the host's world; not rig-tested) |
 | Eileen, Alfred, Djura, Valtr and others | gestures | the talk script itself (c1_66), skipped while the gesture's flag is on | none | no / yes (see NPC gestures below, rig gesture-own) |
 | Hunter's Dream messengers | Notebook, bells, Eye of a Blood-drunk Hunter | m21 12101022-28 (made local) | 12101023-29 -> 10000-10050 | yes (earlier fix) |
 | Cleric Beast (m24_01 12411700) | Sword Hunter Badge | the boss event, skipped while 6645 is on | lot 50000010 | no / yes (rig together/boss-kill) |

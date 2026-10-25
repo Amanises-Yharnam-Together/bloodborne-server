@@ -640,6 +640,65 @@ TEST(BloodborneFlagRules, GestureFlagGoesOffWithoutTheGesture) {
     EXPECT_EQ(GestureFlagFix(false, true, false), std::nullopt);
 }
 
+// Kaniel's playtest 2026-10-25: the voice in the Forbidden Woods house gave its Tonsil Stone to the
+// host only. Every Tonsil Stone giver's talk (talk scripts 01.09) gives the stone (goods 4310) on
+// the player's first talk with it ("初回か": its own flag off), sets that flag, and skips the gift
+// while the player holds the stone. As world flags, the host's first talk put the flag into the
+// guests' games before theirs (krolebord's log: "the host's story steps followed here: 73200355"),
+// so their talks took the "talked before" line. Each is the player's own, kept for its own world.
+TEST(BloodborneFlagRules, TonsilStoneTalkFlagsAreEachPlayersOwn) {
+    // Each giver's talk: its first-talk flag (t241350 ... t270375, and the talks that share them).
+    const std::vector<s32> talks{
+        73200330, 73200331, 73200332, 73200333, 73200334, 73200335, 73200340, 73200341, 73200342,
+        73200343, 73200344, 73200350, 73200351, 73200352, 73200353, 73200354, 73200355,
+    };
+    std::vector<s32> table;
+    for (const GiftTalkFlag& talk : GiftTalkFlags) {
+        table.push_back(talk.flag);
+        EXPECT_EQ(talk.goods, 4310u) << talk.flag;
+        EXPECT_EQ(RuleFor(talk.flag).owner, FlagOwner::PerPlayer) << talk.flag;
+        EXPECT_TRUE(KeepsLocalFlag(true, talk.flag)) << talk.flag;
+        EXPECT_TRUE(CarriesToGuestWorld(talk.flag)) << talk.flag;
+        EXPECT_FALSE(TakesHostMapFlag(talk.flag)) << talk.flag;
+        EXPECT_FALSE(SharedWithParty(talk.flag)) << talk.flag;
+    }
+    EXPECT_EQ(table, talks);
+    // The flags around them stay the host's.
+    for (const s32 flag : {73200329, 73200336, 73200339, 73200345, 73200349, 73200356}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Host) << flag;
+    }
+}
+
+// A giver's first-talk flag says this player had the stone from it: on while the player holds no
+// Tonsil Stone (a save that took the host's value from a team world), it goes off, so the talk
+// gives the stone. On with the stone it stays: the talk would not give it again anyway.
+TEST(BloodborneFlagRules, TonsilStoneTalkFlagGoesOffWithoutTheStone) {
+    EXPECT_EQ(GiftTalkFlagFix(true, true, false), std::optional<bool>{false});
+    EXPECT_EQ(GiftTalkFlagFix(true, true, true), std::nullopt);
+    EXPECT_EQ(GiftTalkFlagFix(true, false, true), std::nullopt);
+    EXPECT_EQ(GiftTalkFlagFix(true, false, false), std::nullopt);
+    EXPECT_EQ(GiftTalkFlagFix(false, true, false), std::nullopt);
+}
+
+// Kaniel's playtest 2026-10-25: Valtr's rune reached Lisara (she talked) and the host, not
+// krolebord. His own talk set the gift's trigger and the emulator gave him the item lot, but the
+// lot (43120) gives nothing while its getItemFlagId (6676) is on, and the host's 6676 had come
+// over from the team world a moment before. A guest's own NPC gift goes out with its lot's flag
+// off when that flag is the host's world (Valtr's 43120 and 43130: 6676, 6678); a flag of the
+// guest's own (its pickup list, a per-player flag) says it has the item and stays.
+TEST(BloodborneFlagRules, AGuestsNpcGiftIgnoresTheHostsTakenFlag) {
+    EXPECT_TRUE(ClearsNpcGiftLotFlag(6676, true));
+    EXPECT_TRUE(ClearsNpcGiftLotFlag(6678, true));
+    EXPECT_FALSE(ClearsNpcGiftLotFlag(6676, false));
+    // The other gifts' lots: none, or a map pickup flag (the guest's own list).
+    for (const s32 flag : {-1, 0, 50000200, 50001700, 50002000, 50002500}) {
+        EXPECT_FALSE(ClearsNpcGiftLotFlag(flag, true)) << flag;
+    }
+    // A per-player flag is this player's own.
+    EXPECT_FALSE(ClearsNpcGiftLotFlag(6645, true));
+    EXPECT_FALSE(ClearsNpcGiftLotFlag(73200355, true));
+}
+
 // The gesture list's slots (PlayerGameData +0x5B8, 30 at +0x10), as talk command 66 (0x02042AD1)
 // reads them: bit 0 learned, the bits above it a row of the gesture table (0x014EC980: row 0 is
 // none, row k gesture k - 1, its goods 800 + k - 1).

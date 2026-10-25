@@ -208,6 +208,35 @@ inline constexpr std::array GestureFlags{
     GestureFlag{22, 6770},    // League Oath: Valtr (t270503)
 };
 
+// The Tonsil Stone's givers (talk scripts 01.09: t220374, t240351-t240373, t241350-t241371,
+// t270375, and the talks of the same voices that share their flags): on the player's first talk
+// with one ("初回か": its flag off) the talk sets the flag and gives the stone (c1_52 goods 4310)
+// unless the player holds it; after that it has only its "talked before" line.
+struct GiftTalkFlag {
+    s32 flag;
+    u32 goods;
+};
+inline constexpr u32 TonsilStoneGoods = 4310;
+inline constexpr std::array GiftTalkFlags{
+    GiftTalkFlag{73200330, TonsilStoneGoods}, // t241350 (Central Yharnam)
+    GiftTalkFlag{73200331, TonsilStoneGoods}, // t240351 (Cathedral Ward)
+    GiftTalkFlag{73200332, TonsilStoneGoods}, // t241352
+    GiftTalkFlag{73200333, TonsilStoneGoods}, // t240353
+    GiftTalkFlag{73200334, TonsilStoneGoods}, // t241354
+    GiftTalkFlag{73200335, TonsilStoneGoods}, // t241355
+    GiftTalkFlag{73200340, TonsilStoneGoods}, // t241360
+    GiftTalkFlag{73200341, TonsilStoneGoods}, // t241361
+    GiftTalkFlag{73200342, TonsilStoneGoods}, // t240362
+    GiftTalkFlag{73200343, TonsilStoneGoods}, // t240363
+    GiftTalkFlag{73200344, TonsilStoneGoods}, // t240364
+    GiftTalkFlag{73200350, TonsilStoneGoods}, // t241370
+    GiftTalkFlag{73200351, TonsilStoneGoods}, // t241371
+    GiftTalkFlag{73200352, TonsilStoneGoods}, // t240372
+    GiftTalkFlag{73200353, TonsilStoneGoods}, // t240373
+    GiftTalkFlag{73200354, TonsilStoneGoods}, // t220374 (Hemwick)
+    GiftTalkFlag{73200355, TonsilStoneGoods}, // t270375 (the Forbidden Woods house)
+};
+
 // The Bath messengers' shop sells a weapon once the player has had it (ShopLineupParam's
 // visibility flag, 01.09): a chalice dungeon weapon's item lot flag (ItemLotParam getItemFlagId
 // 5100-5282), or a flag a common event sets once the weapon (any upgrade, base id + 100 * level)
@@ -362,6 +391,15 @@ inline constexpr std::array FirstRows{
           "2200500-2200508): its slot's done flag; the host's copy rises when it turns on, so "
           "an enemy a guest woke rises in the host's game too (rig mist-ambush-guest, "
           "Kaniel 2026-10-20)"),
+    Range(73200330, 73200335, FlagOwner::PerPlayer, FlagCarriesHome,
+          "a Tonsil Stone giver's first talk (GiftTalkFlags: its talk gives the stone then and "
+          "sets it): this player's own, as the host's a guest's talk took the \"talked "
+          "before\" line and never gave the stone (Kaniel's playtest 2026-10-25, the Forbidden "
+          "Woods house)"),
+    Range(73200340, 73200344, FlagOwner::PerPlayer, FlagCarriesHome,
+          "a Tonsil Stone giver's first talk (GiftTalkFlags)"),
+    Range(73200350, 73200355, FlagOwner::PerPlayer, FlagCarriesHome,
+          "a Tonsil Stone giver's first talk (GiftTalkFlags)"),
 };
 
 // Rows after the boss fogs': the general ranges the earlier rows cut into.
