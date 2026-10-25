@@ -4019,6 +4019,41 @@ SCENARIOS["boss-hp-after-wipe"] = {
     "timeout": 900,
 }
 
+# Kaniel's play test 2026-10-25 (Logarius): the party died one by one. Lisara fell first while the
+# others stood, then krolebord and Kaniel, all before her respawn. shadNet took the later wipes for
+# their own (she stood at the lamp again by then) and her game, which never saw the wipe, gave the
+# boss's old HP back to everyone. Here the guest gives up first, then host and guest2 fall.
+SCENARIOS["boss-hp-staggered-wipe"] = {
+    "about": "the guest dies first while the others stand, then host and guest2 fall before its "
+             "respawn: the hurt boss-sized enemy is back at full HP in all three games",
+    "settings": PARTY_DEATH,
+    "roles": {
+        "host": [START, "godmode", "wait-session 3 480", f"approach {BIG_BY_THE_LAMP} 4 0",
+                 "wait 3", f"hurt {BIG_BY_THE_LAMP} 900", "wait 5", "census 40", "sync sw-hurt",
+                 "godmode off", f"teleport {WIPE3_SPOT['host']}", "wait 2", "hurt self 1",
+                 "sync sw-guest-dead", "rise 18", "wait-vital dead 60", "wait-vital up 150",
+                 "wait-members 3 300", "wait 20", "census 80",
+                 f"expect-hp {BIG_BY_THE_LAMP} == 1917", "sync sw-checked", "expect-session 3"],
+        "guest": [START, "godmode", "wait-session 3 480", "sync sw-hurt", "wait 3", "census 60",
+                  "godmode off", f"teleport {WIPE3_SPOT['guest']}", "wait 2", *GIVE_UP,
+                  "sync sw-guest-dead", "wait-vital up 60", "wait-members 3 300", "wait 20",
+                  "census 80", f"expect-hp {BIG_BY_THE_LAMP} == 1917", "sync sw-checked",
+                  "expect-session 3"],
+        "guest2": [START, "godmode", "wait-session 3 480", "sync sw-hurt", "wait 3", "census 60",
+                   "godmode off", f"teleport {WIPE3_SPOT['guest2']}", "wait 2", "hurt self 1",
+                   "sync sw-guest-dead", "rise 18", "wait-vital dead 60", "wait-vital up 150",
+                   "wait-members 3 300", "wait 20", "census 80",
+                   f"expect-hp {BIG_BY_THE_LAMP} == 1917", "sync sw-checked", "expect-session 3"],
+    },
+    "expect": {"guest": [r"giving up ends down \d+; dies \(reset=false",
+                         r"nobody else stands on map 0x18010000 before this member's respawn",
+                         r"travelling there \(reset=true"]},
+    "syncs": {name: {"chapter": "boss-hp-staggered-wipe", "roles": ["host", "guest", "guest2"]}
+              for name in ("sw-hurt", "sw-guest-dead", "sw-checked")},
+    "forbid": {role: SESSION_HOLDS for role in ("host", "guest", "guest2")},
+    "timeout": 900,
+}
+
 SCENARIOS["kill-reaches-arrival"] = {
     "about": "#278: the guest lands the killing hit on an enemy the host's game runs; guest2, in "
              "the Dream then, comes to Central Yharnam later and has it dead too",

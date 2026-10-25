@@ -43,10 +43,13 @@ public:
     unsigned Expire(std::int64_t now_ms);
     // A member's own events took it out (its leave).
     unsigned Forget(const std::string& member);
-    // Kaniel 2026-10-16: whether any member but `member` stands (up, on any map).
+    // Kaniel 2026-10-16: whether any member but `member` stands (up, on any map). A wipe comes
+    // after the death's animation: only a member that stood since `member` fell counts (Kaniel's
+    // play test 2026-10-25: the one that fell first stood at the lamp again by then).
     bool SomeoneStandsBesides(const std::string& member) const;
-    // Whether a member stands (up) on one of `maps`, but for the members of `member`'s wipes (the
-    // first of them to respawn may stand at the lamp again before the last one tells its wipe).
+    // Whether a member stands (up) on one of `maps`, as SomeoneStandsBesides, and but for the
+    // members of `member`'s wipes (the first of them to respawn may stand at the lamp again before
+    // the last one tells its wipe).
     bool SomeoneStandsOn(const std::vector<std::uint32_t>& maps, const std::string& member) const;
 
     bbcoop::MapBoard MapMessage() const;
@@ -67,7 +70,11 @@ private:
     };
     struct VitalsEntry : Heard {
         bbcoop::Vitals vitals;
+        std::int64_t up_since_ms = 0; // when it last stood up (0: never)
+        std::int64_t fell_ms = 0;     // when it last went down or died (0: never)
     };
+    // Whether `other` stands now and has stood since `member` fell.
+    bool StandsSinceFell(const VitalsEntry& other, const std::string& member) const;
     struct Wipe {
         bbcoop::VitalsBoard::Wipe wipe;
         std::int64_t declared_ms = 0;

@@ -1961,6 +1961,15 @@ void TickPartyDeath() {
         TickSpectating(run, tick, lamp_used);
         break;
     case Vital::Dead:
+        if (!tick.alive && tick.in_session && tick.map != 0 && tick.view.Fresh() &&
+            !tick.view.member.empty() &&
+            party_death_reset.StillDead(SomeoneElseStands(tick.board, tick.view.member, tick.map),
+                                        party_death_others_stand.load())) {
+            LOG_INFO(Debug,
+                     "Bloodborne party death: nobody else stands on map {:#x} before this "
+                     "member's respawn: its respawn resets the map too",
+                     tick.map);
+        }
         if (tick.alive) {
             run.downed.Alive(tick.now);
             died_to_invader.store(false, std::memory_order_relaxed);

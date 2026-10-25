@@ -10,6 +10,7 @@ namespace {
 
 constexpr std::uint32_t VitalUp = 1;
 constexpr std::uint32_t VitalDown = 2;
+constexpr std::uint32_t VitalDead = 3;
 
 bool Same(const google::protobuf::MessageLite& a, const google::protobuf::MessageLite& b) {
     return a.SerializeAsString() == b.SerializeAsString();
@@ -51,6 +52,17 @@ unsigned PartyBoards::Vitals(const std::string& member, const bbcoop::Vitals& me
                              std::int64_t now_ms) {
     VitalsEntry& entry = vitals[member];
     unsigned changed = entry.at_ms == 0 || !Same(entry.vitals, message) ? VitalsBoard : None;
+    const auto fallen = [](std::uint32_t vital) {
+        return vital == VitalDown || vital == VitalDead;
+    };
+    const bool was_up = entry.at_ms != 0 && entry.vitals.vital() == VitalUp;
+    const bool was_fallen = entry.at_ms != 0 && fallen(entry.vitals.vital());
+    if (message.vital() == VitalUp && !was_up) {
+        entry.up_since_ms = now_ms;
+    }
+    if (fallen(message.vital()) && !was_fallen) {
+        entry.fell_ms = now_ms;
+    }
     entry.vitals = message;
     entry.at_ms = now_ms;
     const std::uint32_t map = message.map();
@@ -85,10 +97,19 @@ unsigned PartyBoards::Vitals(const std::string& member, const bbcoop::Vitals& me
     return changed;
 }
 
+bool PartyBoards::StandsSinceFell(const VitalsEntry& other, const std::string& member) const {
+    if (other.vitals.vital() != VitalUp) {
+        return false;
+    }
+    const auto self = vitals.find(member);
+    return self == vitals.end() || self->second.fell_ms == 0 ||
+           other.up_since_ms <= self->second.fell_ms;
+}
+
 bool PartyBoards::SomeoneStandsBesides(const std::string& member) const {
     return std::ranges::any_of(vitals, [&](const auto& entry) {
         return entry.first != member && entry.second.vitals.map() != 0 &&
-               entry.second.vitals.vital() == VitalUp;
+               StandsSinceFell(entry.second, member);
     });
 }
 
@@ -103,7 +124,7 @@ bool PartyBoards::SomeoneStandsOn(const std::vector<std::uint32_t>& maps,
     }
     return std::ranges::any_of(vitals, [&](const auto& entry) {
         return entry.first != member && !wiped_with.contains(entry.first) &&
-               entry.second.vitals.vital() == VitalUp &&
+               StandsSinceFell(entry.second, member) &&
                std::ranges::find(maps, entry.second.vitals.map()) != maps.end();
     });
 }
