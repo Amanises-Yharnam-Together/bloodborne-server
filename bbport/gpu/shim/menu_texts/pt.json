@@ -422,7 +422,6 @@
  "Ping": "Marcar",
  "Duel": "Duelo",
  "End the duel": "Terminar o duelo",
- "The duel begins in %d": "O duelo começa dentro de %d",
  "Defeated: the duel goes on without you": "Derrotado: o duelo continua sem ti",
  "%s challenges you to a duel. Accept?": "%s desafia-te para um duelo. Aceitar?",
  "A duel is already under way.": "Já está a decorrer um duelo.",
@@ -464,5 +463,9 @@
  "Travel with the team?": "Viajar com a equipa?",
  "With the team": "Com a equipa",
  "Yes": "Sim",
- "none": "nenhuma"
+ "none": "nenhuma",
+ "The duel begins": "O duelo começa",
+ "Fight": "Luta",
+ "Co-op menu": "Menu cooperativo",
+ "Your team, invites and duels": "A tua equipa, convites e duelos"
 }

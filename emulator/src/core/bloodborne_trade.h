@@ -40,6 +40,9 @@ bool PlayerItemsReadable();
 // phantom, see PhantomKeyItemsToGiveBack) and what is in it; 0 and none when there is no data.
 u64 KeyItemList();
 std::vector<HeldGoods> HeldKeyGoods();
+// Kaniel 2026-10-25 (duels): the goods the player holds that are not key items (consumables,
+// materials), with their counts (the game's thread).
+std::vector<HeldGoods> HeldItemGoods();
 // The weapon ids (with their upgrade level) in the player's inventory, not the storage.
 std::vector<u32> HeldWeaponIds();
 // The player's gestures (PlayerGameData +0x5B8, see DecodeGestureSlot), learned or not; none when

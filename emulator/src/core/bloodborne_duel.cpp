@@ -5,6 +5,7 @@
 #include <cmath>
 #include <tuple>
 
+#include "coop/duel.h"
 #include "core/bloodborne_duel.h"
 
 namespace Core::Bloodborne {
@@ -45,7 +46,7 @@ bool InDuelPart(DuelPart part) {
 
 } // namespace
 
-DuelNews DuelFollower::Take(const bbcoop::DuelState& next, std::string_view me) {
+DuelNews DuelFollower::Take(const bbcoop::DuelState& next, std::string_view me, s64 now_ms) {
     DuelNews news;
     if (!next.refused().empty()) {
         news.refused = next.refused();
@@ -60,6 +61,17 @@ DuelNews DuelFollower::Take(const bbcoop::DuelState& next, std::string_view me) 
     state = next;
     state.clear_refused();
     part = PartOf(state, self);
+    if (next.duel() != countdown_duel) {
+        countdown_duel = next.duel();
+        countdown_until.reset();
+        fight_since.reset();
+    }
+    if (next.stage() == bbcoop::DuelState::COUNTDOWN && !countdown_until) {
+        countdown_until = now_ms + static_cast<s64>(next.left_ms());
+    }
+    if (next.stage() == bbcoop::DuelState::FIGHTING && !fight_since) {
+        fight_since = now_ms;
+    }
     news.asked = part == DuelPart::Asked && before != DuelPart::Asked;
     news.joined = InDuelPart(part) && !was_in;
     news.fight = part == DuelPart::Fighting && before != DuelPart::Fighting;
@@ -103,15 +115,44 @@ bool DuelFollower::MayPropose() const {
            state.stage() == bbcoop::DuelState::OVER;
 }
 
-DuelGiveBack DuelGiveBackOf(const DuelSupplies& before, const DuelSupplies& now, s32 max_hp) {
-    DuelGiveBack back;
-    const s32 hp = std::clamp(before.hp, 1, std::max(max_hp, 1));
-    if (now.hp != hp) {
-        back.hp = hp;
+std::optional<s32> DuelHpBack(s32 before, s32 now, s32 max_hp) {
+    const s32 hp = std::clamp(before, 1, std::max(max_hp, 1));
+    return now != hp ? std::optional{hp} : std::nullopt;
+}
+
+std::vector<HeldGoods> DuelGoodsGiveBack(std::span<const HeldGoods> before,
+                                         std::span<const HeldGoods> now) {
+    std::vector<HeldGoods> back;
+    for (const HeldGoods& kept : before) {
+        const auto held = std::ranges::find(now, kept.goods, &HeldGoods::goods);
+        const s32 count = held == now.end() ? 0 : held->count;
+        if (count < kept.count) {
+            back.push_back({kept.goods, kept.count - count});
+        }
     }
-    back.vials = before.vials > now.vials ? before.vials - now.vials : 0;
-    back.bullets = before.bullets > now.bullets ? before.bullets - now.bullets : 0;
     return back;
+}
+
+DuelCountdownShown DuelCountdownAt(std::optional<s64> until_ms, std::optional<s64> fight_ms,
+                                   s64 now_ms) {
+    if (!until_ms) {
+        return {};
+    }
+    if (now_ms < *until_ms && !fight_ms) {
+        const s64 left = *until_ms - now_ms;
+        return DuelCountdownShown{
+            .shown = true,
+            .number = static_cast<int>(std::clamp<s64>((left + 999) / 1000, 1, 9)),
+            .fill = std::clamp(1.0f - static_cast<float>(left) /
+                                          static_cast<float>(BloodborneCoop::DuelCountdownMs),
+                               0.0f, 1.0f)};
+    }
+    // The fight, from the server's (or the countdown's end, whichever came first).
+    const s64 from = fight_ms.value_or(*until_ms);
+    if (now_ms - from >= DuelFightShownMs) {
+        return {};
+    }
+    return DuelCountdownShown{.shown = true, .fill = 1.0f, .fight = true};
 }
 
 std::vector<s32> DuelAilmentsToEnd(std::span<const s32> before, std::span<const s32> now) {

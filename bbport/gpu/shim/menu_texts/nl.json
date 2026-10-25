@@ -422,7 +422,6 @@
  "Ping": "Markeren",
  "Duel": "Duel",
  "End the duel": "Duel beëindigen",
- "The duel begins in %d": "Het duel begint over %d",
  "Defeated: the duel goes on without you": "Verslagen: het duel gaat zonder jou verder",
  "%s challenges you to a duel. Accept?": "%s daagt je uit voor een duel. Accepteren?",
  "A duel is already under way.": "Er is al een duel bezig.",
@@ -464,5 +463,9 @@
  "Travel with the team?": "Met het team reizen?",
  "With the team": "Met het team",
  "Yes": "Ja",
- "none": "geen"
+ "none": "geen",
+ "The duel begins": "Het duel begint",
+ "Fight": "Vecht",
+ "Co-op menu": "Co-opmenu",
+ "Your team, invites and duels": "Je team, uitnodigingen en duels"
 }

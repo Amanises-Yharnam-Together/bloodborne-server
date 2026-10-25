@@ -33,6 +33,10 @@ void bbcoop_duel_view(bbcoop_duel* duel) {
     duel->may_cancel = view.may_cancel ? 1 : 0;
     duel->seconds_left = view.seconds_left;
     duel->fighters = static_cast<int>(view.fighters);
+    duel->countdown_shown = view.countdown.shown ? 1 : 0;
+    duel->countdown_number = view.countdown.number;
+    duel->countdown_fight = view.countdown.fight ? 1 : 0;
+    duel->countdown_fill = view.countdown.fill;
 }
 
 void bbcoop_duel_propose(void) {

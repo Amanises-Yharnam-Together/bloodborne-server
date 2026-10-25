@@ -422,7 +422,6 @@
  "Ping": "ピン",
  "Duel": "決闘",
  "End the duel": "決闘を終える",
- "The duel begins in %d": "決闘開始まで %d",
  "Defeated: the duel goes on without you": "敗北：決闘はあなた抜きで続きます",
  "%s challenges you to a duel. Accept?": "%sが決闘を申し込んでいます。受けますか？",
  "A duel is already under way.": "すでに決闘が行われています。",
@@ -464,5 +463,9 @@
  "Travel with the team?": "チームと一緒に移動しますか？",
  "With the team": "チームと",
  "Yes": "はい",
- "none": "なし"
+ "none": "なし",
+ "The duel begins": "決闘開始",
+ "Fight": "戦え",
+ "Co-op menu": "協力メニュー",
+ "Your team, invites and duels": "チーム、招待、決闘"
 }

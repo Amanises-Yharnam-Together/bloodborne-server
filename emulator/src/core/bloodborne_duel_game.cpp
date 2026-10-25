@@ -43,8 +43,10 @@ std::atomic<u32> catches{0};
 
 // The game thread's own.
 DuelFollower follower;
-std::optional<DuelSupplies> kept; // as this player joined the duel
-std::vector<s32> effects_before;  // the effects on it then
+// As this player joined the duel: its HP, its consumables and the effects on it.
+std::optional<s32> kept_hp;
+std::vector<HeldGoods> goods_before;
+std::vector<s32> effects_before;
 u32 seen_catches = 0;
 bool out_here = false; // put out by this game (waiting for the server to say so)
 u8 out_flags_added = 0;
@@ -64,14 +66,6 @@ constexpr s64 OffMapGiveBackMs = 10'000;
 u64 PlayerData(u64 player) {
     const u64 modules = player >= 0x10000 ? ReadValue<u64>(player, 0x3B0) : 0;
     return modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
-}
-
-DuelSupplies ReadSupplies(u64 data) {
-    return DuelSupplies{
-        .hp = ReadValue<s32>(data, 0xF8),
-        .vials = Coop::TradeHeld(TradeItem{TradeItemKind::Goods, BloodborneCoop::BloodVialGoods}),
-        .bullets = Coop::TradeHeld(
-            TradeItem{TradeItemKind::Goods, BloodborneCoop::QuicksilverBulletGoods})};
 }
 
 void Banner(s32 effect) {
@@ -197,23 +191,22 @@ void GiveBack(u64 player, u64 data, std::string_view why) {
         WriteValue(data, 0x200, static_cast<u8>(ReadValue<u8>(data, 0x200) & ~out_flags_added));
     }
     out_flags_added = 0;
-    if (!kept) {
+    if (!kept_hp) {
         return;
     }
     if (data >= 0x10000) {
-        const DuelSupplies now = ReadSupplies(data);
-        const DuelGiveBack back = DuelGiveBackOf(*kept, now, ReadValue<s32>(data, 0xFC));
-        if (back.hp) {
-            WriteValue(data, 0xF8, *back.hp);
+        const s32 hp = ReadValue<s32>(data, 0xF8);
+        const auto back = DuelHpBack(*kept_hp, hp, ReadValue<s32>(data, 0xFC));
+        if (back) {
+            WriteValue(data, 0xF8, *back);
         }
+        // Every consumable used comes back (Kaniel 2026-10-25), without the item popups.
         std::vector<TradeItem> items;
-        if (back.vials > 0) {
+        std::vector<std::string> given;
+        for (const HeldGoods& goods : DuelGoodsGiveBack(goods_before, Coop::HeldItemGoods())) {
             items.push_back(
-                TradeItem{TradeItemKind::Goods, BloodborneCoop::BloodVialGoods, back.vials});
-        }
-        if (back.bullets > 0) {
-            items.push_back(TradeItem{TradeItemKind::Goods, BloodborneCoop::QuicksilverBulletGoods,
-                                      back.bullets});
+                TradeItem{TradeItemKind::Goods, goods.goods, static_cast<u32>(goods.count)});
+            given.push_back(fmt::format("{} x{}", goods.goods, goods.count));
         }
         if (!items.empty() && Coop::TradeItemsCanBeAdded()) {
             Coop::AddTradeItems(items, Coop::ItemPopup::Silent);
@@ -222,12 +215,11 @@ void GiveBack(u64 player, u64 data, std::string_view why) {
         for (const s32 effect : ailments) {
             Coop::EndPlayerEffect(player, effect);
         }
-        LOG_INFO(Debug,
-                 "Co-op duel: given back ({}): hp {} -> {}, {} vials, {} bullets, ailments [{}]",
-                 why, now.hp, back.hp.value_or(now.hp), back.vials, back.bullets,
-                 fmt::join(ailments, " "));
+        LOG_INFO(Debug, "Co-op duel: given back ({}): hp {} -> {}, goods [{}], ailments [{}]", why,
+                 hp, back.value_or(hp), fmt::join(given, ", "), fmt::join(ailments, " "));
     }
-    kept.reset();
+    kept_hp.reset();
+    goods_before.clear();
     effects_before.clear();
 }
 
@@ -237,10 +229,11 @@ void TakeNews(const DuelNews& news, DuelPart before, std::string_view self, u64 
         Notice(follower.MayPropose() ? Coop::DuelNoticeKind::Alone : Coop::DuelNoticeKind::Busy);
     }
     if (news.joined && data >= 0x10000) {
-        kept = ReadSupplies(data);
+        kept_hp = ReadValue<s32>(data, 0xF8);
+        goods_before = Coop::HeldItemGoods();
         effects_before = Coop::LocalEffects();
-        LOG_INFO(Debug, "Co-op duel: in duel {} (hp {}, {} vials, {} bullets kept)", state.duel(),
-                 kept->hp, kept->vials, kept->bullets);
+        LOG_INFO(Debug, "Co-op duel: in duel {} (hp {}, {} kinds of goods kept)", state.duel(),
+                 *kept_hp, goods_before.size());
     }
     if (news.fight) {
         LOG_INFO(Debug, "Co-op duel: duel {} fights", state.duel());
@@ -339,7 +332,8 @@ void TickDuel() {
     const std::string& self = view.member;
     for (const bbcoop::DuelState& state : TakeDuelStates()) {
         const DuelPart before = follower.Part();
-        TakeNews(follower.Take(state, self), before, self, player, playing ? data : 0);
+        TakeNews(follower.Take(state, self, SteadyMilliseconds()), before, self, player,
+                 playing ? data : 0);
     }
     const bbcoop::DuelState& state = follower.State();
     const s64 now_ms = SteadyMilliseconds();
@@ -401,6 +395,22 @@ void TickDuel() {
     shown.part = follower.Part();
     shown.stage = state.stage();
     shown.seconds_left = static_cast<float>(state.left_ms()) / 1000.0f;
+    // Kaniel 2026-10-25: 3, 2, 1 and the fight, on this game's clock from the server's time left.
+    if (follower.Part() == DuelPart::Countdown || follower.Part() == DuelPart::Fighting) {
+        shown.countdown = DuelCountdownAt(follower.CountdownUntil(), follower.FightSince(), now_ms);
+    }
+    // Each step of it once in the log (the rig checks them).
+    static int counted = -1;
+    if (const int step = !shown.countdown.shown  ? -1
+                         : shown.countdown.fight ? 0
+                                                 : shown.countdown.number;
+        step != counted) {
+        counted = step;
+        if (step >= 0) {
+            LOG_INFO(Debug, "Co-op duel: countdown {} (bar {:.2f})",
+                     step == 0 ? std::string{"fight"} : std::to_string(step), shown.countdown.fill);
+        }
+    }
     shown.may_cancel = follower.InDuel().has_value() || follower.Part() == DuelPart::Answered;
     shown.may_propose = follower.MayPropose() && InPartySession() && map != 0 &&
                         std::ranges::any_of(view.board.members, [&](const MemberVitals& member) {

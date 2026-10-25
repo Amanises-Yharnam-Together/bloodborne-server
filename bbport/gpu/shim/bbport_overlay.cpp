@@ -2593,12 +2593,14 @@ void Menu() {
     }
     ImGui::Spacing();
     // Kaniel 2026-10-16: the team menu from here too (as from the game's System menu): the team
-    // screen over the game, with invite, remove, leave and join the hunt.
+    // screen over the game, with invite, remove, leave and join the hunt. Kaniel 2026-10-25: also
+    // Square from anywhere in this menu (F2 from the game), as its key guide says.
     if (bbcoop_lobby probe; bbcoop_lobby_view(&probe) &&
-                            Row("team", T("Co-op Team", "Кооп-команда"), nullptr,
-                                T("Your team: invite hunters, remove a member, leave, or join the hunt.",
-                                  "Ваша команда: пригласить охотников, исключить, покинуть или вступить в охоту."),
-                                true) != 0) {
+                            (Row("team", T("Co-op Team", "Кооп-команда"), nullptr,
+                                 T("Your team: invite hunters, remove a member, leave, or join the hunt.",
+                                   "Ваша команда: пригласить охотников, исключить, покинуть или вступить в охоту."),
+                                 true) != 0 ||
+                             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false))) {
         SetOpen(false);
         bbcoop_team_menu(2); // no page of the game under it
     }
@@ -2666,6 +2668,7 @@ void Menu() {
                                    {"Cross", "Enter", T("Change", "Изменить")},
                                    {"Circle", "Esc", T("Close", "Закрыть")},
                                    {"L1 R1", "Q E", T("Tabs", "Вкладки")},
+                                   {"Square", "F2", T("Co-op Team", "Кооп-команда")},
                                    {"L3+R3", "Insert", T("Menu", "Меню")},
                                    {"L3+R3", "", T("Hold: quit", "Удерживать: выход")}};
         ImGui::PushFont(MenuArt::Font(), 18.0f);
@@ -4694,15 +4697,64 @@ void DuelLine(ImDrawList* draw) {
     bbcoop_duel duel{};
     bbcoop_duel_view(&duel);
     const float mid = game.x + game.w * 0.5f, y = game.y + game.h * 0.22f;
-    char line[160];
-    if (duel.part == BBCOOP_DUEL_COUNTDOWN) {
-        std::snprintf(line, sizeof(line), T("The duel begins in %d", "Дуэль начнётся через %d"),
-                      int(std::ceil(std::max(duel.seconds_left, 0.0f))));
-        Text(draw, serif_font, S(34.0f), ImVec2(mid, y), Bone(), line, 0.5f);
+    if (duel.countdown_shown) {
+        // Kaniel 2026-10-25: 3, 2, 1 with a bar filling to the fight, then the fight's start, in
+        // the game's own letters and its HUD's whites (no banner).
+        ImFont* font = MenuArt::Font();
+        if (duel.countdown_fight) {
+            Text(draw, font, S(60.0f), ImVec2(mid, y), Bone(), T("Fight", "Бой"), 0.5f);
+        } else {
+            char number[8];
+            std::snprintf(number, sizeof(number), "%d", duel.countdown_number);
+            Text(draw, font, S(22.0f), ImVec2(mid, y - S(34.0f)), Bone(0.85f),
+                 T("The duel begins", "Дуэль начинается"), 0.5f);
+            Text(draw, font, S(72.0f), ImVec2(mid, y), Bone(), number, 0.5f);
+        }
+        const float w = S(320.0f), h = S(4.0f), by = y + S(86.0f);
+        const ImVec2 b0(mid - w * 0.5f, by), b1(mid + w * 0.5f, by + h);
+        draw->AddRectFilled(b0, b1, Rgba(0.0f, 0.0f, 0.0f, 0.6f));
+        draw->AddRectFilled(b0, ImVec2(b0.x + w * std::clamp(duel.countdown_fill, 0.0f, 1.0f), b1.y),
+                            Bone(0.9f));
+        draw->AddRect(ImVec2(b0.x - S(1.0f), b0.y - S(1.0f)), ImVec2(b1.x + S(1.0f), b1.y + S(1.0f)),
+                      Bone(0.45f), 0.0f, 0, S(1.0f));
     } else if (duel.part == BBCOOP_DUEL_OUT) {
         Text(draw, serif_font, S(22.0f), ImVec2(mid, y), Bone(0.85f),
              T("Defeated: the duel goes on without you", "Вы побеждены: дуэль идёт без вас"), 0.5f);
     }
+}
+
+/// Kaniel 2026-10-25: how to open the co-op menu (and that duels are in it), on the left under the
+/// party list, in the game's letters and button icons: a while once the player is in its team's
+/// hunt (the party HUD comes after a gap), then it fades out (BbKeyGuide::CoopHintAlpha).
+void CoopHint(ImDrawList* draw) {
+    using Ui::S;
+    using Ui::T;
+    static double since = -1.0, last = -1.0;
+    const double now = ImGui::GetTime();
+    if (last < 0.0 || now - last > 5.0) {
+        since = now;
+    }
+    last = now;
+    const float alpha = BbKeyGuide::CoopHintAlpha(now - since);
+    if (alpha <= 0.0f) {
+        return;
+    }
+    const float unit = BbPartyLayout::Stage(game).h / 1080.0f;
+    const float x = BbPartyLayout::HudX(game, 61.0f, shift), y = BbPartyLayout::HudY(game, 640.0f, shift);
+    const bool keyboard = Ui::Keys::IconSet() == 'k';
+    const float icon = 30.0f * unit;
+    ImFont* font = MenuArt::Font();
+    const float w = Ui::Keys::Glyphs(draw, keyboard ? "F2" : "L3+R3", keyboard, ImVec2(x, y), icon, alpha);
+    float tx = x + w + 8.0f * unit;
+    if (!keyboard) {
+        // The Insert menu, then Square: the co-op team screen.
+        Text(draw, font, 20.0f * unit, ImVec2(tx, y - 11.0f * unit), Bone(0.9f * alpha), ",", 0.0f);
+        tx += 10.0f * unit;
+        tx += Ui::Keys::Glyphs(draw, "Square", false, ImVec2(tx, y), icon, alpha) + 8.0f * unit;
+    }
+    Text(draw, font, 22.0f * unit, ImVec2(tx, y - 12.0f * unit), Bone(alpha), T("Co-op menu", "Кооп-меню"), 0.0f);
+    Text(draw, font, 17.0f * unit, ImVec2(x, y + 22.0f * unit), Bone(0.75f * alpha),
+         T("Your team, invites and duels", "Ваша команда, приглашения и дуэли"), 0.0f);
 }
 
 void Draw() {
@@ -4710,6 +4762,7 @@ void Draw() {
     const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
     RotLine(draw);
     DuelLine(draw);
+    CoopHint(draw);
     if (!panel.native_list) { // else the game's HUD shows it (the party HUD's CoopParty tags)
         MemberList(draw, pulse);
     } else if (!panel.native_supplies) { // else the HUD's own vial and bullet show them
@@ -7032,6 +7085,19 @@ bool HandleEvent(const SDL_Event& event) {
             BbSettings::Get().free_camera) {
             bbcoop_free_camera_toggle();
             return true;
+        }
+        // Kaniel 2026-10-25: F2 opens the co-op team screen from the game or the Insert menu (and
+        // closes it again).
+        if (down && !event.key.repeat && event.key.key == SDLK_F2 && !prompt_active && !quit_open) {
+            if (bbcoop_lobby probe; bbcoop_lobby_view(&probe)) {
+                if (Team::open) {
+                    bbcoop_team_menu(0);
+                } else if (!Map::open) {
+                    SetOpen(false);
+                    bbcoop_team_menu(2);
+                }
+                return true;
+            }
         }
         // Kaniel 2026-10-17: M opens the map in the world (the screen closes itself on M).
         if (down && !event.key.repeat && event.key.key == SDLK_M && !is_open && !prompt_active &&

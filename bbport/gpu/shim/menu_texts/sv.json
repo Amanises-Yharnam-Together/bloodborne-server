@@ -422,7 +422,6 @@
  "Ping": "Markera",
  "Duel": "Duell",
  "End the duel": "Avsluta duellen",
- "The duel begins in %d": "Duellen börjar om %d",
  "Defeated: the duel goes on without you": "Besegrad: duellen fortsätter utan dig",
  "%s challenges you to a duel. Accept?": "%s utmanar dig på duell. Anta?",
  "A duel is already under way.": "En duell pågår redan.",
@@ -464,5 +463,9 @@
  "Travel with the team?": "Resa med laget?",
  "With the team": "Med laget",
  "Yes": "Ja",
- "none": "inga"
+ "none": "inga",
+ "The duel begins": "Duellen börjar",
+ "Fight": "Strid",
+ "Co-op menu": "Co-op-meny",
+ "Your team, invites and duels": "Ditt lag, inbjudningar och dueller"
 }

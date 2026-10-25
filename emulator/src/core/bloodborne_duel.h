@@ -19,6 +19,7 @@
 
 #include "common/types.h"
 #include "coop.pb.h"
+#include "core/bloodborne_team.h"
 
 namespace Core::Bloodborne {
 
@@ -47,7 +48,8 @@ struct DuelNews {
 
 class DuelFollower {
 public:
-    DuelNews Take(const bbcoop::DuelState& state, std::string_view self);
+    // `now_ms`: this game's clock as it came (the countdown's times are kept on it).
+    DuelNews Take(const bbcoop::DuelState& state, std::string_view self, s64 now_ms = 0);
     DuelPart Part() const {
         return part;
     }
@@ -68,29 +70,45 @@ public:
     void Forget() {
         part = DuelPart::None;
     }
+    // When this game's countdown of the duel ends (the server's time left as it came), and when
+    // the server's fight came; nothing before.
+    std::optional<s64> CountdownUntil() const {
+        return countdown_until;
+    }
+    std::optional<s64> FightSince() const {
+        return fight_since;
+    }
 
 private:
     bbcoop::DuelState state;
     std::string self;
     DuelPart part = DuelPart::None;
+    u32 countdown_duel = 0; // the duel the times are of
+    std::optional<s64> countdown_until;
+    std::optional<s64> fight_since;
 };
 
-// What a duel takes, kept as it starts and given back at its end: HP, Blood Vials and
-// Quicksilver Bullets (more of either picked up meanwhile stay).
-struct DuelSupplies {
-    s32 hp = 0;
-    u32 vials = 0;
-    u32 bullets = 0;
-    bool operator==(const DuelSupplies&) const = default;
+// Kaniel 2026-10-25: the countdown as the screen shows it: the number (3, 2, 1), the bar's fill
+// (0 to 1 as the fight comes), then the fight's start for DuelFightShownMs.
+constexpr s64 DuelFightShownMs = 1'200;
+struct DuelCountdownShown {
+    bool shown = false;
+    int number = 0;
+    float fill = 0.0f;
+    bool fight = false;
+    bool operator==(const DuelCountdownShown&) const = default;
 };
-struct DuelGiveBack {
-    std::optional<s32> hp; // the HP to set
-    u32 vials = 0;         // to add
-    u32 bullets = 0;       // to add
-    bool operator==(const DuelGiveBack&) const = default;
-};
-// `before`: as the duel started; `now`: as it ended; `max_hp`: the player's max now.
-DuelGiveBack DuelGiveBackOf(const DuelSupplies& before, const DuelSupplies& now, s32 max_hp);
+DuelCountdownShown DuelCountdownAt(std::optional<s64> until_ms, std::optional<s64> fight_ms,
+                                   s64 now_ms);
+
+// What a duel takes, kept as it starts and given back at its end: the HP (the HP to set, nothing
+// when it is the same; `max_hp` the player's max now) ...
+std::optional<s32> DuelHpBack(s32 before, s32 now, s32 max_hp);
+// ... and every consumable (Kaniel 2026-10-25: all of them, so a duel may use anything): the goods
+// in the inventory (not the key items) back to their counts from the start, by what to add. Goods
+// picked up meanwhile stay; nothing is taken away.
+std::vector<HeldGoods> DuelGoodsGiveBack(std::span<const HeldGoods> before,
+                                         std::span<const HeldGoods> now);
 
 // Which bodies in this world are foes'. The board posts where each member stands; a body is the
 // member's posted nearest to it (each member one body, the nearest pairs first), within
@@ -132,6 +150,7 @@ struct DuelView {
     bool may_propose = false;  // in a party with someone else on this map, no duel under way
     bool may_cancel = false;   // in the duel (it is under way)
     u32 fighters = 0;          // duelists still standing
+    DuelCountdownShown countdown;
 };
 DuelView ReadDuel();
 // The team screen's buttons (any thread; the game thread sends them).

@@ -308,6 +308,24 @@ std::vector<HeldGoods> HeldKeyGoods() {
     return held;
 }
 
+std::vector<HeldGoods> HeldItemGoods() {
+    std::vector<HeldGoods> held;
+    const u64 data = PlayerGameData();
+    if (data < 0x10000) {
+        return held;
+    }
+    const u32 split = ReadValue<u32>(data + InventoryOffset, 0x24);
+    for (const u64 entry : InventoryEntries(data)) {
+        const u32 id = ReadValue<u32>(entry, 4);
+        const s32 count = ReadValue<s32>(entry, 8);
+        if (static_cast<u32>(EntryIndex(data, entry)) >= split &&
+            (id & 0xF0000000) == GoodsCategory && count > 0) {
+            held.push_back({id & ~GoodsCategory, count});
+        }
+    }
+    return held;
+}
+
 std::vector<u32> HeldWeaponIds() {
     std::vector<u32> held;
     const u64 data = PlayerGameData();

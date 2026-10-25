@@ -422,7 +422,6 @@
  "Ping": "标记",
  "Duel": "决斗",
  "End the duel": "结束决斗",
- "The duel begins in %d": "决斗将在 %d 秒后开始",
  "Defeated: the duel goes on without you": "落败：决斗将在没有你的情况下继续",
  "%s challenges you to a duel. Accept?": "%s 向你发起决斗。接受吗？",
  "A duel is already under way.": "已有决斗正在进行。",
@@ -464,5 +463,9 @@
  "Travel with the team?": "与队伍一同前往？",
  "With the team": "与队伍一起",
  "Yes": "是",
- "none": "无"
+ "none": "无",
+ "The duel begins": "决斗开始",
+ "Fight": "战斗",
+ "Co-op menu": "合作菜单",
+ "Your team, invites and duels": "队伍、邀请与决斗"
 }
