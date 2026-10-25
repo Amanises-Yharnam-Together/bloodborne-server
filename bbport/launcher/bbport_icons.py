@@ -1041,13 +1041,14 @@ def prompt_sets(tpf, ini):
     return bytes(out)
 
 
-def ensure_prompt_sets(game_dir, out_dir, ini):
-    """(path, built): out_dir/icons/prompts-<key>.bin for the game's common.tpf.dcx and the bindings in ini, made
-    once per source and bindings (built False when reused). IconError says why the game's file cannot be used."""
+def ensure_prompt_sets(game_dir, out_dir, ini, source=None):
+    """(path, built): out_dir/icons/prompts-<key>.bin for the game's common.tpf.dcx (or `source`, a mod's own, which
+    the game loads instead) and the bindings in ini, made once per source and bindings (built False when reused).
+    IconError says why the file cannot be used."""
     import hashlib
     import os
     from pathlib import Path
-    source = Path(game_dir) / COMMON_TPF
+    source = Path(source) if source else Path(game_dir) / COMMON_TPF
     if not source.is_file():
         raise IconError(f'{COMMON_TPF} is not in the game folder')
     digest = source_hash(source)
@@ -1089,16 +1090,16 @@ def cache_key(source_sha256, icon_set, ini):
     return hashlib.sha256(f'{ICONS_VERSION}|{source_sha256}|{icon_set}|{shown}'.encode()).hexdigest()[:16]
 
 
-def ensure_layer(game_dir, out_dir, icon_set, ini):
+def ensure_layer(game_dir, out_dir, icon_set, ini, source=None):
     """(folder, built, kept): a folder, under out_dir/icons, that is a mod layer (dvdroot_ps4/menu/common.tpf.dcx) with the
-    icons for icon_set and the bindings in ini. A file made before for the same source, set and bindings is reused
-    (built False). kept is how many baked atlas buttons kept their PlayStation art. IconError says why the game's
-    file cannot be used."""
+    icons for icon_set and the bindings in ini, drawn on the game's file or on `source` (a mod's own, which the game
+    loads instead). A file made before for the same source, set and bindings is reused (built False). kept is how
+    many baked atlas buttons kept their PlayStation art. IconError says why the file cannot be used."""
     import json
     import os
     import shutil
     from pathlib import Path
-    source = Path(game_dir) / COMMON_TPF
+    source = Path(source) if source else Path(game_dir) / COMMON_TPF
     if not source.is_file():
         raise IconError(f'{COMMON_TPF} is not in the game folder')
     digest = source_hash(source)

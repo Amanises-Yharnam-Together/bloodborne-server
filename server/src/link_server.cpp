@@ -4,10 +4,51 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QFutureWatcher>
+#include <QJsonDocument>
+#include <QPromise>
 #include <QRandomGenerator>
+#include <QThreadPool>
 #include <QtEndian>
+#include "admin.h"
+#include "bbcoop_revision.h"
+#include "config.h"
+#include "coop/build_fingerprint.h"
 #include "link_server.h"
+
+namespace {
+
+// What a refused hello's game hears when its id got no account for a reason the player can act on.
+QByteArray RefusalOf(DbError why) {
+    if (why == DbError::ExistingAddress)
+        return "address taken: another account's game has this id's virtual address; the launcher "
+               "needs a new id";
+    return {};
+}
+
+// This server's release: BB_RELEASE_VERSION, else the release's VERSION.txt (beside the server's
+// folder, as the launcher reads it), else "" (a dev build).
+QString ReleaseVersion() {
+    const QString given = qEnvironmentVariable("BB_RELEASE_VERSION");
+    if (!given.isEmpty()) {
+        return given;
+    }
+    const QDir folder{QCoreApplication::applicationDirPath()};
+    for (const QString& path : {folder.filePath(QStringLiteral("../VERSION.txt")),
+                                folder.filePath(QStringLiteral("VERSION.txt"))}) {
+        QFile file{path};
+        if (file.open(QIODevice::ReadOnly)) {
+            return QString::fromStdString(
+                BloodborneCoop::ReleaseVersionOf(file.read(4096).toStdString()));
+        }
+    }
+    return {};
+}
+
+} // namespace
 
 LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_port,
                        QObject* parent)
@@ -21,6 +62,17 @@ LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_
     m_link.SetSignIn([this](const QByteArray& online_id, const QByteArray& secret) {
         return SignIn(online_id, secret);
     });
+    // Build check on join: a game runs this server's release, or it is refused.
+    const auto own = BloodborneCoop::EncodeBuildFingerprint(
+        BloodborneCoop::ServerBuildFingerprint(ReleaseVersion().toStdString(), BB_SCM_REV));
+    if (!shared->config || shared->config->IsServerBuildChecked()) {
+        m_link.SetServerBuild(QByteArray::fromStdString(own));
+        qInfo().noquote() << "Link: games must run this server's build:"
+                          << QString::fromStdString(own);
+    } else {
+        qInfo().noquote() << "Link: this server's build (" << QString::fromStdString(own)
+                          << ") is not checked (CheckServerBuild=false): the games here only";
+    }
     connect(m_socket, &QUdpSocket::readyRead, this, &LinkServer::OnReadyRead);
     connect(m_linkTimer, &QTimer::timeout, this, &LinkServer::OnLinkTick);
     connect(m_worldTimer, &QTimer::timeout, this, &LinkServer::OnWorldTick);
@@ -66,6 +118,27 @@ LinkServer::LinkServer(SharedState* shared, const QString& db_path, quint16 tcp_
         m_banTimer = new QTimer(this);
         connect(m_banTimer, &QTimer::timeout, this, &LinkServer::LoadBanList);
         m_banTimer->start(30'000);
+        if (!m_hosted.adminSocket.isEmpty()) {
+            // Never a network port: a socket file only the server's own user may open. A path, so
+            // Qt keeps it where it is said (a bare name would go to the temp folder).
+            const QString path = QFileInfo{m_hosted.adminSocket}.absoluteFilePath();
+            m_admin = new QLocalServer(this);
+            m_admin->setSocketOptions(QLocalServer::UserAccessOption);
+            if (QString why; Admin::ListenAdmin(*m_admin, path, why)) {
+                connect(m_admin, &QLocalServer::newConnection, this,
+                        &LinkServer::OnAdminConnection);
+                qInfo().noquote() << "Hosted: the operator's commands on" << path;
+            } else {
+                qWarning().noquote() << "Hosted: no admin socket at" << path << ":" << why;
+            }
+        }
+        if (m_hosted.retireDays > 0) {
+            // Daily, the first a minute after the start (the list is read by then).
+            m_retireTimer = new QTimer(this);
+            connect(m_retireTimer, &QTimer::timeout, this, &LinkServer::RetireWorlds);
+            m_retireTimer->start(24 * 3600 * 1000);
+            QTimer::singleShot(60'000, this, &LinkServer::RetireWorlds);
+        }
         qInfo().noquote() << QStringLiteral(
                                  "Hosted: %1 links an address, %2 hellos/s, %3 new accounts/h, "
                                  "%4 datagrams/s and %5 bytes/s a link, build %6")
@@ -108,12 +181,81 @@ LinkServer::~LinkServer() {
 }
 
 void LinkServer::LoadBanList() {
-    QFile file(m_hosted.banList);
-    QSet<quint32> addresses;
-    QSet<QByteArray> ids;
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text))
-        Admission::ParseBanList(QString::fromUtf8(file.readAll()), addresses, ids);
-    m_guard.SetBanned(addresses, ids);
+    Admin::LoadBans(m_hosted.banList, QDateTime::currentSecsSinceEpoch(), m_guard);
+    // A linked game banned now goes now (the guard checks ids at the hello only).
+    Apply(Admin::KickBanned(m_link, m_guard, m_clock.elapsed()));
+}
+
+void LinkServer::OnAdminConnection() {
+    while (QLocalSocket* socket = m_admin->nextPendingConnection()) {
+        connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+        connect(socket, &QLocalSocket::readyRead, this, [this, socket] {
+            // One command a connection, one line.
+            if (!socket->canReadLine()) {
+                if (socket->bytesAvailable() > 4096)
+                    socket->abort();
+                return;
+            }
+            const QString line = QString::fromUtf8(socket->readLine(4096)).trimmed();
+            RunAdmin(socket, line);
+        });
+    }
+}
+
+void LinkServer::RunAdmin(QLocalSocket* socket, const QString& line) {
+    Admin::Context context{m_link, m_world, m_guard};
+    context.ban_list = m_hosted.banList;
+    context.link_ms = m_clock.elapsed();
+    context.wall_ms = QDateTime::currentMSecsSinceEpoch();
+    context.retire_ms = qint64{std::max(0, m_hosted.retireDays)} * 24 * 3600 * 1000;
+    context.link_load = m_linkLoad;
+    const Admin::Answer answer = Admin::Run(line, context);
+    qInfo().noquote() << "Admin:" << line << (answer.json["ok"].toBool() ? "done" : "refused");
+    Apply(answer.link);
+    Apply(answer.world);
+    const auto reply = [socket](const QJsonObject& json) {
+        socket->write(QJsonDocument{json}.toJson(QJsonDocument::Compact) + '\n');
+        socket->disconnectFromServer();
+    };
+    if (!answer.finish) {
+        reply(answer.json);
+        return;
+    }
+    // What reads the disk runs on the pool, the answer comes back here (none if the operator's
+    // connection went: the watcher goes with it).
+    auto promise = std::make_shared<QPromise<QJsonObject>>();
+    auto* watcher = new QFutureWatcher<QJsonObject>(socket);
+    connect(watcher, &QFutureWatcherBase::finished, socket,
+            [watcher, reply] { reply(watcher->result()); });
+    watcher->setFuture(promise->future());
+    QThreadPool::globalInstance()->start(
+        [promise, finish = answer.finish, json = answer.json]() mutable {
+            promise->start();
+            finish(json);
+            promise->addResult(json);
+            promise->finish();
+        });
+}
+
+void LinkServer::RetireWorlds() {
+    BloodborneWorld::Service::Result result;
+    const auto retired = m_world.Retire(QDateTime::currentMSecsSinceEpoch(),
+                                        qint64{m_hosted.retireDays} * 24 * 3600 * 1000, result);
+    Apply(result);
+    qInfo().noquote() << QStringLiteral("Hosted: %1 worlds not played for %2 days put aside")
+                             .arg(retired.size())
+                             .arg(m_hosted.retireDays);
+}
+
+void LinkServer::Busy(const QElapsedTimer& since) {
+    m_busyNs += since.nsecsElapsed();
+    if (!m_loadClock.isValid()) {
+        m_loadClock.start();
+    } else if (const qint64 window = m_loadClock.nsecsElapsed(); window >= 10'000'000'000) {
+        m_linkLoad = static_cast<double>(m_busyNs) / static_cast<double>(window);
+        m_busyNs = 0;
+        m_loadClock.restart();
+    }
 }
 
 bool LinkServer::Start(const QHostAddress& addr, uint16_t port) {
@@ -131,6 +273,8 @@ bool LinkServer::Start(const QHostAddress& addr, uint16_t port) {
 }
 
 void LinkServer::OnReadyRead() {
+    QElapsedTimer busy;
+    busy.start();
     while (m_socket->hasPendingDatagrams()) {
         QByteArray raw;
         raw.resize(static_cast<int>(m_socket->pendingDatagramSize()));
@@ -146,6 +290,7 @@ void LinkServer::OnReadyRead() {
             HandleLink(raw, sender, senderPort);
         }
     }
+    Busy(busy);
 }
 
 void LinkServer::HandleLink(const QByteArray& datagram, const QHostAddress& sender,
@@ -192,37 +337,45 @@ bool LinkServer::Admit(const QByteArray& datagram, ServerLink::Kind kind, quint3
 }
 
 void LinkServer::OnLinkTick() {
+    QElapsedTimer busy;
+    busy.start();
     Apply(m_link.Tick(m_clock.elapsed()));
+    Busy(busy);
 }
 
 void LinkServer::OnWorldTick() {
+    QElapsedTimer busy;
+    busy.start();
     Apply(m_world.Tick(QDateTime::currentMSecsSinceEpoch()));
     // The Rpc tunnels' resends and keepalives.
     for (auto& [id, end] : m_rpc)
         FlushRpc(*end);
+    Busy(busy);
 }
 
-std::optional<bool> LinkServer::SignIn(const QByteArray& online_id, const QByteArray& secret) {
+std::optional<ServerLink::SignInVerdict> LinkServer::SignIn(const QByteArray& online_id,
+                                                            const QByteArray& secret) {
     // A hello comes again every second until it is welcomed, and after every outage: the
     // password's hash (100k rounds) only the first time.
     const QByteArray hash = QCryptographicHash::hash(secret, QCryptographicHash::Sha256);
     const auto known = m_signedIn.constFind(online_id);
     if (known != m_signedIn.constEnd())
-        return *known == hash;
+        return ServerLink::SignInVerdict{*known == hash, {}};
     bool make = !m_shared->config || m_shared->config->IsMakingAccountsAtSignIn();
     if (!m_hosted.enabled) {
-        const auto user =
-            m_db.SignIn(QString::fromUtf8(online_id), QString::fromUtf8(secret), {}, false, make);
+        DbError why = DbError::None;
+        const auto user = m_db.SignIn(QString::fromUtf8(online_id), QString::fromUtf8(secret), {},
+                                      false, make, &why);
         if (!user)
-            return false;
+            return ServerLink::SignInVerdict{false, RefusalOf(why)};
         m_signedIn.insert(online_id, hash);
-        return true;
+        return ServerLink::SignInVerdict{true, {}};
     }
     // Hosted: on the sign-in thread; the game's next hello hears the verdict.
     const qint64 now = m_clock.elapsed();
     if (const auto refused = m_signInRefused.constFind(online_id);
         refused != m_signInRefused.constEnd() && refused->hash == hash && refused->until_ms > now)
-        return false;
+        return ServerLink::SignInVerdict{false, refused->refusal};
     if (m_signInPending.contains(online_id))
         return std::nullopt;
     // A flood of new ids from many addresses: no more checks queued than the pool clears in a few
@@ -247,13 +400,15 @@ std::optional<bool> LinkServer::SignIn(const QByteArray& online_id, const QByteA
         }
         const QString id = QString::fromUtf8(online_id);
         const bool existed = db->GetUserId(id).has_value();
+        DbError why = DbError::None;
         const bool accepted =
-            db->SignIn(id, QString::fromUtf8(secret), {}, false, make).has_value();
+            db->SignIn(id, QString::fromUtf8(secret), {}, false, make, &why).has_value();
         const bool made = accepted && !existed;
+        const QByteArray refusal = accepted ? QByteArray{} : RefusalOf(why);
         QMetaObject::invokeMethod(
             this,
-            [this, online_id, hash, accepted, made, address, make] {
-                SignedIn(online_id, hash, accepted, made, address, make);
+            [this, online_id, hash, accepted, made, address, make, refusal] {
+                SignedIn(online_id, hash, accepted, made, address, make, refusal);
             },
             Qt::QueuedConnection);
     });
@@ -261,7 +416,7 @@ std::optional<bool> LinkServer::SignIn(const QByteArray& online_id, const QByteA
 }
 
 void LinkServer::SignedIn(const QByteArray& online_id, const QByteArray& hash, bool accepted,
-                          bool made, quint32 address, bool counted) {
+                          bool made, quint32 address, bool counted, const QByteArray& refusal) {
     m_signInPending.remove(online_id);
     const qint64 now = m_clock.elapsed();
     if (accepted) {
@@ -275,7 +430,7 @@ void LinkServer::SignedIn(const QByteArray& online_id, const QByteArray& hash, b
         // A wrong password (or no account allowed) is not hashed again for 30 s.
         if (m_signInRefused.size() > 100'000)
             m_signInRefused.clear();
-        m_signInRefused.insert(online_id, Refused{hash, now + 30'000});
+        m_signInRefused.insert(online_id, Refused{hash, now + 30'000, refusal});
     }
 }
 

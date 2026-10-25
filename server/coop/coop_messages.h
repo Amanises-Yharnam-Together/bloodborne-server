@@ -5,6 +5,7 @@
 // shadNet build the same messages from the same values.
 #pragma once
 
+#include <array>
 #include <optional>
 #include <span>
 #include <string>
@@ -55,6 +56,18 @@ struct SnapshotParts {
     WorldLogFlagsSnapshot flags;
 };
 SnapshotParts PartsOf(const bbcoop::Snapshot& snapshot);
+
+// Kaniel 2026-10-24: a team ping as the games keep it (bbcoop::Ping); `member` is the server's.
+struct TeamPing {
+    std::string member;
+    u32 map = 0;
+    std::array<float, 3> at{};
+    u32 enemy = 0;
+    u32 seq = 0;
+    bool from_map = false;
+};
+bbcoop::Ping ToMessage(const TeamPing& ping);
+TeamPing PingOf(const bbcoop::Ping& message);
 
 // The world store's copy of a log (WorldLogHost::State).
 bbcoop::StoredHost ToMessage(const WorldLogHost::State& state);

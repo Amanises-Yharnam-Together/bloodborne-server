@@ -52,6 +52,7 @@ void ConfigManager::Parse(const QString& path) {
     m_statsEnabled = boolean("StatsEnabled", true);
     m_matching2Enabled = boolean("Matching2Enabled", true);
     m_bloodborneSeamlessCoop = boolean("BloodborneSeamlessCoop", false);
+    m_checkServerBuild = boolean("CheckServerBuild", true);
     m_backend.enabled = boolean("BloodborneBackend", true);
     m_backend.port = str("BackendPort", "20443").toUShort();
     m_backend.address = str("BackendAddress", "").trimmed();
@@ -79,6 +80,8 @@ void ConfigManager::Parse(const QString& path) {
     m_invasions.sign = str("InvasionSign", "4").toUInt(nullptr, 0);
     m_hosted.stats = boolean("HostedStats", false);
     m_hosted.reports = boolean("HostedReports", false);
+    m_hosted.adminSocket = str("HostedAdminSocket", "admin.sock").trimmed();
+    m_hosted.retireDays = str("HostedRetireDays", "0").toInt();
     m_httpLinkedOnly = boolean("HttpLinkedOnly", false);
     m_statsPort = str("StatsPort", "31320");
     m_statsPath = str("StatsPath", "stats");

@@ -5,10 +5,14 @@
 
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <atomic>
+#include <vector>
+
+#include "bbport_output_sizes.h"
 
 namespace BbSettings {
 
@@ -65,11 +69,14 @@ inline constexpr Effect Effects[] = {
     {"tweak_ragdoll", "Dark Souls-style body physics", "Физика тел как в Dark Souls", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
-/// Live output resolutions: the upscaler's output and the UI host targets.
-inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
-inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
-inline constexpr int OutputCount = 4;
-inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
+/// Output resolutions (bbport_output_sizes.h): the upscaler's output and the UI host targets,
+/// any size the display has. Live unless the startup patch fixed the session's size.
+using OutputSize = BbOutputSizes::Size;
+/// The output's aspect ratio (bbport.ini aspect_ratio): Auto follows the output (a wider output
+/// sees more to the sides, a taller one more above and below), 16:9 keeps the game's picture with
+/// bars around it.
+enum AspectMode : int { AspectAuto = 0, Aspect16x9 = 1, AspectModeCount };
+inline constexpr const char* AspectModeNames[] = {"auto", "16:9"};
 /// The frame caps the game menu offers (FPS limit), 0 = none.
 inline constexpr int FpsLimits[] = {0, 30, 60, 90, 120, 144, 165, 240};
 inline constexpr int FpsLimitCount = int(sizeof(FpsLimits) / sizeof(FpsLimits[0]));
@@ -88,6 +95,10 @@ enum Map3d { Map3dOff, Map3dPrerendered, Map3dLive, Map3dCount };
 /// the bottom of the screen, or a ring around its middle.
 enum CompassPosition : int { CompassTop = 0, CompassBottom = 1, CompassReticle = 2, CompassPositionCount };
 inline constexpr const char* CompassPositionNames[] = {"top", "bottom", "reticle"};
+/// Kaniel 2026-10-24 (team pings): the keys the ping key may be (bbport.ini ping_key, SDL's key
+/// names): none of them is in the default keyboard layout (runtime_pad.c) or the overlay's own.
+inline constexpr const char* PingKeyNames[] = {"T", "V", "Z", "X", "B", "H", "N", "Y", "U", "O", "P", "CapsLock"};
+inline constexpr int PingKeyCount = int(sizeof(PingKeyNames) / sizeof(PingKeyNames[0]));
 /// Kaniel 2026-10-19: screen-space lighting (vk_screen_lighting.h; bbport.ini screen_lighting):
 /// ambient occlusion and one bounce of indirect light, traced at half (low) or full (high) size.
 enum ScreenLighting : int {
@@ -141,6 +152,10 @@ struct Values {
     /// Kaniel 2026-10-20: the party's bloodstains on the compass and the map (bbport.ini
     /// bloodstains, on by default).
     std::atomic<bool> bloodstains{true};
+    /// Kaniel 2026-10-24: team pings (bbport.ini team_pings, on by default) and the key that
+    /// places one where the camera aims (ping_key, an index into PingKeyNames, kept by name).
+    std::atomic<bool> team_pings{true};
+    std::atomic<int> ping_key{0};
     /// Kaniel 2026-10-19 ("make it opt in, so low vram cards will not prerender it", "an opt in
     /// option to view rendered in real time 3d map"): the map screen's 3D view (bbport.ini map_3d,
     /// Map3d*, off by default): prerendered pictures, or the models drawn live on the GPU.
@@ -166,7 +181,10 @@ struct Values {
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
-    std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
+    /// The chosen output (BbOutputSizes::Pack; bbport.ini output_res), 0 until one is chosen
+    /// (ChosenOutput: the game's 1080 lines in the desktop's shape).
+    std::atomic<std::uint32_t> output_res{0};
+    std::atomic<int> aspect{AspectAuto}; ///< AspectMode
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
     std::atomic<int> live_resolution{0};
@@ -236,7 +254,8 @@ struct Values {
     int startup_model_lod = 0;
     bool startup_fast_shader_math = false;
     int startup_fov = FovDefault;
-    int startup_output_res = OutputDefault;
+    /// The output the startup patch was made for (BB_OUTPUT_RES), else the chosen one at start.
+    OutputSize startup_output{1920, 1080};
     int startup_live_resolution = 0;
 };
 
@@ -263,6 +282,24 @@ void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
 void ConfigureDlssSupport(bool available, const char* problem);
 /// After device creation: XeSS availability; an XeSS setting falls back to FSR 3.1 without it.
 void ConfigureXessSupport(bool available, const char* problem);
+/// The display the game's window is on (window.cpp): its modes and its desktop size.
+void SetDisplay(std::vector<OutputSize> modes, OutputSize desktop);
+OutputSize Desktop();
+/// The resolutions the menus offer (BbOutputSizes::Choices of the display).
+std::vector<OutputSize> OutputChoices();
+/// The output chosen in a menu or bbport.ini; before any choice the game's 1080 lines in the
+/// desktop's shape (2560x1080 on a 21:9 monitor; 1920x1080 while the desktop is unknown).
+OutputSize ChosenOutput();
+/// What the upscaler makes and the UI is drawn at for `chosen`: borderless takes the window's
+/// (the desktop's) shape, aspect 16:9 the largest 16:9 inside.
+OutputSize ResolveOutput(OutputSize chosen, int aspect, int window_mode, OutputSize desktop);
+OutputSize CurrentOutput();
+/// A menu's choice; borderless keeps it in the desktop's shape (so the next start's patch, made
+/// from bbport.ini, has the size the game shows).
+void ChooseOutput(OutputSize size);
+/// Borderless: a chosen output of another shape than the desktop is refitted (and saved).
+void FitChosenOutputToDesktop();
+
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
 bool FixedRenderSession();
 int RenderPreset();

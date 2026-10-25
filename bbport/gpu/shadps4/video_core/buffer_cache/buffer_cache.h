@@ -382,8 +382,7 @@ private:
     /// Unbinds a VRAM block of memory the game unmapped (uploaded again if mapped and used).
     void EvictVramBlock(u64 block);
     [[nodiscard]] static u32 VramIdleSeconds();
-    void DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size, bool is_write,
-                        bool async);
+    void DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size, bool async);
 
     bool SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size, bool is_written,
                            bool is_texel_buffer);

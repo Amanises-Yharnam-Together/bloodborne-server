@@ -200,6 +200,10 @@ struct Game {
       loads[envelope.load_progress().member()] = envelope.load_progress();
     } else if (envelope.has_enemy_hit()) {
       hits.push_back(envelope.enemy_hit());
+    } else if (envelope.has_altar_record()) {
+      altar_records.push_back(envelope.altar_record());
+    } else if (envelope.has_ping()) {
+      pings.push_back(envelope.ping());
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -267,6 +271,8 @@ struct Game {
   int sessions = 0;
   std::map<std::string, bbcoop::LoadProgress> loads;
   std::vector<bbcoop::EnemyHit> hits;
+  std::vector<bbcoop::AltarRecord> altar_records;
+  std::vector<bbcoop::Ping> pings;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -1244,6 +1250,86 @@ int AHitReachesTheOthersAtOnce() {
   }
   CHECK(guest.hits.empty());
   CHECK(host.member.Hp().empty());
+  return 0;
+}
+
+// Kaniel's playtest 2026-10-24 (team altars): a ritual's altar record goes to
+// every other member whole and as it is, under its sender's name.
+int AnAltarRecordReachesTheOthersWhole() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  const std::vector<Game *> games{&host, &guest, &other};
+  qint64 now = 1'000'000;
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  std::string bits(750, '\0');
+  bits[0] = '\x1d';
+  bits[1] = '\x0a';
+  bits[2] = '\x5a';
+  bits[749] = '\x01';
+  bbcoop::Envelope record;
+  record.mutable_altar_record()->set_altar(6);
+  record.mutable_altar_record()->set_bits(bits);
+  record.mutable_altar_record()->set_member("spoofed");
+  guest.Send(record, now + 10);
+  Pump(service, games, now + 10);
+  for (Game *game : {&host, &other}) {
+    CHECK(game->altar_records.size() == 1);
+    CHECK(game->altar_records[0].member() == "guest");
+    CHECK(game->altar_records[0].altar() == 6);
+    CHECK(game->altar_records[0].bits() == bits);
+  }
+  CHECK(guest.altar_records.empty());
+  return 0;
+}
+
+// Kaniel 2026-10-24: a team ping goes to every other member of the party at
+// once, under the sender's name (never the name it claims), wherever they are;
+// not back to its sender and not to another party. The server keeps nothing.
+int APingReachesTheTeamAtOnce() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  Game stranger{1003, "stranger", 14};
+  const std::vector<Game *> games{&host, &guest, &other, &stranger};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  other.Hello(now);
+  stranger.Hello(now, "someone:else");
+  Pump(service, games, now);
+  other.Map(0x17000000, now); // another map: still in the team
+  Pump(service, games, now);
+  bbcoop::Envelope ping;
+  ping.mutable_ping()->set_map(0x18010000);
+  ping.mutable_ping()->mutable_at()->set_x(-215.5f);
+  ping.mutable_ping()->mutable_at()->set_y(-54.25f);
+  ping.mutable_ping()->mutable_at()->set_z(178.0f);
+  ping.mutable_ping()->set_enemy(0x1001400b);
+  ping.mutable_ping()->set_seq(3);
+  ping.mutable_ping()->set_member("spoofed");
+  guest.Send(ping, now + 10);
+  Pump(service, games, now + 10);
+  for (Game *game : {&host, &other}) {
+    CHECK(game->pings.size() == 1);
+    CHECK(game->pings[0].member() == "guest");
+    CHECK(game->pings[0].map() == 0x18010000u && game->pings[0].seq() == 3u);
+    CHECK(game->pings[0].at().x() == -215.5f &&
+          game->pings[0].at().z() == 178.0f);
+    CHECK(game->pings[0].enemy() == 0x1001400bu);
+  }
+  CHECK(guest.pings.empty());
+  CHECK(stranger.pings.empty());
+  // A member joining later hears no old ping: pings are not kept.
+  Game late{1004, "late", 15};
+  late.Hello(now + 20);
+  Pump(service, {&host, &guest, &other, &late}, now + 20);
+  CHECK(late.pings.empty());
   return 0;
 }
 
@@ -2808,6 +2894,106 @@ int TheWorldsInMemoryAreCapped() {
   return 0;
 }
 
+// A world collected while nobody is in it keeps where its guests stood: a
+// guest's next run resumes there as before.
+int ACollectedWorldKeepsItsPlaces() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  Service service{folder.path()};
+  BloodborneWorld::Limits limits;
+  limits.idle_world_ms = 60'000;
+  service.SetLimits(limits);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  host.Hello(now);
+  guest.Hello(now);
+  Pump(service, {&host, &guest}, now);
+  bbcoop::Envelope vitals = VitalsOf(0x18010000, 1);
+  vitals.mutable_vitals()->mutable_at()->set_x(-215.5f);
+  vitals.mutable_vitals()->mutable_at()->set_z(172.25f);
+  guest.Send(vitals, now + 10);
+  Pump(service, {&host, &guest}, now + 10);
+  service.Forget(host.endpoint);
+  service.Forget(guest.endpoint);
+  service.Tick(now + 1000);
+  service.Tick(now + 70'000);
+  CHECK(service.Parties() == 0);
+  Game host_again{1002, "host", 21};
+  Game guest_again{1003, "guest", 22};
+  host_again.run = guest_again.run = 0x2002;
+  host_again.Hello(now + 80'000);
+  guest_again.Hello(now + 80'000);
+  Pump(service, {&host_again, &guest_again}, now + 80'000);
+  CHECK(guest_again.welcome && guest_again.welcome->accepted());
+  CHECK(guest_again.resume_at.has_value());
+  CHECK(guest_again.resume_at->map() == 0x18010000);
+  CHECK(guest_again.resume_at->at().x() == -215.5f);
+  return 0;
+}
+
+// At the cap a new party's world takes the place of a few of the oldest worlds
+// nobody is in, not of all of them (each is written whole first).
+int AtTheCapOnlyAFewWorldsAreCollected() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  Service service{folder.path()};
+  BloodborneWorld::Limits limits;
+  limits.party_worlds = 20;
+  service.SetLimits(limits);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  for (int i = 0; i < 20; ++i) {
+    Game game{static_cast<quint32>(1000 + i), "g" + std::to_string(i),
+              static_cast<quint32>(11 + i)};
+    game.Hello(now, QByteArray("p:") + QByteArray::number(i));
+    Pump(service, {&game}, now);
+    CHECK(game.welcome && game.welcome->accepted());
+    service.Forget(game.endpoint);
+  }
+  CHECK(service.Parties() == 20);
+  Game late{2000, "late", 99};
+  late.Hello(now + 10, "late:1");
+  Pump(service, {&late}, now + 10);
+  CHECK(late.welcome && late.welcome->accepted());
+  CHECK(service.Parties() > 10);
+  CHECK(service.Parties() <= 20);
+  return 0;
+}
+
+// A game started again on the same link (a new stream, no new link) hears its
+// lobby state when it says its lobby hello, as a new game does.
+int ARestartedGameHearsItsLobby() {
+  for (const bool hosted : {false, true}) {
+    Service service{{}};
+    if (hosted) {
+      BloodborneWorld::HostedRules rules;
+      rules.enabled = true;
+      service.SetHosted(rules);
+    }
+    const std::string name =
+        hosted ? QByteArray("Kaniel").toHex().toStdString() : std::string("aa");
+    qint64 now = 1'000'000;
+    Game a{1000, name, 11};
+    a.online_id = "Kaniel";
+    a.LobbyHello(false, now);
+    Pump(service, {&a}, now);
+    now += 1000;
+    Pump(service, {&a}, now);
+    CHECK(a.lobby_states >= 1);
+    Game again{1000, name, 21};
+    again.online_id = "Kaniel";
+    now += 1000;
+    again.LobbyHello(false, now);
+    Pump(service, {&again}, now);
+    now += 1000;
+    Pump(service, {&again}, now);
+    CHECK(again.lobby_states >= 1);
+  }
+  return 0;
+}
+
 // Hosted: a trade only between members of one started team.
 int HostedTradesAreWithinAStartedTeam() {
   Service service{{}};
@@ -2909,17 +3095,208 @@ int AnInvasionLivesWithTheCapsAndTheCollector() {
   return 0;
 }
 
+// Hosted: a friend the lobby does not list joins by the team's code (typed in
+// its game); wrong codes are counted on the service's clock.
+int HostedFriendsJoinByTheTeamsCode() {
+  Service service{{}};
+  BloodborneWorld::HostedRules rules;
+  rules.enabled = true;
+  rules.lobby_players = 0; // nobody listed: only the code finds the team
+  service.SetHosted(rules);
+  const auto hex = [](const char *id) {
+    return QByteArray(id).toHex().toStdString();
+  };
+  Game leader{1000, hex("Kaniel"), 11};
+  leader.online_id = "Kaniel";
+  Game friend_{1001, hex("Ada"), 12};
+  friend_.online_id = "Ada";
+  const std::vector<Game *> games{&leader, &friend_};
+  qint64 now = 1'000'000;
+  const auto step = [&] {
+    now += 300; // past the lobby's interval
+    Pump(service, games, now);
+  };
+  leader.LobbyHello(false, now);
+  friend_.LobbyHello(false, now);
+  step();
+  CHECK(leader.lobby.players_size() == 0);
+  leader.Team(bbcoop::TeamRequest::CREATE, now);
+  step();
+  const std::string code = leader.lobby.team().code();
+  CHECK(code.size() == 6);
+  const auto join = [&](const std::string &typed) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_team_request()->set_action(bbcoop::TeamRequest::JOIN_CODE);
+    envelope.mutable_team_request()->set_code(typed);
+    friend_.Send(envelope, now);
+    step();
+  };
+  for (size_t n = 0; n < TeamLobby::LookupTries; ++n) {
+    join(code == "222222" ? "333333" : "222222");
+    CHECK(friend_.lobby.notice() == "no team has that code");
+  }
+  join(code);
+  CHECK(friend_.lobby.notice().find("too many") != std::string::npos);
+  CHECK(!friend_.lobby.has_team());
+  now += TeamLobby::LookupWindowMs;
+  join(code);
+  CHECK(friend_.lobby.has_team() &&
+        friend_.lobby.team().id() == leader.lobby.team().id());
+  CHECK(friend_.lobby.team().code().empty()); // the leader's to hand out
+  CHECK(leader.lobby.team().members_size() == 2);
+  return 0;
+}
+
+// The operator's player list (admin.h): where each linked game is, by its
+// link: its lobby name, its team, the world it plays and its map.
+int APlayersPlaceIsKnownByItsLink() {
+  Service service{{}};
+  Game a{1000, "aa", 11};
+  a.claims_host = true;
+  qint64 now = 1'000'000;
+  CHECK(!service.PlaceOf(a.endpoint));
+  a.LobbyHello(false, now);
+  Pump(service, {&a}, now);
+  a.Team(bbcoop::TeamRequest::CREATE, now);
+  a.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1);
+  a.Team(bbcoop::TeamRequest::START, now);
+  Pump(service, {&a}, now);
+  const bbcoop::TeamStart go = a.starts.at(0);
+  a.Hello(now, QByteArray::fromStdString(go.party()));
+  a.Map(24, now);
+  Pump(service, {&a}, now);
+  const auto place = service.PlaceOf(a.endpoint);
+  CHECK(place && place->lobby == "aa");
+  CHECK(!place->team.empty() && place->world == go.world());
+  CHECK(place->map == 24);
+  service.Forget(a.endpoint);
+  CHECK(!service.PlaceOf(a.endpoint));
+  return 0;
+}
+
+// Hosted: a world its last player forgot goes aside with the line that names
+// that player; restored, it is listed to it again (the one who forgot it
+// before, for itself, does not get it back).
+int AForgottenHostedWorldIsRestoredToItsPlayer() {
+  QTemporaryDir dir;
+  CHECK(dir.isValid());
+  Service service{dir.path()};
+  BloodborneWorld::HostedRules rules;
+  rules.enabled = true;
+  service.SetHosted(rules);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  const auto hex = [](const char *id) {
+    return QByteArray(id).toHex().toStdString();
+  };
+  Game leader{1000, hex("Kaniel"), 11};
+  leader.online_id = "Kaniel";
+  leader.claims_host = true;
+  Game guest{1001, hex("Ada"), 12};
+  guest.online_id = "Ada";
+  const std::vector<Game *> games{&leader, &guest};
+  const auto step = [&] {
+    now += 300;
+    Pump(service, games, now);
+  };
+  leader.LobbyHello(false, now);
+  guest.LobbyHello(false, now);
+  step();
+  leader.Team(bbcoop::TeamRequest::CREATE, now);
+  step();
+  leader.Team(bbcoop::TeamRequest::INVITE, now, guest.name);
+  step();
+  CHECK(guest.lobby.invites_size() == 1);
+  guest.Team(bbcoop::TeamRequest::ACCEPT, now, {},
+             guest.lobby.invites(0).team());
+  step();
+  leader.Team(bbcoop::TeamRequest::READY, now, {}, {}, 0, "Hunter");
+  guest.Team(bbcoop::TeamRequest::READY, now, {}, {}, 1, "Doll");
+  step();
+  leader.Team(bbcoop::TeamRequest::START, now);
+  step();
+  CHECK(!leader.starts.empty());
+  const std::string world = leader.starts.back().world();
+  guest.Team(bbcoop::TeamRequest::LEAVE, now);
+  leader.Team(bbcoop::TeamRequest::LEAVE, now);
+  step();
+  bbcoop::Envelope forget;
+  forget.mutable_team_request()->set_action(bbcoop::TeamRequest::FORGET_WORLD);
+  forget.mutable_team_request()->set_world(world);
+  leader.Send(forget, now);
+  step();
+  guest.Send(forget, now);
+  step();
+  service.Drain();
+  CHECK(service.Lobby().Worlds().empty());
+  const auto aside = service.AsideRows();
+  CHECK(aside.size() == 1 && aside[0].info);
+  QString said;
+  BloodborneWorld::Service::Result result;
+  CHECK(service.Restore(aside[0].folder, now, said, result));
+  CHECK(said == QString::fromStdString(world));
+  CHECK(service.Lobby().StateFor(guest.name).worlds_size() == 1);
+  CHECK(service.Lobby().StateFor(leader.name).worlds_size() == 0);
+  return 0;
+}
+
+// What a collected world keeps for its next read (where its guests stood) is
+// dropped once old, and only so many are kept: worlds that never come back do
+// not stay in memory for ever.
+int WhatCollectedWorldsKeepIsBounded() {
+  QTemporaryDir folder;
+  CHECK(folder.isValid());
+  Service service{folder.path()};
+  BloodborneWorld::Limits limits;
+  limits.idle_world_ms = 60'000;
+  limits.kept_ms = 3'600'000;
+  limits.kept_worlds = 2;
+  service.SetLimits(limits);
+  qint64 now = 1'000'000;
+  service.Load(now);
+  for (int i = 0; i < 3; ++i) {
+    Game host{static_cast<quint32>(1000 + 2 * i), "host",
+              static_cast<quint32>(11 + i)};
+    Game guest{static_cast<quint32>(1001 + 2 * i), "guest",
+               static_cast<quint32>(31 + i)};
+    const QByteArray party = "p:" + QByteArray::number(i);
+    host.Hello(now, party);
+    guest.Hello(now, party);
+    Pump(service, {&host, &guest}, now);
+    bbcoop::Envelope vitals = VitalsOf(0x18010000, 1);
+    vitals.mutable_vitals()->mutable_at()->set_x(-215.5f);
+    guest.Send(vitals, now + 10);
+    Pump(service, {&host, &guest}, now + 10);
+    service.Forget(host.endpoint);
+    service.Forget(guest.endpoint);
+    service.Tick(now + 1000);
+    now += 70'000;
+    service.Tick(now);
+  }
+  CHECK(service.Parties() == 0);
+  CHECK(service.KeptWorlds() == 2); // the oldest went
+  service.Tick(now + 3'600'000 + 1);
+  CHECK(service.KeptWorlds() == 0);
+  return 0;
+}
+
 int main() {
   const std::vector<std::pair<const char *, std::function<int()>>> tests{
       {"MembersFollowTheServersLog", MembersFollowTheServersLog},
       {"HostedPartiesAreTheirTeamsOnly", HostedPartiesAreTheirTeamsOnly},
+      {"APlayersPlaceIsKnownByItsLink", APlayersPlaceIsKnownByItsLink},
       {"AMessagePastTheLimitDropsTheStream",
        AMessagePastTheLimitDropsTheStream},
       {"AMemberThatNeverAcksIsDropped", AMemberThatNeverAcksIsDropped},
       {"AMessagePastAFieldsLimitIsDropped", AMessagePastAFieldsLimitIsDropped},
       {"AnEmptyPartyWorldIsCollected", AnEmptyPartyWorldIsCollected},
       {"TheWorldsInMemoryAreCapped", TheWorldsInMemoryAreCapped},
+      {"ACollectedWorldKeepsItsPlaces", ACollectedWorldKeepsItsPlaces},
+      {"AtTheCapOnlyAFewWorldsAreCollected",
+       AtTheCapOnlyAFewWorldsAreCollected},
+      {"ARestartedGameHearsItsLobby", ARestartedGameHearsItsLobby},
       {"HostedTradesAreWithinAStartedTeam", HostedTradesAreWithinAStartedTeam},
+      {"HostedFriendsJoinByTheTeamsCode", HostedFriendsJoinByTheTeamsCode},
       {"ATeamEndsWhenEveryMembersGameIsGone",
        ATeamEndsWhenEveryMembersGameIsGone},
       {"TheWorldsOfTheOldTeamsAreOnTheList",
@@ -2966,6 +3343,9 @@ int main() {
       {"EachMembersLoadReachesTheOthers", EachMembersLoadReachesTheOthers},
       {"AFollowersHpIsNeverTheLogs", AFollowersHpIsNeverTheLogs},
       {"AHitReachesTheOthersAtOnce", AHitReachesTheOthersAtOnce},
+      {"AnAltarRecordReachesTheOthersWhole",
+       AnAltarRecordReachesTheOthersWhole},
+      {"APingReachesTheTeamAtOnce", APingReachesTheTeamAtOnce},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"GamePacketsGoByMapAndOwner", GamePacketsGoByMapAndOwner},
@@ -2991,6 +3371,9 @@ int main() {
        EachEndTellsEveryoneAndRestoresTheRouting},
       {"AnInvasionLivesWithTheCapsAndTheCollector",
        AnInvasionLivesWithTheCapsAndTheCollector},
+      {"AForgottenHostedWorldIsRestoredToItsPlayer",
+       AForgottenHostedWorldIsRestoredToItsPlayer},
+      {"WhatCollectedWorldsKeepIsBounded", WhatCollectedWorldsKeepIsBounded},
   };
   int failed = 0;
   for (const auto &[name, test] : tests) {

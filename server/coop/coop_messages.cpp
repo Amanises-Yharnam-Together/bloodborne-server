@@ -257,6 +257,27 @@ SnapshotParts PartsOf(const bbcoop::Snapshot& snapshot) {
     return parts;
 }
 
+bbcoop::Ping ToMessage(const TeamPing& ping) {
+    bbcoop::Ping message;
+    message.set_map(ping.map);
+    message.mutable_at()->set_x(ping.at[0]);
+    message.mutable_at()->set_y(ping.at[1]);
+    message.mutable_at()->set_z(ping.at[2]);
+    message.set_enemy(ping.enemy);
+    message.set_seq(ping.seq);
+    message.set_from_map(ping.from_map);
+    return message;
+}
+
+TeamPing PingOf(const bbcoop::Ping& message) {
+    return TeamPing{.member = message.member(),
+                    .map = message.map(),
+                    .at = {message.at().x(), message.at().y(), message.at().z()},
+                    .enemy = message.enemy(),
+                    .seq = message.seq(),
+                    .from_map = message.from_map()};
+}
+
 bbcoop::StoredHost ToMessage(const WorldLogHost::State& state) {
     bbcoop::StoredHost message;
     message.set_epoch(state.epoch);

@@ -73,6 +73,11 @@ std::atomic<bool> inbox_news{false};
 // The others' hits (bbcoop::EnemyHit) as they came, for the next enemy step.
 std::mutex enemy_hits_mutex;
 std::vector<EnemyHitNews> enemy_hits;
+std::mutex altar_records_mutex;
+std::vector<AltarRecordNews> altar_records;
+// Kaniel 2026-10-24: the team's pings (bbcoop::Ping) as they came, for the next pings tick.
+std::mutex team_pings_mutex;
+std::vector<TeamPing> team_pings;
 std::string hello_party;
 std::string hello_member;
 bool hello_due = true;
@@ -448,6 +453,27 @@ void StreamTick(s64 now_ms) {
                         inbox_news.store(true);
                         continue;
                     }
+                    if (envelope->has_altar_record()) {
+                        const bbcoop::AltarRecord& news = envelope->altar_record();
+                        if (news.bits().size() == AltarRecordBytes) {
+                            AltarRecordNews record{.altar = static_cast<s32>(news.altar()),
+                                                   .member = news.member()};
+                            std::copy(news.bits().begin(), news.bits().end(),
+                                      record.record.begin());
+                            std::scoped_lock records_lock{altar_records_mutex};
+                            if (altar_records.size() < 16) {
+                                altar_records.push_back(std::move(record));
+                            }
+                        }
+                        continue;
+                    }
+                    if (envelope->has_ping()) {
+                        std::scoped_lock pings_lock{team_pings_mutex};
+                        if (team_pings.size() < 64) {
+                            team_pings.push_back(PingOf(envelope->ping()));
+                        }
+                        continue;
+                    }
                     if (IsTradeMessage(*envelope)) {
                         TakeServerTrade(std::move(*envelope));
                     } else if (IsBoard(*envelope)) {
@@ -737,9 +763,39 @@ void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max) {
     Queue(std::move(envelope));
 }
 
+void SendTeamPing(const TeamPing& ping) {
+    if (!ServerWorldOn()) {
+        return;
+    }
+    bbcoop::Envelope envelope;
+    *envelope.mutable_ping() = ToMessage(ping);
+    Queue(std::move(envelope));
+}
+
+std::vector<TeamPing> TakeTeamPings() {
+    std::scoped_lock lock{team_pings_mutex};
+    return std::exchange(team_pings, {});
+}
+
 std::vector<EnemyHitNews> TakeEnemyHits() {
     std::scoped_lock lock{enemy_hits_mutex};
     return std::exchange(enemy_hits, {});
+}
+
+void SendAltarRecord(s32 altar, const AltarRecord& record) {
+    if (!ServerWorldOn()) {
+        return;
+    }
+    bbcoop::Envelope envelope;
+    bbcoop::AltarRecord& message = *envelope.mutable_altar_record();
+    message.set_altar(static_cast<u32>(altar));
+    message.set_bits(std::string(record.begin(), record.end()));
+    Queue(std::move(envelope));
+}
+
+std::vector<AltarRecordNews> TakeAltarRecords() {
+    std::scoped_lock lock{altar_records_mutex};
+    return std::exchange(altar_records, {});
 }
 
 void RequestServerHello() {
@@ -1785,18 +1841,11 @@ std::string CharacterNameOf(std::string_view member) {
 
 void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id) {
     bbcoop::Envelope envelope;
-    bbcoop::TeamRequest& request = *envelope.mutable_team_request();
-    request.set_action(action);
-    if (action == bbcoop::TeamRequest::ACCEPT || action == bbcoop::TeamRequest::DECLINE) {
-        request.set_team(id);
-    } else if (action == bbcoop::TeamRequest::WORLD ||
-               action == bbcoop::TeamRequest::FORGET_WORLD) {
-        request.set_world(id);
-    } else {
-        request.set_member(id);
-    }
+    *envelope.mutable_team_request() = TeamMenuRequest(action, id);
+    // A typed code joins a team: not in the log.
     LOG_INFO(Debug, "Co-op team lobby: the menu asks {} {}",
-             bbcoop::TeamRequest::Action_Name(action), id);
+             bbcoop::TeamRequest::Action_Name(action),
+             action == bbcoop::TeamRequest::JOIN_CODE ? std::string{"(a code)"} : id);
     QueueLobby(std::move(envelope));
 }
 
@@ -1847,8 +1896,15 @@ std::optional<WorldStore> ReadWorldStore() {
 size_t SetWorldFlags(const WorldStore& world, const WorldFlags& target) {
     using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
     const auto changes = WorldFlagChanges(world.store.flags_per_block, world.blocks, target);
+    std::string which;
     for (const auto& [flag, on] : changes) {
         reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, on);
+        if (which.size() < 600) {
+            which += fmt::format(" {}{}", on ? "" : "-", flag);
+        }
+    }
+    if (!which.empty()) {
+        LOG_INFO(Debug, "Co-op team world: flags set to the world's (-off):{}", which);
     }
     return changes.size();
 }
@@ -2011,6 +2067,14 @@ void ApplyTeamWorldOnLoad(bool trip) {
              retake ? fmt::format(" again after a trip's load (map {:#x})", GetCurrentPackedMap())
                     : "",
              store->blocks.size(), changed, world->version());
+}
+
+std::vector<u32> TeamWorldBlocksForGuest() {
+    std::scoped_lock lock{team_mutex};
+    if (!team_switch || team_host || !team_world || !team_world->exists()) {
+        return {};
+    }
+    return WorldFlagsOf(*team_world).blocks;
 }
 
 std::vector<s32> TeamWorldFlagsOnForGuest() {
@@ -2199,13 +2263,22 @@ bool RunTeamTitleVerb(const AutoplayCommand& command, bool begun, double elapsed
             request(bbcoop::TeamRequest::CREATE);
         }
     } else if (command.verb == "team-invite" && command.args.size() == 1) {
+        // A hosted lobby lists 32 players: one not listed is invited by its id every 5 s (the
+        // server refuses it while it is not signed in); once invited the lobby lists it.
+        static double invited_at = -100.0;
+        if (!begun) {
+            invited_at = -100.0;
+        }
         const std::string member = BoardMemberOfOnlineId(command.args[0]);
         if (lobby && lobby->has_team()) {
-            for (const bbcoop::LobbyPlayer& player : lobby->players()) {
-                if (player.member() == member) {
-                    request(bbcoop::TeamRequest::INVITE, member);
-                    done = true;
-                }
+            const bool listed =
+                std::ranges::any_of(lobby->players(), [&](const bbcoop::LobbyPlayer& player) {
+                    return player.member() == member;
+                });
+            if (listed || elapsed - invited_at >= 5.0) {
+                invited_at = elapsed;
+                request(bbcoop::TeamRequest::INVITE, member);
+                done = listed;
             }
         }
     } else if (command.verb == "team-accept") {
@@ -2285,13 +2358,10 @@ bool RunTeamMenuVerb(const AutoplayCommand& command, bool begun, double elapsed,
     TeamPlaying(&in_hunt);
     bool done = false;
     if (command.verb == "menu-invite" && !command.args.empty()) {
+        // Listed or not (a hosted lobby lists 32 players): the server refuses one not signed in.
         const std::string member = BoardMemberOfOnlineId(command.args[0]);
-        const bool online =
-            lobby && std::ranges::any_of(lobby->players(), [&](const bbcoop::LobbyPlayer& p) {
-                return p.member() == member;
-            });
         done = member_in_team(member);
-        if (!done && online && lobby->has_team() && ask) {
+        if (!done && lobby && lobby->has_team() && ask) {
             asked_at = elapsed;
             TeamLobbyRequest(bbcoop::TeamRequest::INVITE, member);
         }
