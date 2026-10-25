@@ -216,6 +216,9 @@ message Vitals {
     bool boss = 15;
     // A real death that followed an invader's hit (the victim's game says so).
     bool killed_by_invader = 16;
+    // Kaniel 2026-10-25: the bosses (handles) this member's game runs now, so that every game picks
+    // the same runner for a fight (BossRunnerPick). The server keeps it with the rest.
+    repeated uint32 bosses = 17;
 }
 message VitalsBoard {
     message Member {

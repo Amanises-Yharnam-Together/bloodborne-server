@@ -1060,6 +1060,8 @@ struct VitalsView {
     }
 };
 VitalsView ReadVitalsBoard();
+// The bosses this member's game runs now (BossClaims), posted with its vitals.
+std::vector<u32> OwnBossClaims();
 void PostVitals(const MemberVitals& mine, std::vector<ReviveHitTotal> hits);
 void StartVitalsBoardClient();
 

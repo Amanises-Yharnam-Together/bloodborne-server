@@ -850,60 +850,157 @@ TEST(BloodbornePartyDeath, ADownedBodyGetsNoEnemyBarDamage) {
 
 // Kaniel's playtest 2026-10-16: Lisara started Gascoigne alone; the host's game, far away, ran
 // him, so her copy only followed (lag) and his AI went for nobody. The member in the arena runs a
-// boss and keeps it for the whole fight.
+// boss and keeps it for the whole fight (her game claims it on the board).
 TEST(BloodbornePartyDeath, TheMemberInTheArenaRunsTheBoss) {
     constexpr u32 Yharnam = 0x18010000;
+    constexpr u32 Gascoigne = 0x10010000;
     const LampPosition boss{0.0f, 0.0f, 0.0f};
-    const auto at = [&](std::string member, float x, Vital vital = Vital::Up, u32 map = Yharnam) {
+    const auto at = [&](std::string member, float x, Vital vital = Vital::Up, u32 map = Yharnam,
+                        bool claims = false) {
         MemberVitals entry;
         entry.member = std::move(member);
         entry.map = map;
         entry.vital = vital;
         entry.at = {x, 0.0f, 0.0f};
+        if (claims) {
+            entry.bosses = {Gascoigne};
+        }
         return entry;
     };
     BossRunnerPick pick;
-    EXPECT_EQ(pick.Tick(Yharnam, boss, std::vector{at("host", 150.0f)}), "")
+    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss, std::vector{at("host", 150.0f)}), "")
         << "nobody near: as the game runs it";
-    EXPECT_EQ(pick.Tick(Yharnam, boss, std::vector{at("host", 150.0f), at("lisara", 10.0f)}),
+    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
+                        std::vector{at("host", 150.0f), at("lisara", 10.0f)}),
               "lisara");
-    EXPECT_EQ(pick.Tick(Yharnam, boss, std::vector{at("host", 5.0f), at("lisara", 10.0f)}),
+    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
+                        std::vector{at("host", 5.0f),
+                                    at("lisara", 10.0f, Vital::Up, Yharnam, true)}),
               "lisara")
         << "the host comes in: the boss stays with her";
-    EXPECT_EQ(
-        pick.Tick(Yharnam, boss, std::vector{at("host", 5.0f), at("lisara", 10.0f, Vital::Down)}),
-        "lisara")
+    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
+                        std::vector{at("host", 5.0f),
+                                    at("lisara", 10.0f, Vital::Down, Yharnam, true)}),
+              "lisara")
         << "down in the arena: still hers";
     // Kaniel 2026-10-20: one owner for the whole fight, however far it runs in a big arena.
-    EXPECT_EQ(pick.Tick(Yharnam, boss, std::vector{at("host", 5.0f), at("lisara", 60.0f)}),
+    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
+                        std::vector{at("host", 5.0f),
+                                    at("lisara", 60.0f, Vital::Up, Yharnam, true)}),
               "lisara")
         << "kiting far across the arena: still hers";
-    EXPECT_EQ(
-        pick.Tick(Yharnam, boss, std::vector{at("host", 5.0f), at("lisara", 60.0f, Vital::Dead)}),
-        "host")
+    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
+                        std::vector{at("host", 5.0f),
+                                    at("lisara", 60.0f, Vital::Dead, Yharnam, true)}),
+              "host")
         << "dead for good: the nearest one in the arena";
-    EXPECT_EQ(pick.Tick(Yharnam, boss,
-                        std::vector{at("host", 5.0f, Vital::Up, 0x15000000), at("lisara", 60.0f)}),
+    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
+                        std::vector{at("host", 5.0f, Vital::Up, 0x15000000),
+                                    at("lisara", 60.0f, Vital::Up, 0x15000000, true)}),
               "")
-        << "he left the map, nobody in the arena: as the game runs it";
+        << "both left the map, nobody in the arena: as the game runs it";
+    EXPECT_EQ(pick.Tick(Yharnam, 0x10010001, boss,
+                        std::vector{at("host", 5.0f),
+                                    at("lisara", 60.0f, Vital::Up, Yharnam, true)}),
+              "host")
+        << "her claim is for another boss";
     // krolebord joined in the middle of the host's fight: the boss stays with the host's game.
     BossRunnerPick fight;
-    EXPECT_EQ(
-        fight.Tick(Yharnam, boss, std::vector{at("host", 8.0f), at("krolebord", 3.0f)}, "host"), "")
+    EXPECT_EQ(fight.Tick(Yharnam, Gascoigne, boss,
+                         std::vector{at("host", 8.0f), at("krolebord", 3.0f)}, "host"),
+              "")
         << "the game's own runner is in the arena";
-    EXPECT_EQ(
-        fight.Tick(Yharnam, boss, std::vector{at("host", 80.0f), at("krolebord", 3.0f)}, "host"),
-        "")
+    EXPECT_EQ(fight.Tick(Yharnam, Gascoigne, boss,
+                         std::vector{at("host", 80.0f, Vital::Up, Yharnam, true),
+                                     at("krolebord", 3.0f)},
+                         "host"),
+              "")
         << "the host runs far across the arena: still its game's";
-    EXPECT_EQ(
-        fight.Tick(Yharnam, boss,
-                   std::vector{at("host", 5.0f, Vital::Up, 0x15000000), at("krolebord", 3.0f)},
-                   "host"),
-        "krolebord")
+    EXPECT_EQ(fight.Tick(Yharnam, Gascoigne, boss,
+                         std::vector{at("host", 5.0f, Vital::Up, 0x15000000, true),
+                                     at("krolebord", 3.0f)},
+                         "host"),
+              "krolebord")
         << "the host left the map: the one in the arena";
     BossRunnerPick tie;
-    EXPECT_EQ(tie.Tick(Yharnam, boss, std::vector{at("b", 10.0f), at("a", 10.0f)}), "a")
+    EXPECT_EQ(tie.Tick(Yharnam, Gascoigne, boss, std::vector{at("b", 10.0f), at("a", 10.0f)}),
+              "a")
         << "a tie: by name, the same in every game";
+    EXPECT_EQ(tie.Tick(Yharnam, Gascoigne, boss,
+                       std::vector{at("b", 10.0f, Vital::Up, Yharnam, true),
+                                   at("a", 10.0f, Vital::Up, Yharnam, true)}),
+              "a")
+        << "two claims: by name, the same in every game";
+    EXPECT_EQ(tie.Tick(Yharnam, Gascoigne, boss,
+                       std::vector{at("b", 10.0f, Vital::Up, Yharnam, true),
+                                   at("a", 10.0f, Vital::Up, Yharnam, true)},
+                       "b"),
+              "")
+        << "two claims: the game's own runner's first";
+}
+
+// Kaniel's playtest 2026-10-25 (v1.2.2): krolebord started the Shadows of Yharnam on his own map
+// (his game the map's runner, so it ran them), the party left by trips and came back with Kaniel's
+// game the map's runner, and Kaniel restarted his game. His fresh pick gave the Shadows to krolebord
+// (nearest), krolebord's game still remembered its own fight (the game's own runner, now Kaniel's):
+// each followed the other and the Shadows stood still until krolebord went to the Dream. Every
+// game picks the same from the same board now, whatever it saw before.
+TEST(BloodbornePartyDeath, EveryGamePicksTheSameBossRunnerAfterATripAndARestart) {
+    constexpr u32 Woods = 0x1B000000;
+    constexpr u32 Dream = 0x15000000;
+    constexpr u32 Shadow = 0x1002405F;
+    const LampPosition boss{0.0f, 0.0f, 0.0f};
+    const auto at = [&](std::string member, float x, u32 map = Woods,
+                        std::vector<u32> bosses = {}) {
+        MemberVitals entry;
+        entry.member = std::move(member);
+        entry.map = map;
+        entry.vital = Vital::Up;
+        entry.at = {x, 0.0f, 0.0f};
+        entry.bosses = std::move(bosses);
+        return entry;
+    };
+    BossRunnerPick krolebords;
+    EXPECT_EQ(krolebords.Tick(Woods, Shadow, boss,
+                              std::vector{at("krolebord", 5.0f), at("kaniel", 80.0f)}, "krolebord"),
+              "")
+        << "his own map: his game runs the fight the game's own way";
+    // The trip out and back: Kaniel's game runs the Woods now, and restarts.
+    BossRunnerPick kaniels;
+    const std::vector back{at("krolebord", 10.0f), at("kaniel", 70.0f), at("lisara", 30.0f)};
+    EXPECT_EQ(kaniels.Tick(Woods, Shadow, boss, back, "kaniel"), "krolebord");
+    EXPECT_EQ(krolebords.Tick(Woods, Shadow, boss, back, "kaniel"), "krolebord")
+        << "his game remembers nothing of its old fight: the same pick as Kaniel's";
+    const std::vector claimed{at("krolebord", 10.0f, Woods, {Shadow}), at("kaniel", 5.0f),
+                              at("lisara", 30.0f)};
+    EXPECT_EQ(kaniels.Tick(Woods, Shadow, boss, claimed, "kaniel"), "krolebord")
+        << "Kaniel comes in: krolebord's game keeps its fight";
+    BossRunnerPick restarted;
+    EXPECT_EQ(restarted.Tick(Woods, Shadow, boss, claimed, "kaniel"), "krolebord")
+        << "a game restarted mid-fight picks the same";
+    const std::vector gone{at("krolebord", 10.0f, Dream, {Shadow}), at("kaniel", 5.0f),
+                           at("lisara", 30.0f, Dream)};
+    EXPECT_EQ(kaniels.Tick(Woods, Shadow, boss, gone, "kaniel"), "")
+        << "krolebord went to the Dream: Kaniel's game, in the arena, takes the fight";
+}
+
+TEST(BloodbornePartyDeath, BossClaimsLastAWhileAfterTheLastRun) {
+    BossClaims claims;
+    EXPECT_TRUE(claims.Current(0).empty());
+    claims.Ran(0x1002405F, 1'000);
+    claims.Ran(0x10024060, 1'500);
+    EXPECT_EQ(claims.Current(2'000), (std::vector<u32>{0x1002405F, 0x10024060}));
+    EXPECT_EQ(claims.Current(1'000 + BossClaims::KeepMs + 1), (std::vector<u32>{0x10024060}))
+        << "not run lately (asleep, dead or left behind): let go";
+    EXPECT_TRUE(claims.Current(1'500 + BossClaims::KeepMs + 1).empty());
+
+    EXPECT_TRUE(ClaimsBoss("lisara", "lisara", false, false, 200.0f)) << "picked: at any distance";
+    EXPECT_FALSE(ClaimsBoss("lisara", "kaniel", true, true, 5.0f)) << "another one's pick";
+    EXPECT_TRUE(ClaimsBoss("", "kaniel", true, false, 30.0f)) << "the game's own runner in the arena";
+    EXPECT_FALSE(ClaimsBoss("", "kaniel", true, false, 150.0f))
+        << "the game's own runner far away: a member walking in still takes the fight";
+    EXPECT_TRUE(ClaimsBoss("", "kaniel", true, true, 150.0f)) << "its fight: kept at any distance";
+    EXPECT_FALSE(ClaimsBoss("", "lisara", false, false, 5.0f)) << "a follower runs nothing of its own";
 }
 
 TEST(BloodbornePartyDeath, GoesDownOnlyWithSomeoneElseStandingOnTheMap) {
