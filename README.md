@@ -65,6 +65,9 @@ expect rough edges and keep backups of your saves. New builds come out as GitHub
   the game's own HUD style, wherever they are.
 - **Compass and map.** A compass shows where your team is, and the map shows them on every area
   and takes you to a lamp. Both show your own bloodstain.
+- **Team pings.** Double tap the touchpad (or press the ping key, T by default) to mark where you
+  aim, or the enemy you are locked on to; press Square on the map to mark any spot. Your team sees
+  the mark for 20 seconds in the world, on the compass and on the map.
 - **Going down** (from Elden Ring Nightreign, always on): a killing blow puts you down instead of
   killing you while a partner is near. They revive you by striking you; when the whole party is
   down, it wipes and wakes at the host's lamp, and the area resets.

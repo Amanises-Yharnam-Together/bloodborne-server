@@ -662,13 +662,22 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     arena_memory_type_bits = reqs.memoryTypeBits;
     // bbport: a reserve of VRAM for the game's memory (vram_placement.h): it only grows as areas
     // load and, on NVIDIA, cannot be outside VRAM. Textures keep VRAM otherwise (Supermedo
-    // 5f65e2d). BB_VRAM_RESERVE_MB=0: none.
+    // 5f65e2d). None where the arena accepts system memory (AMD, Intel; Supermedo 859f9e4).
+    // BB_VRAM_RESERVE_MB=0: none.
     if (VideoCore::ActiveVramPlacement() == VideoCore::VramPlacement::Reserve) {
         const auto& props = instance.GetMemoryProperties();
-        u64 size = VideoCore::ArenaReserveBytes(
-            !instance.IsIntegrated(),
-            props.memoryHeaps[props.memoryTypes[arena_memory_type_index].heapIndex].size,
-            block_size);
+        const u32 arena_heap = props.memoryTypes[arena_memory_type_index].heapIndex;
+        std::array<u32, VK_MAX_MEMORY_TYPES> type_heaps{};
+        for (u32 i = 0; i < props.memoryTypeCount; ++i) {
+            type_heaps[i] = props.memoryTypes[i].heapIndex;
+        }
+        const bool spills = VideoCore::ArenaSpillsOutsideVram(
+            arena_memory_type_bits, std::span{type_heaps.data(), props.memoryTypeCount}, arena_heap);
+        u64 size = VideoCore::ArenaReserveBytes(!instance.IsIntegrated(), spills,
+                                                props.memoryHeaps[arena_heap].size, block_size);
+        if (spills && !instance.IsIntegrated()) {
+            std::printf("GPU: no VRAM kept for the game's memory (it can use system memory)\n");
+        }
         if (const char* env = std::getenv("BB_VRAM_RESERVE_MB")) {
             size = std::min(size, std::strtoull(env, nullptr, 10) << 20) / block_size * block_size;
         }
@@ -854,7 +863,11 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                 download_end = Common::AlignUp(device_addr + size, BYTES_PER_PAGE);
             }
         }
-        DownloadMemory(arena, download_start, download_end - download_start, is_write, async);
+        DownloadMemory(arena, download_start, download_end - download_start, async);
+        // As upstream (#5473): only the faulting range is CPU-modified, not the whole window.
+        if (is_write) {
+            memory_tracker->MarkRegionAsCpuModified(device_addr, size);
+        }
     };
     if (assume_locks) {
         flush_request();
@@ -929,7 +942,7 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
     layer_read_trapped.Subtract(from, block_size);
 }
 
-void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size, bool is_write,
+void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size,
                                  [[maybe_unused]] bool async) {
     boost::container::small_vector<vk::BufferCopy, 1> copies;
     u64 total_size_bytes = 0;
@@ -1020,9 +1033,6 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     }
     // The readback queue and the staging copy above are both waited for: `async` is not used.
     memory_tracker->UnmarkRegionAsGpuModified(device_addr, size, false);
-    if (is_write) {
-        memory_tracker->MarkRegionAsCpuModified(device_addr, size);
-    }
     if (auto* log = Readbacks()) {
         const auto now = std::chrono::steady_clock::now();
         std::scoped_lock lk{log->mutex};

@@ -93,6 +93,8 @@ public:
     void Move(const QString& parent, const QString& name, const QString& to);
     // Whether a Move of the folder `parent`/`name` is queued (what is in it is not known yet).
     bool Moving(const QString& parent, const QString& name) const;
+    // Whether writes in `folder` (a world's) are queued.
+    bool Pending(const QString& folder) const;
     // Returns when everything queued before it is on disk.
     void Drain();
     // Stops at once, writing nothing more and fsyncing nothing (a crash, for the tests).
@@ -148,6 +150,10 @@ struct Limits {
     // disk; the next hello reads it again). A world kept in memory only (no folder) stays.
     size_t party_worlds = 1024;
     qint64 idle_world_ms = 5 * 60 * 1000;
+    // What a collected world keeps for its next read (where its guests stood, its boards): for so
+    // long, and for so many worlds at most (the oldest go first).
+    qint64 kept_ms = 24 * 60 * 60 * 1000;
+    size_t kept_worlds = 4096;
 };
 
 // The fields of a game's message (coop.proto), each far above the game's own: a message past one
@@ -217,10 +223,52 @@ public:
     // goes).
     void Drain();
 
+    // The operator's (admin.h). Where a linked game is: its lobby name, its team, the world it
+    // plays (its team's pick, or its party's), its map; nothing before its first message.
+    struct Place {
+        std::string lobby;
+        std::string team;
+        std::string world;
+        std::uint32_t map = 0;
+    };
+    std::optional<Place> PlaceOf(const ServerLink::Endpoint& link) const;
+    // The listed worlds: each one's line, folder and games in it now. Their bytes on disk are not
+    // read here (every file of every world): BytesOn(path), off the link's thread (admin.cpp).
+    struct WorldRow {
+        bbcoop::TeamWorldInfo info;
+        QString folder;
+        QString path; // the folder on disk (none: in memory only)
+        qint64 bytes = 0;
+        int games = 0;
+    };
+    std::vector<WorldRow> WorldRows() const;
+    static qint64 BytesOn(const QString& path);
+    const QString& Folder() const {
+        return folder;
+    }
+    // The worlds put aside (forgotten/<folder>-<when>): the line each had, when it was kept.
+    struct AsideRow {
+        QString folder;
+        qint64 bytes = 0;
+        std::optional<bbcoop::TeamWorldInfo> info;
+    };
+    std::vector<AsideRow> AsideRows() const;
+    // The same from the disk alone (any thread).
+    static std::vector<AsideRow> AsideRowsIn(const QString& folder);
+    // Worlds nobody played for `idle_ms` (and no team picked, no game is in) off the list, their
+    // folders put aside as a forgotten world's (never deleted): their ids.
+    std::vector<std::string> Retire(qint64 now_ms, qint64 idle_ms, Result& result);
+    // A world put aside (its folder in forgotten/) back on the list, to the players it had, as
+    // played now (the next retirement keeps it). `said`: its id, or why it could not.
+    bool Restore(const QString& aside, qint64 now_ms, QString& said, Result& result);
+
     // For the tests and the log.
     const BloodborneCoop::WorldLogHost* World(const QByteArray& party) const;
     int Parties() const {
         return static_cast<int>(worlds.size());
+    }
+    int KeptWorlds() const {
+        return static_cast<int>(kept.size());
     }
 
 private:
@@ -271,6 +319,14 @@ private:
         std::string team_world_id;
         std::optional<qint64> empty_since_ms; // nobody in it since (Collect)
     };
+    // What a world collected while nobody was in it keeps until it is read again.
+    struct Kept {
+        std::map<std::string, PartyWorld::Place> places;
+        PartyBoards boards;
+        qint64 since_ms = 0; // collected then (Limits::kept_ms)
+    };
+    // The worlds Collect takes out at once for room (each is written whole).
+    static constexpr size_t CollectAtOnce = 4;
     struct Member {
         Member(quint32 instance, BloodborneCoop::CoopStream::Limits limits)
             : stream{"shadnet", instance, limits} {}
@@ -285,8 +341,9 @@ private:
         // Runs phase 4's enemy owners (its hello says): on an area another member owns its new
         // kills and its HP reports do not count.
         bool enemy_owner = false;
-        std::string lobby;     // its name in the team lobby, empty before its lobby hello
-        std::uint32_t map = 0; // the map it last said (0: loading, or none yet)
+        std::string lobby;        // its name in the team lobby, empty before its lobby hello
+        bool lobby_again = false; // its game started over: its next lobby hello is a first one
+        std::uint32_t map = 0;    // the map it last said (0: loading, or none yet)
         // Kaniel 2026-10-16: the team world it was taken out of (removed from the team, or left
         // it): no game packet goes between it and that party until its next hello.
         QString cut_from;
@@ -403,8 +460,10 @@ private:
     void StoreWorldList(Result& result);
     // The folder of a party: its world's on the list ("world:<id>"), else a hash of its key.
     QString FolderOf(const QByteArray& party) const;
-    // Worlds off the list: their folders go aside (forgotten/<folder>-<when>), nothing deleted.
-    void PutAside(const std::vector<std::string>& forgotten, Result& result);
+    // Worlds off the list (`why`: forgotten, retired): their folders go aside
+    // (forgotten/<folder>-<when>) with their lines (kept_world.pb, for Restore), nothing deleted.
+    void PutAside(const std::vector<bbcoop::TeamWorldInfo>& lines, const QString& why,
+                  Result& result);
 
     QString folder;
     std::unique_ptr<WorldWriter> writer; // with a folder
@@ -412,6 +471,7 @@ private:
     int compact_records;
     qint64 compact_ms;
     std::map<QString, PartyWorld> worlds;
+    std::map<QString, Kept> kept;      // by world (Collect)
     std::map<quint64, Member> members; // by link (Endpoint::Key)
     std::map<quint64, ServerLink::Endpoint> endpoints;
     std::vector<Member*> flush_now; // the members FlushSome flushes

@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -22,6 +23,7 @@
 #include <vector>
 
 #include "common/types.h"
+#include "coop/build_fingerprint.h"
 #include "coop/packet_routes.h"
 #include "coop/world_log.h"
 #include "core/bloodborne_patch_sites.h"
@@ -136,8 +138,10 @@ public:
     explicit CoopTimeMeter(s64 period_ms) : period_ms{period_ms} {}
     void Add(std::string_view section, s64 ns, s64 now_ms);
     // "<section> avg <ms> ms max <ms> ms (<n> calls), ... over <s> s", in the order the sections
-    // came first; nothing before the period is over.
-    std::optional<std::string> Report(s64 now_ms);
+    // came first; nothing before the period is over. With `slowest`, only that many sections, the
+    // ones with the most time in all, most first.
+    std::optional<std::string> Report(s64 now_ms,
+                                      size_t slowest = std::numeric_limits<size_t>::max());
 
 private:
     struct Section {
@@ -315,6 +319,10 @@ constexpr u64 ResetCharacterFollowOffset = 0x018BCF30;
 constexpr u64 CameraManagerPointerOffset = 0x0553E860;
 constexpr u64 CameraManagerField = 0x2830;
 constexpr u64 CameraSnapByte = 0x80;
+// Kaniel 2026-10-24 (team pings): the camera the frame is drawn with, in the camera manager from
+// +0x10 (bloodborne_pings.h's PingCamera: its world matrix, field of view, width / height, near
+// and far; rebuilt every frame at 0x01436C31 from the active camera, as PR #320 found).
+constexpr u64 PingCameraAt = 0x10;
 // Returns whether it moved the character (every call is needed).
 bool PlaceCharacter(const PlacementCalls& calls, u64 character, const float* position,
                     const float* rotation);
@@ -794,10 +802,8 @@ struct FlagChanges {
 };
 FlagChanges ChangedFlags(u32 block, u32 flags_per_block, std::span<const u8> before,
                          std::span<const u8> after);
-// Ritual altars (see FlagTable): a ritual or a join writes "the current altar", flags
-// 92900000-92905999, a view of the altar k the player talks to (94k00000-94k05999). The same
-// changes as altar `altar`'s own flags; dropped when the altar is not known.
-FlagChanges AsAltarFlags(const FlagChanges& changes, std::optional<s32> altar);
+// Ritual altars (see FlagTable, bloodborne_altar.h): a ritual or a join writes "the current
+// altar", flags 92900000-92905999, a view of the altar k the player talks to (94k00000-94k05999).
 bool IsCurrentAltarFlag(s32 flag);
 // A Shared flag whose clears go to the party too (a ritual altar's, see FlagTable).
 bool SharesClearsWithParty(s32 flag);
@@ -842,6 +848,19 @@ bool RechecksShopLines(bool party_configured, int slot, bool done_for_slot, u32 
 // 2026-10-18: a save that took the host's "holds the Sword Hunter Badge" from a team world never
 // got its own badge from the Cleric Beast.
 std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool holds);
+// A gesture's flag (GestureFlags) in a party goes off while this player has not learned the
+// gesture (a save that took the host's value from a team world never got it from the NPC's talk);
+// nothing else (a learned gesture's flag stays off: another talk may give it by its own flag).
+std::optional<bool> GestureFlagFix(bool party_configured, bool flag_on, bool learned);
+// A slot of the player's gesture list (PlayerGameData +0x5B8, 30 u32 at +0x10), as talk command
+// 66 reads it: bit 0 learned, bits 1-15 the gesture's row in the game's table (0x014EC980,
+// gesture + 1); none for an empty slot.
+struct GestureSlot {
+    s32 gesture;
+    bool learned;
+    bool operator==(const GestureSlot&) const = default;
+};
+std::optional<GestureSlot> DecodeGestureSlot(u32 entry);
 // Whether a weapon of OwnedWeaponFlags is in `held` (the inventory's weapon ids): any upgrade
 // level, its base id + 100 * level up to +10, as the common events check it.
 bool HoldsWeapon(u32 weapon, std::span<const u32> held);
@@ -1039,6 +1058,24 @@ std::optional<std::pair<s32, s32>> CoopHpScale(s32 unscaled_max, s32 max, s32 hp
 // What a member posts to the party's flag board from a change it saw: the SharedWithParty flags
 // that turned on.
 std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes);
+// What a guest running its map alone (no host there: its game runs the map's story) shares with
+// the team besides FlagsToShare: its changes to that map's own flags (TakesHostMapFlag, from
+// MapFlagBase(map)), sets and clears, as (flag, on). Kaniel's test 2026-10-23: the hag a lone guest
+// killed in Cathedral Ward was alive again for the host, a door it opened shut.
+std::vector<std::pair<s32, bool>> LoneGuestFlagsToShare(const FlagChanges& changes, u32 map);
+// Which of a lone guest's map changes go to the team (LoneGuestFlagsToShare): not the ones its
+// game's load sets up. Changes in the first LoadFlagsMs after a load are that map's load flags
+// (remembered for the session, a later visit sets them a moment later as well); after it every
+// other map change goes, at once (Kaniel's test 2026-10-23: the hag died 9 s after the load; with
+// no wait at all the boss's per-visit flags, 12414802..., went to the host too).
+class LoneGuestShares {
+public:
+    static constexpr s64 LoadFlagsMs = 8'000;
+    std::vector<std::pair<s32, bool>> Take(const FlagChanges& changes, u32 map, s64 since_load_ms);
+
+private:
+    std::map<u32, std::set<s32>> load_flags;
+};
 bool IsBulkFlagChange(size_t changed_flags);
 void RecordWorldChanges(std::map<s32, bool>& world, const FlagChanges& changes);
 std::string FormatWorldChanges(const std::map<s32, bool>& world);
@@ -1453,7 +1490,8 @@ constexpr u8 PeerHelloType = 0x33;
 // 6: a snapshot ends with the recent flag events (frame 0x3D); the world snapshot on the server.
 // 7: the flags part's after-wipe byte. 8: the host's return point (the ReturnPoint entry, and the
 // map state part ends with it). 9: the members' portraits (PortraitPartType, 0x3E).
-constexpr u8 CoopProtocolVersion = 9;
+// (BloodborneCoop::CoopFrameProtocol: shadNet knows it too, for the build check on join.)
+constexpr u8 CoopProtocolVersion = BloodborneCoop::CoopFrameProtocol;
 constexpr s64 PeerHelloResendMs = 10'000;
 // PeerHello::features: WorldLogFeature when this game runs the world log (it is not switched off,
 // SHADPS4_BLOODBORNE_WORLD_LOG=0). Every member runs one build (Kaniel 2026-10-12): a peer on
@@ -1466,11 +1504,13 @@ struct PeerHello {
     u64 event_files = 0;  // a hash of the map event files the game reads, 0 when unknown
     std::string member;   // the board's name for the member, "" before it has one
     u8 features = 0;      // bits (WorldLogFeature); 0 from a build before protocol 2
+    std::string build;    // the build fingerprint (coop/build_fingerprint.h), "" from an older one
     bool operator==(const PeerHello&) const = default;
 };
 // The payload: protocol, revision (u8 length first), event files (u64), member (u8 length
-// first), features (u8, since protocol 2). A decoder takes a longer payload (fields a later build
-// added) and one without the features (a build before them).
+// first), features (u8, since protocol 2), build fingerprint (u16 length first). A decoder takes a
+// longer payload (fields a later build added) and one without the features or the fingerprint (a
+// build before them).
 std::vector<u8> EncodePeerHello(const PeerHello& hello);
 std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload);
 class PeerBuildCheck {
@@ -1479,11 +1519,26 @@ public:
     std::optional<std::string> Take(const PeerHello& theirs, const PeerHello& mine);
 
 private:
-    std::set<std::tuple<std::string, u8, std::string, u64, u8>> warned;
+    std::set<std::tuple<std::string, u8, std::string, u64, u8, std::string>> warned;
 };
 // A hash of the map event files (*.emevd.dcx) in `folder`, the game's dvdroot_ps4/event (the
 // co-op kit replaces some): names and bytes. 0 when there are none or one cannot be read.
 u64 EventFilesHash(const std::filesystem::path& folder);
+// A hash of one file's bytes (the eboot, patches.bin), 0 when it cannot be read.
+u64 FileHash(const std::filesystem::path& file);
+// Build check on join (Kaniel 2026-10-24): what the game knows of its build, and from its
+// environment (`env`: std::getenv, or a test's) its release (BB_RELEASE_VERSION, the launcher's;
+// "dev" without one), the settings that change the game (harder enemies, the gameplay patches
+// run.py names in BB_PATCH_GAMEPLAY, the co-op rule switches) and, only for the logs, the visual
+// ones (frame rate, mods, other patches). Hashes 0 are unknown.
+struct BuildIdentity {
+    std::string revision;
+    u64 eboot = 0;
+    u64 event_files = 0;
+    u64 patches_bin = 0;
+};
+BloodborneCoop::BuildFingerprint CoopBuildFingerprint(
+    const BuildIdentity& identity, const std::function<const char*(const char*)>& env);
 std::vector<u8> EncodeDirectKills(std::string_view member, std::span<const u32> handles);
 std::optional<DirectKills> DecodeDirectKills(std::span<const u8> payload);
 std::unordered_set<u32> DirectKillHandles(std::span<const DirectKills> kills);
@@ -1834,6 +1889,10 @@ constexpr auto EnemyOwnerChangeSettles = std::chrono::seconds{5};
 // into the host's world, or a guest starting or ending its run of the map's enemies) or of its
 // own takeover or hand-back (`owner_changed_ms`).
 bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner_changed_ms);
+// Whether a settling character's death is still no kill: not when this player's own hit was its
+// last (Kaniel's test 2026-10-23: a lone guest killed the Cathedral Ward hag 9 s after a trip,
+// while its alone state had just changed; the kill was never posted and the host found her alive).
+bool SettlingHidesDeath(bool settling, std::optional<bool> last_hit_mine);
 // The world a lone guest's enemy claims (ClaimEnemiesWhenAlone) were made in: its map and the
 // local player's character. A load makes a new character, also on the same map (a join, a
 // respawn), and the claimed words go with the old world's memory (rig 2026-10-13: the hand-back
@@ -2204,6 +2263,13 @@ const std::vector<CodePatch>& QuietSummonBannerPatches();
 // chimes): the network banner (0x01BFFE80, message id in edi) shows none of them.
 constexpr std::array<u8, 8> ShowNetworkBannerPrologue{0x55, 0x48, 0x89, 0xE5,
                                                       0x41, 0x57, 0x41, 0x56};
+// Kaniel 2026-10-23: the item-received popup ("Oedon Tomb Key 1 / OK") and its pickup sound
+// (menu sound 300) come from one function: the give (GiveItems, 0x017D89F0) calls it for each
+// item it put in the inventory (0x017D9348) and each it sent to the storage (0x017D94C7) with
+// (queue [0x0553B1C0], &handle, category, id, count, to storage); it pushes the item on the
+// popup's queue. Its result is never read. Skipped while SilentItemGets lives (see there).
+constexpr u64 ItemGetQueuedOffset = 0x016D8850;
+constexpr std::array<u8, 8> ItemGetQueuedPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
 // Kaniel 2026-10-18: a guest whose connection dropped and came back (the party went on) still
 // had "Lost connection to the network. Returning to title menu." (FMG 204, 4701) with its OK
 // button over the game. The network script's OnLanCutError (0x01387130, a Lua C function: the
@@ -2747,6 +2813,14 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
 // Its game's ownership step gives its own player's enemies to it all the same: right after it, the
 // word such an enemy gets instead (the network's), or none (`hosting`: this game hosts).
 std::optional<u16> HostFollowerWord(EnemyRole role, bool hosting, u16 word);
+// Kaniel's test 2026-10-23: a guest alone on a map saw the characters its story hides (the
+// clinic's dog, every NPC the host's world hides). As the map loads they start loading ([control
+// +0x14] wanted, +0x10 applied), then the story hides them (+0x28); the host's game lets them go
+// (wanted and applied 0), a guest's game keeps them loaded with no host there to say otherwise, and
+// draws them. A lone guest (the owner of its map's enemies) switches such a one off; one it
+// switched off goes back on once it is no longer hidden or the guest no longer alone.
+bool LoneGuestSwitchesOff(bool lone_guest, bool hidden, bool disabled, s32 wanted, s32 applied);
+bool LoneGuestSwitchesBackOn(bool lone_guest, bool hidden);
 // Whether the activation pass wakes the enemies around the other players here (WakeAroundOthers):
 // on the owner, and on a host that follows (its copies by the owner take the owner's places, so
 // they stand there when it takes the map over).
@@ -3205,6 +3279,10 @@ float SupplyNameWidth(std::string_view name);
 u32 SupplyFrame(const PartyListEntry& entry);
 // Where a tag goes on the HUD's 1920x1080 stage (its HP bar's left end).
 std::pair<s32, s32> PartyListPosition(int index);
+// The native port on another aspect ratio than 16:9 (its aspect hooks, Kaniel 2026-10-24): how far
+// the HUD's groups are moved toward the screen's edges, in the stage's pixels. The list moves with
+// the player's own bars (up and to the left by it). 0 (16:9) by default.
+void SetHudEdgeShift(float dx, float dy);
 // The TagData the tag update takes for an entry; `role` and `name` are the addresses of its UTF-16
 // strings (kept by the caller, at most 63 characters each). A game HUD string is 0x38 bytes: the
 // tag update copies it with the allocator at +0x28 (and a flag at +0x30), so each string starts as
@@ -3297,9 +3375,16 @@ struct Bloodstain {
     bool operator==(const Bloodstain&) const = default;
 };
 // This player's bloodstain from the game's record (GameDataMan +0x28 its mark; the record at
-// [GameDataMan +0x30]: +0x3C its map, +0x18 its position, +0x38 its echoes). The mark stays up
+// [GameDataMan +0x30]: +0x3C its map, +0x00 its position, +0x38 its echoes). The mark stays up
 // on an empty record (map -1, echoes -1), and a stain without echoes holds nothing: none then.
 std::optional<Bloodstain> BloodstainOf(bool has_mark, u32 map, const LampPosition& at, s32 echoes);
+// The same from the record's bytes (`record`, from its start; nothing from a shorter read). Player
+// report 2026-10-23: the record keeps two places, as UpDateBloodMark (0x013D2910) writes them:
+// +0x00 where the stain lies (the player's last safe ground, [player +0x400] +0x30, which the
+// stain's marker copies when the game shows it, 0x01868A50) and +0x18 where the player died (the
+// foot of a cliff it fell from). The stain is at the first.
+constexpr size_t BloodstainRecordSize = 0x40;
+std::optional<Bloodstain> BloodstainOfRecord(bool has_mark, std::span<const u8> record);
 struct MemberVitals {
     std::string member;
     u32 map = 0;
@@ -3361,6 +3446,23 @@ bool PresenceHides(s64 now_ms, s64 first_seen_ms, s64 unmatched_since_ms);
 std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
                                     std::span<const MemberVitals> board, std::string_view self,
                                     u32 map);
+// The board member (its index) each character shows by, as ShownOtherPlayers pairs them; none for
+// a character by no member, or with no position.
+std::vector<std::optional<size_t>> VouchingMembers(
+    std::span<const std::optional<LampPosition>> characters, std::span<const MemberVitals> board,
+    std::string_view self, u32 map);
+// Player report 2026-10-23 (v1.1.9): a player who fell into the void woke at the lamp seen by
+// itself (its respawn is a trip) but not by the others: their copy of it had faded out in the
+// void too (character +0x20C, 1.0 while shown) and only their own map load fades it back. Per
+// other character, each frame: once a member on this map died while it was faded out, it fades
+// back in (Tick says so, once) when the member it shows by is up again.
+class FadeBack {
+public:
+    bool Tick(float fade, bool someone_died, std::optional<Vital> member);
+
+private:
+    bool died = false;
+};
 std::optional<VitalsBoard> ParseVitalsBoard(std::string_view body);
 // Kaniel's playtest 2026-10-19: one member can end up with two characters here (his old copy
 // kept after a crash, bound again to his new join). Both take his packets off one queue on two
@@ -3598,6 +3700,18 @@ bool SkipsHitReaction(bool down, u64 victim, u64 local_player);
 constexpr u64 EnemyBarDamageOffset = 0x016F9A50;
 constexpr std::array<u8, 8> EnemyBarDamageStart{0x45, 0x31, 0xC0, 0x48, 0x89, 0xF8, 0x31, 0xC9};
 bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies);
+// The boss bars: BossGaugeSlots at [0x05562878] +0x1658 (BossGaugesOffset), BossGaugeSize bytes
+// each: name id, the boss's handle (-1 for none), two numbers and a shown byte (+0x10). The game's
+// ClearBossGauge (0x01336D00, also inlined in Failed_BossAreaMission 0x0138B2D0) puts them back
+// to none; a summoned guest's death in a boss area runs Failed_BossAreaMission and the host's
+// death reload clears them. A party guest revived in the host's world runs neither (Kaniel's
+// playtest 2026-10-22: Paarl's bar stayed up at the lamp after a wipe), so a party death clears
+// them itself. Returns the handles of the bars that were up.
+constexpr u64 BossGaugesPointerOffset = 0x05562878;
+constexpr u64 BossGaugesOffset = 0x1658;
+constexpr std::size_t BossGaugeSlots = 3;
+constexpr std::size_t BossGaugeSize = 0x14;
+std::vector<u32> ClearBossGauges(std::span<u8> gauges);
 std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, std::string_view self,
                                          u32 map, const LampPosition& me);
 
@@ -3622,6 +3736,25 @@ PadInput DownedPad(const PadInput& pad);
 // press of ours (the game's own toggle), at most one every LockOnReleaseGapMs while the cursor
 // still shows.
 constexpr u64 HudLockCursorAt = 0x14F8;
+// Kaniel 2026-10-24 (team pings): where the lock cursor is, on the HUD's 1920 x 1080 screen
+// (ints): the lock-on manager's +0xCF0 / +0xCF4 written at 0x01BFE568 / 0x01BFE572 each frame
+// (960, 540 while it is on another mark).
+constexpr u64 HudLockCursorXAt = 0x14FC;
+constexpr u64 HudLockCursorYAt = 0x1500;
+constexpr u64 HudLockCursorXWrite = 0x01BFE568;
+constexpr std::array<u8, 6> HudLockCursorXStore{0x89, 0x88, 0xFC, 0x14, 0x00, 0x00};
+constexpr u64 HudLockCursorYWrite = 0x01BFE572;
+constexpr std::array<u8, 6> HudLockCursorYStore{0x89, 0x88, 0x00, 0x15, 0x00, 0x00};
+// Kaniel 2026-10-24 (team pings): the game's system sounds, its menus' own. 0x01774690 (this:
+// [0x05562FD8], esi: the sound) plays one of the ids of its table (60 of them at 0x04733830; any
+// other does nothing): 0 the cursor's tick (a list's selection moving, e.g. 0x015CA596), 100 and
+// 200 a page's confirm and cancel, 300 an item got (the item popup's push calls it, 0x016D8981),
+// 400 a number stepping. A ping coming in plays the cursor's tick: the quietest.
+constexpr u64 SystemSoundOffset = 0x01774690;
+constexpr std::array<u8, 8> SystemSoundPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
+constexpr u64 SystemSoundPointerOffset = 0x05562FD8;
+constexpr s32 SystemSoundCursor = 0;
+constexpr s32 SystemSoundItemGot = 300;
 constexpr s64 LockOnReleaseGapMs = 600;
 bool ReleasesLockOn(s32 cursor, s64 now_ms, std::optional<s64> last_press_ms);
 // R1 or R2 going down between two reads of the pad: an attack, which may be a revive hit.

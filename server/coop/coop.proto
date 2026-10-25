@@ -425,11 +425,13 @@ message Envelope {
         // 38 was EnemiesLetGo (phase 6's far-guest runners, gone in phase 8).
         EnemyHit enemy_hit = 39;
         ResumeAt resume_at = 40;
-        InvadeRequest invade_request = 41;
-        InvasionNotice invasion_notice = 42;
-        InvasionStart invasion_start = 43;
-        InvaderJoined invader_joined = 44;
-        InvasionEnd invasion_end = 45;
+        Ping ping = 41;
+        AltarRecord altar_record = 42;
+        InvadeRequest invade_request = 43;
+        InvasionNotice invasion_notice = 44;
+        InvasionStart invasion_start = 45;
+        InvaderJoined invader_joined = 46;
+        InvasionEnd invasion_end = 47;
     }
 }
 
@@ -496,6 +498,30 @@ message InvasionEnd {
     string text = 4;
 }
 
+// Team altars (Kaniel's playtest 2026-10-24, emulator bloodborne_altar.h): game -> server ->
+// the party's other games, as it is: a ritual's or a join's record of ritual altar `altar` (0-6),
+// whole (its 6000 event flags, 750 bytes, the first flag a byte's top bit), which every other
+// game's altar takes exactly. Sent flag by flag, as diffs, the records merged and named no
+// dungeon.
+message AltarRecord {
+    uint32 altar = 1;
+    bytes bits = 2;
+    string member = 3; // server -> game: whose
+}
+
+// Kaniel 2026-10-24: a team ping. A member marks a spot (where its camera aims, the enemy it is
+// locked on, or a spot on the world map; game -> server); the server sends it on at once to the
+// team's other members (`member` set; server -> game). Each game shows it 20 s, one per member
+// (a new one replaces it). Nothing is kept.
+message Ping {
+    uint32 map = 1;    // the packed map the spot is on
+    Position at = 2;   // the game's metres on that map
+    uint32 enemy = 3;  // the enemy it follows (its handle), 0 none
+    uint32 seq = 4;    // counts up within the sender's run
+    bool from_map = 5; // placed on the world map
+    string member = 6; // server -> game: whose
+}
+
 // Phase 7, server -> game (after its hello): where this member last stood in the team's world
 // (its last vitals), for a guest's next run to come back there instead of at its save's lamp.
 message ResumeAt {
@@ -536,9 +562,15 @@ message TeamRequest {
         // Kaniel 2026-10-17: the leader forgets one of the server's worlds (`world`): off the
         // list, its folder kept aside on the server.
         FORGET_WORLD = 11;
+        // A friend the lobby does not list (hosted: it lists 32 players). The player joins the
+        // team whose code it typed (`code`, coop/team_code.h): the leader handed the code out, so
+        // it stands for the leader's invite and the typing for the accept.
+        JOIN_CODE = 12;
+        NEW_CODE = 13;    // the leader: a fresh code for its team, the old one no longer joins
+        INVITE_NAME = 14; // invite the one signed-in player named `name` (as the lobby shows it)
         // Invasions (docs/INVASIONS.md): the leader allows invaders into the team's world
         // (`allow`), or turns them off (ending a running invasion).
-        INVADERS = 12;
+        INVADERS = 15;
     }
     Action action = 1;
     string member = 2;
@@ -546,7 +578,9 @@ message TeamRequest {
     uint32 slot = 4;
     string character = 5;
     string world = 6;
-    bool allow = 7; // INVADERS
+    string code = 7;
+    string name = 8;
+    bool allow = 9; // INVADERS
 }
 
 message LobbyPlayer {
@@ -605,8 +639,10 @@ message Team {
     // its party key ("world:<id>"; empty for a new one): a game in another party is not in it.
     string world = 6;
     string party = 7;
+    // The code that joins the team (TeamRequest.JOIN_CODE); sent to its leader only.
+    string code = 8;
     // Invasions (docs/INVASIONS.md): the leader allows invaders (off by default).
-    bool allow_invaders = 8;
+    bool allow_invaders = 9;
 }
 
 message TeamInvite {

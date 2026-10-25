@@ -136,6 +136,12 @@ std::vector<bbcoop::TeamRequest> TeamJoinHuntRequests(const bbcoop::LobbyState& 
                                                       const std::string& character,
                                                       std::string_view world = {});
 
+// The team screen's request `action` naming `id`, as the menu sends it (TeamLobbyRequest): a team
+// (accept, decline), a world (pick, forget), a typed code (JOIN_CODE: cleaned up,
+// NormalizeTeamCode; kept as typed when it cannot be one, the server's refusal says so), a typed
+// name (INVITE_NAME), else a member.
+bbcoop::TeamRequest TeamMenuRequest(bbcoop::TeamRequest::Action action, const std::string& id);
+
 // Kaniel 2026-10-16: a new character got the team's old world. Kaniel 2026-10-17: the worlds are
 // the server's, apart from its teams (bbcoop::TeamWorldInfo, LobbyState.worlds: any team plays
 // any of them) and the leader picks the one its Start plays. The world the team screen starts on
@@ -232,6 +238,14 @@ std::vector<std::pair<s32, bool>> TeamTimeOfDayAtLoad(const WorldFlags& team, u3
 // (TimeOfDayToFollow, never back). None when the blocks differ (loads take that world).
 std::vector<std::pair<s32, bool>> TeamStoryToFollow(const WorldFlags& before,
                                                     const WorldFlags& after);
+// A guest's kept session change (KeepWorldChanges, `kept_ms` when this game kept it, none when it
+// came from the file) that a team guest's load leaves to the team's world: a story step
+// (TeamStoryToFollow's kind) in a block the team's world covers, kept longer ago than the host's
+// reports take to carry it (Kaniel's playtest 2026-10-22: a guest alone on a map saw NPCs from its
+// own game's steps, put over the team's world as the map loaded).
+inline constexpr s64 KeptChangeReportMs = 20'000;
+bool KeptChangeYieldsToTeam(s32 flag, std::optional<s64> kept_ms, s64 now_ms,
+                            std::span<const u32> team_blocks, u32 flags_per_block);
 
 // Phase 6: the team join without signs or a bell (docs/native-netcode/session.md, "Team join").
 // The team's host opens its game session itself (NetSync CreateSession) once it stands in its
@@ -298,6 +312,19 @@ std::vector<HeldGoods> PhantomKeyItemsToGiveBack(std::span<const HeldGoods> firs
 // them with that list, and PhantomKeyItemsToGiveBack gives none back twice (home holds them).
 std::vector<HeldGoods> OwnKeyItemsForPhantom(std::span<const HeldGoods> own,
                                              std::span<const HeldGoods> phantom);
+
+// Kaniel 2026-10-23: a joining guest saw the game's "item received" popup ("Oedon Tomb Key 1 /
+// OK") once for each of its own key items OwnKeyItemsForPhantom put in the phantom's list. While
+// one lives on a thread, the gives on that thread queue no popup (and no pickup sound): the hook
+// on the popup's queue push (ItemGetQueuedOffset) skips it. Nested ones are fine.
+class SilentItemGets {
+public:
+    SilentItemGets();
+    ~SilentItemGets();
+    SilentItemGets(const SilentItemGets&) = delete;
+    SilentItemGets& operator=(const SilentItemGets&) = delete;
+};
+bool ItemGetsSilent();
 
 // Event flag 4047 ("a player on the way out", docs/FLAGS.md): set when a session ends under a
 // player; a summoned guest's reload home cleared it. A team's guest stays in its world (no reload),

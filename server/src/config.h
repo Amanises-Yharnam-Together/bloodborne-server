@@ -40,6 +40,10 @@ struct HostedConfig {
     int partyWorlds = 2048;    // party worlds in memory at once (a team's each; idle ones go)
     bool stats = false;        // the stats page (it lists player ids; StatsEnabled as well)
     bool reports = false;      // crash reports (/bb/report), at most 8 MB each when on
+    // The operator's commands (admin.h): a UNIX-domain socket only the server's user opens (empty:
+    // none). Worlds nobody played for this many days are put aside, daily (0: never).
+    QString adminSocket = QStringLiteral("admin.sock");
+    int retireDays = 0;
 };
 
 // Invasions (docs/INVASIONS.md): a solo player invades a team's world that allows it. Off unless
@@ -102,6 +106,12 @@ public:
     bool IsBloodborneSeamlessCoopEnabled() const {
         QReadLocker lk(&m_lock);
         return m_bloodborneSeamlessCoop;
+    }
+    // Build check on join: whether a game must run this server's own release (CheckServerBuild,
+    // on by default; off for a dev or rig server built apart from the games).
+    bool IsServerBuildChecked() const {
+        QReadLocker lk(&m_lock);
+        return m_checkServerBuild;
     }
 
     InvasionConfig GetInvasions() const {
@@ -190,6 +200,7 @@ private:
     bool m_statsEnabled = true;
     bool m_matching2Enabled = true;
     bool m_bloodborneSeamlessCoop = false;
+    bool m_checkServerBuild = true;
     BackendConfig m_backend;
     HostedConfig m_hosted;
     InvasionConfig m_invasions;

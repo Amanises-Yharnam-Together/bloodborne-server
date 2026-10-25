@@ -39,7 +39,11 @@ void ClientSession::Start() {
 }
 
 void ClientSession::OnReadyRead() {
-    m_readBuf.append(m_socket->readAll());
+    Take(m_socket->readAll());
+}
+
+void ClientSession::Take(const QByteArray& bytes) {
+    m_readBuf.append(bytes);
 
     while (m_readBuf.size() >= static_cast<int>(HEADER_SIZE)) {
         // Parse header

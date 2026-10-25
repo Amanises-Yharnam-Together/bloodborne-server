@@ -149,7 +149,7 @@ void LogBloodstainStateChanges() {
     const u64 player = GetLocalPlayer();
     const auto state =
         fmt::format("has_mark={} record_valid={} record_30={} record_38={} record_block={:#x} "
-                    "record_pos=({}, {}, {}) stain={:#x} "
+                    "record_pos=({}, {}, {}) death_pos=({}, {}, {}) stain={:#x} "
                     "stain_hidden={} shown_marker={:#x} shown_effect={:#x} flag1592={} "
                     "flag1770={} chr_type={}",
                     data >= 0x10000 ? ReadValue<u8>(data, 0x28) : 0xFF,
@@ -157,6 +157,9 @@ void LogBloodstainStateChanges() {
                     record >= 0x10000 ? ReadValue<s32>(record, 0x30) : 0,
                     record >= 0x10000 ? ReadValue<s32>(record, 0x38) : 0,
                     record >= 0x10000 ? ReadValue<u32>(record, 0x3C) : 0,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x00) : 0.0f,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x04) : 0.0f,
+                    record >= 0x10000 ? ReadValue<float>(record, 0x08) : 0.0f,
                     record >= 0x10000 ? ReadValue<float>(record, 0x18) : 0.0f,
                     record >= 0x10000 ? ReadValue<float>(record, 0x1C) : 0.0f,
                     record >= 0x10000 ? ReadValue<float>(record, 0x20) : 0.0f, stain,
@@ -175,13 +178,12 @@ void LogBloodstainStateChanges() {
 std::optional<Bloodstain> ReadOwnBloodstain() {
     const u64 data = ReadValue<u64>(image_base + GameDataManPointerOffset, 0);
     const u64 record = data >= 0x10000 ? ReadValue<u64>(data, 0x30) : 0;
-    if (record < 0x10000 || !HasMemoryAccess(record, 0x40, MemoryProt::CpuRead)) {
+    const auto bytes =
+        record >= 0x10000 ? TryRead<std::array<u8, BloodstainRecordSize>>(record, 0) : std::nullopt;
+    if (!bytes) {
         return std::nullopt;
     }
-    return BloodstainOf(ReadValue<u8>(data, 0x28) != 0, ReadValue<u32>(record, 0x3C),
-                        {ReadValue<float>(record, 0x18), ReadValue<float>(record, 0x1C),
-                         ReadValue<float>(record, 0x20)},
-                        ReadValue<s32>(record, 0x38));
+    return BloodstainOfRecord(ReadValue<u8>(data, 0x28) != 0, *bytes);
 }
 
 } // namespace Coop
@@ -373,6 +375,29 @@ s32 PartyDeathPoint(s32 own_point) {
 
 } // namespace
 
+namespace {
+
+// See ClearBossGauges: a party death's own Failed_BossAreaMission for the boss bars.
+void ClearBossBarsAfterDeath() {
+    const u64 holder = ReadValue<u64>(image_base + BossGaugesPointerOffset, 0);
+    constexpr std::size_t Size = BossGaugeSlots * BossGaugeSize;
+    if (holder < 0x10000 ||
+        !HasMemoryAccess(holder + BossGaugesOffset, Size, MemoryProt::CpuWrite)) {
+        return;
+    }
+    const std::vector<u32> up =
+        ClearBossGauges({reinterpret_cast<u8*>(holder + BossGaugesOffset), Size});
+    if (!up.empty()) {
+        std::string which;
+        for (const u32 handle : up) {
+            which += fmt::format(" {:#x}", handle);
+        }
+        LOG_INFO(Debug, "Bloodborne party death: boss bars cleared:{}", which);
+    }
+}
+
+} // namespace
+
 namespace Coop {
 
 // The lamp a death respawns the player at: resting at a lamp stores its respawn point id in
@@ -391,6 +416,9 @@ void MoveToRespawnPoint(bool arriving_from_trip) {
     const DeathReset call =
         arriving_from_trip ? DeathReset::None : party_death_reset.TakeAtRespawn();
     const bool reset = call != DeathReset::None;
+    if (!arriving_from_trip) {
+        ClearBossBarsAfterDeath();
+    }
     if (call == DeathReset::OwnMap) {
         LOG_INFO(Debug, "Bloodborne party death: another member stood when this member died: this "
                         "death is no party wipe (the party's kills stay, but on its own map "
@@ -940,10 +968,6 @@ bool PS4_SYSV_ABI SkipDownedHitReaction(u64, const GuestRegisterSnapshot* regist
     }
     return SkipsHitReaction(true, ReadValue<u64>(registers->rdi, 0x08), GetLocalPlayer());
 }
-
-// A character's fade (float, 1.0 while shown): a fall into the void fades it out to 0.0, which only
-// a map load puts back (rig 2026-10-22).
-constexpr u64 CharacterFadeOffset = 0x20C;
 
 // The fall damage step (0x01A35C33) takes a fall into the void as a fixed lethal height while
 // [[character +0x58] +0x38] +0x48 bit 1 is set. Such a fall stays a real death: nobody could

@@ -242,6 +242,10 @@ private slots:
     void OnDisconnected();
 
 private:
+    // The fuzz tests (tests/fuzz) feed bytes and sign in without a socket.
+    friend struct ClientSessionFuzz;
+    // Bytes the socket read: every whole packet in them, and the rest kept for the next.
+    void Take(const QByteArray& bytes);
     void ProcessPacket(uint16_t command, uint64_t packetId, const QByteArray& payload);
     ErrorType DispatchCommand(CommandType cmd, StreamExtractor& se, QByteArray& reply);
 

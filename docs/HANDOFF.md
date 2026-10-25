@@ -181,9 +181,55 @@ does not give it again at home. The host's own events give the host its own, unc
 | Valtr (m27) | One-eyed Iron Helm | m27 12700908 (also his death flag 1790) | 72700330 -> 43110 | no / no |
 | Simon (m34, m35, m36) | Simon's Bowblade | 13400953, 13500953, 13600954 (also his death flags 1710-1713) | 73400430/31, 73500630, 73600530 -> 43200-43220 | no / no |
 | Micolash (m26) | Mensis Cage | m26 12601850 (a boss kill event) | 72600301 -> 21000 | unknown (check the boss event patch) |
-| Many window NPCs; Blood Vial and Blood of Adella givers | Tonsil Stone, Blood Vial, Blood of Adella; gestures | the talk script itself (c1_52 adds, c1_65 the popup, c1_66 a gesture) | none | yes (runs in the guest's own game; not rig-tested) |
+| Many window NPCs; Blood Vial and Blood of Adella givers | Tonsil Stone, Blood Vial, Blood of Adella | the talk script itself (c1_52 adds, c1_65 the popup) | none | yes (runs in the guest's own game; not rig-tested) |
+| Eileen, Alfred, Djura, Valtr and others | gestures | the talk script itself (c1_66), skipped while the gesture's flag is on | none | no / yes (see NPC gestures below, rig gesture-own) |
 | Hunter's Dream messengers | Notebook, bells, Eye of a Blood-drunk Hunter | m21 12101022-28 (made local) | 12101023-29 -> 10000-10050 | yes (earlier fix) |
 | Cleric Beast (m24_01 12411700) | Sword Hunter Badge | the boss event, skipped while 6645 is on | lot 50000010 | no / yes (rig together/boss-kill) |
+
+NPC gestures (2026-10-23, an outside player on v1.1.4: a guest never learned Eileen's and
+Alfred's gestures, the host did, and the guest got the items from the same talks). Every gesture
+an NPC gives comes from one step of its talk script (debug string ジェスチャー取得判定, "gesture
+get check"): while the gesture's flag is on it does nothing, else it shows the gesture (c1_65),
+learns it (c1_66) and sets the flag (c1_11). Those flags had no row in the flag table, so they
+were the host's world: the guest's copy followed the host's, a host who had the gesture made the
+guest's talk skip it, and a team world carried the host's flag into the guest's save. They are
+each player's own now (`GestureFlags`, PerPlayer, kept for the guest's own world), and every
+second a gesture flag that is on while this player has not learned its gesture goes off
+(`GestureFlagFix`, `KeepGestureFlagsOwn`), so a save that took the host's flag gets the gesture
+from the NPC's talk again. A learned gesture's flag that is off stays off: Church Bow (Female)
+has two givers, each with its own flag.
+
+The game keeps the gestures in the local PlayerGameData (`[0x0553B130] +0x08`) +0x5B8: 30 u32
+slots from +0x10, bit 0 learned, bits 1-15 the row of the gesture table (0x014EC980: 31 rows of 16
+bytes, row 0 none, row k gesture k - 1 with goods 800 + k - 1). c1_66 (dispatcher case 0x02041691,
+body 0x02042AD1) looks for the slot whose row holds the gesture and sets its bit 0
+(0x02043E9E); the list is the guest's own, a phantom's as well, and it stays over trips (rig
+gesture-own). Rig verbs: `talk-gesture <gesture> <flag>` (that talk step), `expect-gesture
+<gesture> <0|1>`.
+
+| NPC (talk script) | Map | Gesture | Flag |
+|---|---|---|---|
+| Eileen (t240325, t241325) | m24_00, m24_01 | 4 Shake off Cape | 6744 |
+| Eileen (t240325) | m24_00 | 11 Shh! | 6751 |
+| Eileen (t240342) | m24_00 | 10 Wait | 6750 |
+| Eileen (t241325) | m24_01 | 14 Approval | 6754 |
+| Alfred (t240333) | m24_00 | 9 Pray | 6749 |
+| t240343 (talk ids 34xxxxx, as Alfred's) | m24_00 | 5 Church Bow (Male) | 6745 |
+| t240318 | m24_00 | 6 Curtsy | 6746 |
+| t240322 | m24_00 | 7 Church Bow (Female) | 6747 |
+| t240339 | m24_00 | 7 Church Bow (Female) | 70000007 |
+| t240312, t240504 (talk ids 22xxxxx) | m24_00 | 13 Triumph | 6753 |
+| t242480 | m24_02 | 20 Make Contact | 6760 |
+| Djura (t230323) | m23 | 17 Brush off Dust | 6757 |
+| t250307 | m25 | 18 Respect; 19 Deep Respect | 6758; 6759 |
+| t250324 | m25 | 15 Roar | 6755 |
+| Valtr (t270503) | m27 | 22 League Oath | 6770 |
+| Nightmare Frontier NPC (t320329) | m32 | 16 Beg for Life | 6756 |
+
+Each step runs on the talk's own conditions (a dialogue branch, the NPC's story step); the table
+only says which flag holds it back. Found with `tools/re/esdump.py` over every
+script/talk/*.talkesdbnd.dcx (a talk script group with `c1_66(arg0)`, its callers' arguments
+gesture, goods 800 + gesture, flag).
 
 Hunter badges (2026-10-18, Kaniel: a guest never got the Sword Hunter Badge): the Dream's 12100450
 sets 6630-6633 and 6640-6649 once the player holds a workshop tool or badge, and the badges' givers
@@ -379,6 +425,14 @@ session stays up across maps. Kaniel chose option A (stretch the native session)
   its own world (4:3 type 0) in one group. `party_boss_events.py` (AMBUSH_EVENTS) moves that
   check to an unused group in m22_00 12204000 (Hemwick woods), m24_01 12414000, m25_00
   12504000, m26_00 12604000 and m29 12905406, so a guest's approach wakes them too.
+- **One-time enemies** (rig nightmare-flags 2026-10-24): the Wandering Nightmares and the like
+  (m24_00 12400200, m23 12300220, m28 12800500 and 9 more templates, a slot per enemy with its
+  drop's flag) go for good once their event ends: the slot flag switches them off (2004:5) or hides
+  them (2004:29) at every load. The event ends when an alive player (4:3 10000 0) has the drop's
+  flag, but a client skips that check (1003:5 1 1). A party guest reads alive after a trip, so its
+  game ended every one on the map with no kill and the session's sync and the team's world took
+  them off for everybody. `party_boss_events.py` (keep_one_time_drop_checks) makes that skip never
+  match. Saves and team worlds that already have the flags keep them.
 - **Death triggers** (rig-confirmed): events set the respawn point on a death (common 9400: first
   death -> Dream 2102962; 9404: Dream 2102961; 9421: kidnapping (flag 9420) -> Gaol 2802959). A
   party revive goes there, travelling 0.2 s later when it is on another map

@@ -59,6 +59,10 @@ public:
     bool BannedId(const QByteArray& online_id) const {
         return banned_ids.contains(online_id);
     }
+    // In the operator's list (not a rate ban of Ban's).
+    bool ListBanned(quint32 address) const {
+        return banned_addresses.contains(address);
+    }
     void Ban(quint32 address, qint64 until_ms) {
         bans[address] = until_ms;
     }
@@ -102,7 +106,20 @@ private:
     Counters counters;
 };
 
-// One address or id a line of an operator's ban list (banned.txt).
-void ParseBanList(const QString& text, QSet<quint32>& addresses, QSet<QByteArray>& ids);
+// One address or id a line of an operator's ban list (banned.txt), '#' comments; a line may end
+// its ban: "<address|id> until=<unix seconds>", left out from `now_s` on.
+void ParseBanList(const QString& text, QSet<quint32>& addresses, QSet<QByteArray>& ids,
+                  qint64 now_s = 0);
+
+struct BanLine {
+    QString who;        // an address or a player id
+    qint64 until_s = 0; // 0: for ever
+    QString note;       // its comment
+};
+QList<BanLine> BanLines(const QString& text);
+// The list with `ban` (its earlier lines and the ended bans out, everything else kept as it was).
+QString WithBan(const QString& text, const BanLine& ban, qint64 now_s);
+// The list without the lines of `who`; `found` whether it had any.
+QString WithoutBan(const QString& text, const QString& who, bool& found);
 
 } // namespace Admission

@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <QtEndian>
+#include "coop/build_fingerprint.h"
 #include "coop/packet_routes.h"
+#include "virtual_address.h"
 
 namespace ServerLink {
 
@@ -110,15 +112,7 @@ quint16 Vport(const QByteArray& frame, int at) {
 } // namespace
 
 Endpoint VirtualEndpointOf(const QByteArray& online_id) {
-    quint32 hash = 2166136261u; // FNV-1a
-    for (const char c : online_id) {
-        hash = (hash ^ static_cast<quint8>(c)) * 16777619u;
-    }
-    quint32 host = hash & 0xFFFFFF;
-    if ((host & 0xFF) == 0 || (host & 0xFF) == 0xFF) {
-        host ^= 0x01; // no .0 or .255
-    }
-    return {(10u << 24) | host, VirtualPort};
+    return {VirtualAddressOf(online_id), VirtualPort};
 }
 
 QString Endpoint::Text() const {
@@ -370,31 +364,59 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
         return;
     }
     QByteArray refusal;
+    QByteArray refusal_logged; // when the game's text says more than its log needs
+    QString checked_aside;     // settings that differ but are only logged
     if (hello->version != LinkVersion) {
         refusal = "link version " + QByteArray::number(hello->version) + ", this server speaks " +
                   QByteArray::number(LinkVersion);
-    } else if (!required_build.isEmpty() && !hello->build.isEmpty() &&
-               hello->build != required_build) {
-        refusal = "another build: everyone needs the same release (this game runs " + hello->build +
-                  ", the server needs " + required_build + ")";
-    } else if (!hello->build.isEmpty() && required_build.isEmpty()) {
-        // Every other linked game's build (a game saying hello again is not one). Phase 11: a game
-        // signs in before its co-op code says the build; none said holds nothing, either way.
+    } else if (!required_build.isEmpty() && !required_build.startsWith("bb-build ")) {
+        // Hosted: a HostedBuild that is no build fingerprint is the whole text every game must
+        // say.
+        if (!hello->build.isEmpty() && hello->build != required_build) {
+            refusal = "another build: everyone needs the same release (this game runs " +
+                      hello->build + ", the server needs " + required_build + ")";
+        }
+    } else if (!hello->build.isEmpty()) {
+        // Build check on join: the games linked here (a game saying hello again is not one; all
+        // of them run one build, so the first says it) and the server's own release (Hosted: a
+        // HostedBuild fingerprint in its place). Phase 11: a game signs in before its co-op code
+        // says the build; none said holds nothing, either way.
+        std::optional<BloodborneCoop::BuildFingerprint> here;
         for (const Link& link : std::as_const(members)) {
-            if (!(link.endpoint == from) && !link.build.isEmpty() && link.build != hello->build) {
-                refusal = "another build: everyone needs the same release (this game runs " +
-                          hello->build + ", the games here run " + link.build + ")";
+            if (!(link.endpoint == from) && !link.build.isEmpty()) {
+                here = BloodborneCoop::ParseBuildFingerprint(link.build.toStdString());
                 break;
+            }
+        }
+        const QByteArray& own = required_build.isEmpty() ? server_build : required_build;
+        const auto server =
+            own.isEmpty() ? std::nullopt : BloodborneCoop::ParseBuildFingerprint(own.toStdString());
+        const auto build = BloodborneCoop::BuildRefusalOf(
+            hello->build.toStdString(), server ? &*server : nullptr, here ? &*here : nullptr);
+        if (!build.text.empty()) {
+            // The team screen's line first, then the whole reason (the link's text holds 255
+            // bytes: the log has all of it).
+            refusal = QByteArray::fromStdString(build.notice + "\n" + build.text);
+            refusal_logged = QByteArray::fromStdString(build.text);
+        } else if (const auto game =
+                       BloodborneCoop::ParseBuildFingerprint(hello->build.toStdString());
+                   game && here) {
+            if (const std::string other = BloodborneCoop::DescribeDifferences(*game, *here);
+                !other.empty()) {
+                checked_aside = QString::fromStdString(other);
             }
         }
     }
     if (refusal.isEmpty() && sign_in) {
-        const std::optional<bool> signed_in = sign_in(hello->online_id, hello->secret);
+        const std::optional<SignInVerdict> signed_in = sign_in(hello->online_id, hello->secret);
         if (!signed_in) {
             return; // still checking: the next hello hears
         }
-        if (!*signed_in) {
-            refusal = "sign-in refused: another player has this id (" + hello->online_id + ")";
+        if (!signed_in->accepted) {
+            refusal =
+                !signed_in->refusal.isEmpty()
+                    ? signed_in->refusal
+                    : "sign-in refused: another player has this id (" + hello->online_id + ")";
         }
     }
     const Endpoint virtual_endpoint = VirtualEndpointOf(hello->online_id);
@@ -406,12 +428,33 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
                       members.value(*holder).online_id + "): use another account name";
         }
     }
+    if (refusal.isEmpty()) {
+        // Two PCs with one player id (a friend's install copied with its user\coop.json): each
+        // game's hello took the link from the other every few seconds, so a team made on one left
+        // at once and neither saw the other (player report 2026-10-24). A game that restarts or
+        // whose connection moves leaves its old link quiet first; one still heard is another PC.
+        for (const Link& other : std::as_const(members)) {
+            if (other.online_id == hello->online_id && other.endpoint.ipv4 != from.ipv4 &&
+                now_ms - other.last_heard_ms <= quiet_ms) {
+                refusal = "another PC plays with this player id, a copied install: on one PC "
+                          "delete user\\coop.json and set up co-op again (" +
+                          other.endpoint.Text().toUtf8() + ")";
+                break;
+            }
+        }
+    }
     if (!refusal.isEmpty()) {
-        result.sends.append({from, Encode(Welcome{false, refusal})});
+        result.sends.append({from, Encode(Welcome{false, refusal.left(0xFF)})});
         result.log.append(
             QStringLiteral("server link: refused %1 (%2): %3")
-                .arg(QString::fromUtf8(hello->online_id), from.Text(), QString::fromUtf8(refusal)));
+                .arg(QString::fromUtf8(hello->online_id), from.Text(),
+                     QString::fromUtf8(refusal_logged.isEmpty() ? refusal : refusal_logged)));
         return;
+    }
+    if (!checked_aside.isEmpty()) {
+        result.log.append(
+            QStringLiteral("server link: %1 (%2) runs other settings than the games here (%3)")
+                .arg(QString::fromUtf8(hello->online_id), from.Text(), checked_aside));
     }
     if (!stats_started) {
         stats_started = true;
@@ -563,6 +606,36 @@ void Hub::TellOthers(const Link& about, MemberState state, qint64 gap_ms, Result
             result.sends.append({other.endpoint, told});
         }
     }
+}
+
+QList<Hub::LinkRow> Hub::Links() const {
+    QList<LinkRow> rows;
+    rows.reserve(members.size());
+    for (const Link& link : members) {
+        rows.append({link.endpoint, link.online_id, link.build, link.last_heard_ms});
+    }
+    return rows;
+}
+
+Hub::Result Hub::Kick(const QByteArray& online_id, quint32 ipv4, qint64 now_ms) {
+    Result result;
+    QList<quint64> kicked;
+    for (const Link& link : std::as_const(members)) {
+        if ((!online_id.isEmpty() && link.online_id == online_id) ||
+            (ipv4 != 0 && link.endpoint.ipv4 == ipv4)) {
+            kicked.append(link.endpoint.Key());
+        }
+    }
+    for (const quint64 key : kicked) {
+        const Link link = members.value(key);
+        Unlink(key);
+        result.log.append(QStringLiteral("server link: %1 kicked by the operator, %2 linked")
+                              .arg(Name(link))
+                              .arg(members.size()));
+        TellOthers(link, MemberState::Gone, now_ms - link.last_heard_ms, result);
+        result.gone.append(link.endpoint);
+    }
+    return result;
 }
 
 Hub::Result Hub::Tick(qint64 now_ms) {
