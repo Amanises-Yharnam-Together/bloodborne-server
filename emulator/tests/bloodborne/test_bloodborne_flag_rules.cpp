@@ -537,6 +537,28 @@ TEST(BloodborneFlagRules, TheDollsGiveAndTheShopMessengersAreEachPlayersOwn) {
     }
 }
 
+// Kaniel's playtest 2026-10-25: right after the team connected nobody could level up at the Doll.
+// Her talk (m21_00 t210304) opens no level-up menu while 6700 is on, and the team's world had
+// the host's on (its team_world.pb): every load put it in each guest's save. It is each game's
+// own (no team's world, host message or session change sets it), and off as a map loads in a
+// party.
+TEST(BloodborneFlagRules, TheDollsLevelUpFlagIsEachGamesOwnAndOffAsAMapLoads) {
+    EXPECT_EQ(DollLevelUpFlag, 6700);
+    EXPECT_EQ(RuleFor(DollLevelUpFlag).owner, FlagOwner::PerPlayer);
+    EXPECT_FALSE(IsWorldFlag(DollLevelUpFlag));
+    EXPECT_TRUE(KeepsLocalFlag(true, DollLevelUpFlag));
+    EXPECT_FALSE(CarriesToGuestWorld(DollLevelUpFlag));
+    EXPECT_FALSE(TakesHostMapFlag(DollLevelUpFlag));
+    EXPECT_FALSE(SharedWithParty(DollLevelUpFlag));
+    EXPECT_TRUE(ClearsDollLevelUpFlag(true, true));
+    EXPECT_FALSE(ClearsDollLevelUpFlag(true, false));
+    EXPECT_FALSE(ClearsDollLevelUpFlag(false, true));
+    // The flags beside it stay the host's.
+    for (const s32 flag : {6699, 6701}) {
+        EXPECT_EQ(RuleFor(flag).owner, FlagOwner::Host) << flag;
+    }
+}
+
 // m21_00 12105020-12105024 (01.09): on while any of the headstone's lamps is lit.
 TEST(BloodborneFlagRules, AHeadstoneIsLitByThisPlayersOwnLamps) {
     const std::set<s32> lit{12407830, 13207810};

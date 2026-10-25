@@ -305,6 +305,11 @@ inline constexpr std::array FirstRows{
     Range(6680, 6697, FlagOwner::PerPlayer, FlagCarriesHome,
           "had a weapon the Bath shop then sells (OwnedWeaponFlags, common events 6680-6697: "
           "Ludwig's Holy Blade, the DLC weapons): this player's own"),
+    Range(6700, 6700, FlagOwner::PerPlayer, 0,
+          "the Doll's level-up in use (her talk, m21_00 t210304, sets it as her level-up menu "
+          "opens; her \"Level Up\" opens no menu while it is on): this game's own, off as a "
+          "map loads (ClearsDollLevelUpFlag). As the host's, the team's world held it on and "
+          "put it in every guest's save: their Doll only spoke (Kaniel's playtest 2026-10-25)"),
     Range(6744, 6747, FlagOwner::PerPlayer, FlagCarriesHome,
           "an NPC's gesture given (GestureFlags; its talk skips the gesture while it is on): "
           "this player's own, as the host's a guest never learned Eileen's or Alfred's gestures "
