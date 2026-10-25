@@ -58,6 +58,11 @@ CENTRAL_YHARNAM_LAMP_2 = 2412951  # talk 241001, 3 m from talk 241319 (Gilbert's
 CATHEDRAL_WARD = "0x18000000"
 CATHEDRAL_WARD_LAMP = 2402950
 CATHEDRAL_WARD_LAMP_LIT = 12407810  # its active flag (bloodborne_map.h's LampActiveFlag)
+# Cathedral Ward's Wandering Nightmares (0x10010027..2c): event 12400200's slot flags, then each
+# one's drop flag (m24_00_00_00.emevd, its init lines).
+NIGHTMARE_SLOT_FLAGS = range(12400202, 12400208)
+NIGHTMARE_FLAGS = ("12400202 12400203 12400204 12400205 12400206 12400207 "
+                   "52400980 52400960 52400990 52400970 52400950 52400940")
 ENEMY = "0x1001400b"  # 484 HP, 17 m from the lamp (farther ones are not awake)
 BY_THE_LAMP = "0x100140a0"  # 999 HP, 1.6 m from the first lamp: by Gilbert's window
 AWAY_FROM_LAMP = "-215.0 -54.5 178.0"  # beside that enemy, 17 m from the lamp
@@ -936,6 +941,32 @@ SCENARIOS = {
         },
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
+    },
+    # Kaniel 2026-10-24 (player Fran's report): the Wandering Nightmares (c1180) are missing, some
+    # only until a reload. Cathedral Ward's six (0x10010027..2c) run event 12400200: once its slot
+    # flag (12400202..07) is on they are switched off at every load; the flag goes on when the drop's
+    # flag (524009x0) is, or, in a CLIENT's game (multiplayer state 1), as soon as the player's
+    # character type reads 0, no kill needed. This logs both flag sets and the player's type (+0x78)
+    # in both games through the join, a trip there and a reload, and the Nightmares' switches. Before
+# the fix (2026-10-24) all six slot flags went on in both games after the trip, no drop flag, and
+# five Nightmares were switched off after the reload. The guest's rig save has the slot flags on
+# before the join; the session's world puts them off.
+    "nightmare-flags": {
+        "about": "the Cathedral Ward Wandering Nightmares stay for host and guest through join, "
+                 "trip and reload (their slot flags stay off with no kill)",
+        "roles": {
+            role: [START, "godmode", f"flags {NIGHTMARE_FLAGS}", "peek self 78",
+                   "wait-session 2 300", f"flags {NIGHTMARE_FLAGS}", "peek self 78", "wait 10",
+                   f"flags {NIGHTMARE_FLAGS}", f"travel {CATHEDRAL_WARD_LAMP}", "peek self 78",
+                   f"flags {NIGHTMARE_FLAGS}", "wait 15", f"flags {NIGHTMARE_FLAGS}",
+                   "census 400", "wait 30", f"flags {NIGHTMARE_FLAGS}",
+                   f"travel {CATHEDRAL_WARD_LAMP}", "peek self 78", "wait 15",
+                   f"flags {NIGHTMARE_FLAGS}", "census 400",
+                   *[f"expect-flag {flag} 0" for flag in NIGHTMARE_SLOT_FLAGS],
+                   "expect-disabled 0x1001002c 0", "done"]
+            for role in ("host", "guest")
+        },
+        "timeout": 300,
     },
     "guest-flags-stay": {
         "about": "flags a guest's own world sets in the session stay in it: the host's world "
