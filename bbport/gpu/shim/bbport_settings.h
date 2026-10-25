@@ -211,19 +211,19 @@ struct Values {
     /// BB_FRAME_GEN_FIT_DISPLAY). With V-Sync (FIFO) the frames are always fitted.
     std::atomic<bool> frame_gen_fit_display{true};
     /// Set by the renderer: the multiplier DLSS Frame Generation reaches on this GPU (1 without
-    /// it), why a provider stopped (or null), and what runs now: generated frames per game
-    /// frame (0 paused) and the display's refresh rate.
+    /// it), why a provider stopped (or null), why no generated frames reach the display now
+    /// (BbFrameGenPace::Idle, 0 while they do) and the display's refresh rate.
     std::atomic<int> dlssg_max_multiplier{1};
     std::atomic<const char*> frame_gen_problem{nullptr};
-    std::atomic<int> frame_gen_now{0};
+    std::atomic<int> frame_gen_idle{1};
     std::atomic<int> frame_gen_display_hz{0};
     /// Frame cap of the unlocked frame rate, 0 none (bbport.ini fps_limit, the game menu; else
     /// the launcher's BB_FPS_LIMIT). Live.
     std::atomic<int> fps_limit{0};
     /// DLSS render preset (DlssModels; bbport.ini dlss_model), 0 NVIDIA's default. Live.
     std::atomic<int> dlss_model{0};
-    /// What the presenter measured (overlay): interpolated frames are being shown, game frames
-    /// and presented images a second.
+    /// What the presenter measured (overlay): generated frames reach the display, game frames
+    /// and shown images a second (generated ones the display had no time for not counted).
     std::atomic<bool> fg_active{false};
     /// Window mode (WindowMode). Applied by the window thread whenever it changes.
     std::atomic<int> window_mode{Windowed};

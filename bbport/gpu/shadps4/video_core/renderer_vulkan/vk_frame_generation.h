@@ -138,13 +138,16 @@ public:
     /// A game frame (not a redraw) is presented now. `generated`: that many generated frames go
     /// first. Returns the smoothed interval of the game frames in ms, which they are spread over.
     float OnPresent(u32 generated);
-    /// Generated frames per game frame the display has room for now (BbFrameGenPace::Limiter);
-    /// read by PlanFrame.
-    void SetDisplayLimit(u32 limit) noexcept {
+    /// Generated frames per game frame the display has room for now (BbFrameGenPace::Limiter),
+    /// and whether 0 is the Limiter's pause; read by PlanFrame.
+    void SetDisplayLimit(u32 limit, bool paused) noexcept {
         display_limit.store(limit, std::memory_order_relaxed);
+        display_paused.store(paused, std::memory_order_relaxed);
     }
-    /// Swap thread: one more image went out (a generated one or a game frame).
-    void OnImagePresented(bool generated);
+    /// Swap thread: a game frame went out after `generated` generated frames, `shown` of which
+    /// the display had time to show (BbFrameGenPace::GeneratedShown). Feeds the menu, the FPS
+    /// counter and the log with what really reaches the display.
+    void OnPresented(u32 generated, u32 shown);
     /// Swap thread: a game frame goes out with generation switched off.
     void OnSwitchedOff();
     /// Smoothed interval between game frames in ms, 0 until known.
@@ -185,6 +188,10 @@ private:
     /// Logs a change of state once ("off (HDR output)").
     void Report(std::string_view state);
     void PrintStats(std::chrono::steady_clock::time_point now);
+    /// Why this frame's plan makes no frames (BbFrameGenPace::Idle), for the swap thread.
+    void SetIdle(int idle) noexcept {
+        plan_idle.store(idle, std::memory_order_relaxed);
+    }
 
     const Instance& instance;
     Scheduler& scheduler;
@@ -213,6 +220,7 @@ private:
     vk::Format context_format{};
     vk::Format output_format{};
     bool failed = false;          ///< FSR 3.1 refused, or no memory; until the switch is cycled
+    int failed_idle = BbFrameGenPace::IdleFailed; ///< which of the two
     bool dlss_failed = false;     ///< DLSS Frame Generation refused; FSR 3.1 runs instead
     bool was_requested = false;
     bool history_broken = true;   ///< the next frame restarts the interpolation history
@@ -227,10 +235,13 @@ private:
     // Pacing and statistics (swap thread writes; the command thread reads the atomics).
     std::atomic<float> base_interval_ms{0.0f};
     std::atomic<u32> display_limit{MaxGenerated};
+    std::atomic<bool> display_paused{false};
+    std::atomic<int> plan_idle{BbFrameGenPace::IdleStarting};
     std::chrono::steady_clock::time_point last_present{};
-    std::chrono::steady_clock::time_point stats_start{}, overlay_start{};
-    u32 stats_base = 0, stats_images = 0, stats_generated = 0;
-    u32 overlay_base = 0, overlay_images = 0;
+    std::chrono::steady_clock::time_point stats_start{}, overlay_start{}, summary_start{};
+    u32 stats_base = 0, stats_images = 0, stats_generated = 0, stats_shown = 0;
+    BbFrameGenPace::Window overlay{}, summary{};
+    BbFrameGenPace::StatusTracker tracker;
     std::atomic<u32> skipped{0};
 };
 
