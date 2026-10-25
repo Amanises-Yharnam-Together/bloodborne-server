@@ -6,6 +6,7 @@
 // wiped. The rules here are plain functions; the hooks that use them are in the emulator.
 
 #include <array>
+#include <cstring>
 #include <map>
 #include <optional>
 #include <string>
@@ -466,6 +467,23 @@ TEST(BloodbornePartyHud, ThePartyListStacksUnderTheQuickItems) {
     EXPECT_EQ(y1 - y0, y2 - y1);
     EXPECT_GE(y1 - y0, 90) << "each tag's role line clears the bar above";
     EXPECT_LE(y2 + 20, 700) << "above the game's notices";
+}
+
+// Kaniel 2026-10-24: on a wider (taller) screen the native port moves the HUD's groups toward its
+// edges (its aspect hooks); the list follows the player's own bars, up and to the left by the
+// shift.
+TEST(BloodbornePartyHud, ThePartyListFollowsTheHudToTheScreensEdges) {
+    const auto [x0, y0] = PartyListPosition(1);
+    SetHudEdgeShift(320.0f, 0.0f); // 2560x1080
+    const auto [x1, y1] = PartyListPosition(1);
+    EXPECT_EQ(x1, x0 - 320);
+    EXPECT_EQ(y1, y0);
+    SetHudEdgeShift(0.0f, 180.0f); // 1600x1200
+    const auto [x2, y2] = PartyListPosition(1);
+    EXPECT_EQ(x2, x0);
+    EXPECT_EQ(y2, y0 - 180);
+    SetHudEdgeShift(0.0f, 0.0f);
+    EXPECT_EQ(PartyListPosition(1), std::make_pair(x0, y0)) << "16:9: where the game's HUD has it";
 }
 
 // A TagData the game's tag update takes: shown and placed, the HP gauge's values, and the role line
@@ -1258,6 +1276,29 @@ TEST(BloodbornePartyDeath, OwnBloodstainFromTheGamesRecord) {
     EXPECT_FALSE(BloodstainOf(true, 0, at, 10)) << "no map";
 }
 
+// Player report 2026-10-23: the compass's bloodstain sat a bit off from the echoes. The record
+// (UpDateBloodMark 0x013D2910) keeps two places: +0x00 where the stain lies (the player's last
+// safe ground, [player +0x400] +0x30; the stain's marker copies it, 0x01868A50) and +0x18 where
+// the player died (a fall's foot of the cliff). The stain is the first.
+TEST(BloodbornePartyDeath, OwnBloodstainLiesWhereTheGameDropsTheEchoes) {
+    std::array<u8, BloodstainRecordSize> record{};
+    const auto put = [&record](size_t offset, auto value) {
+        std::memcpy(record.data() + offset, &value, sizeof(value));
+    };
+    const LampPosition dropped{-512.47f, -271.24f, 382.51f};
+    const LampPosition died{-530.1f, -290.8f, 395.0f};
+    for (size_t i = 0; i < 3; ++i) {
+        put(0x00 + i * 4, dropped[i]);
+        put(0x18 + i * 4, died[i]);
+    }
+    put(0x38, s32{480});
+    put(0x3C, CentralYharnam);
+    EXPECT_EQ(BloodstainOfRecord(true, record),
+              (Bloodstain{.map = CentralYharnam, .at = dropped, .echoes = 480}));
+    EXPECT_FALSE(BloodstainOfRecord(false, record)) << "picked up";
+    EXPECT_FALSE(BloodstainOfRecord(true, std::span{record}.first(0x3C))) << "a short read";
+}
+
 // The port's party panel lists the other members playing party death in the board's order, by
 // their online ids, and points at the downed one an attack would revive now.
 TEST(BloodbornePartyDeath, ListsTheOthersOnThePartyPanel) {
@@ -1450,4 +1491,39 @@ TEST(BloodbornePartyDeath, OnlyBossesAreHandedOut) {
     EXPECT_FALSE(HandsOutBoss(2, true));
     EXPECT_TRUE(HandsOutBoss(std::nullopt, true)) << "its row unread: the boss size";
     EXPECT_FALSE(HandsOutBoss(std::nullopt, false));
+}
+
+// Kaniel's playtest 2026-10-22: after a party wipe in Darkbeast Paarl's fight the guests woke at
+// the lamp with his health bar still up. A summoned guest's death in a boss area runs the game's
+// Failed_BossAreaMission, which clears the boss bars (as the host's death reload does); a guest
+// revived in the host's world never runs it, so its party death clears them itself: each slot's
+// name and handle -1, its numbers 0, not shown.
+TEST(BloodbornePartyDeath, APartyDeathClearsTheBossBars) {
+    std::array<u8, BossGaugeSlots * BossGaugeSize> gauges{};
+    const auto put = [&](std::size_t slot, std::size_t field, s32 value) {
+        std::memcpy(gauges.data() + slot * BossGaugeSize + field, &value, sizeof(value));
+    };
+    const auto get = [&](std::size_t slot, std::size_t field) {
+        s32 value = 0;
+        std::memcpy(&value, gauges.data() + slot * BossGaugeSize + field, sizeof(value));
+        return value;
+    };
+    for (std::size_t slot = 0; slot < BossGaugeSlots; ++slot) {
+        put(slot, 0x0, -1);
+        put(slot, 0x4, -1);
+    }
+    put(1, 0x0, 900000); // a name id
+    put(1, 0x4, 0x1000c05a);
+    put(1, 0x8, 1013);
+    put(1, 0xC, 77);
+    gauges[BossGaugeSize + 0x10] = 1;
+    EXPECT_EQ(ClearBossGauges(gauges), std::vector<u32>{0x1000c05a});
+    for (std::size_t slot = 0; slot < BossGaugeSlots; ++slot) {
+        EXPECT_EQ(get(slot, 0x0), -1) << slot;
+        EXPECT_EQ(get(slot, 0x4), -1) << slot;
+        EXPECT_EQ(get(slot, 0x8), 0) << slot;
+        EXPECT_EQ(get(slot, 0xC), 0) << slot;
+        EXPECT_EQ(gauges[slot * BossGaugeSize + 0x10], 0) << slot;
+    }
+    EXPECT_TRUE(ClearBossGauges(gauges).empty()) << "no bar up";
 }

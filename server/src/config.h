@@ -120,6 +120,12 @@ public:
         QReadLocker lk(&m_lock);
         return m_bloodborneSeamlessCoop;
     }
+    // Build check on join: whether a game must run this server's own release (CheckServerBuild,
+    // on by default; off for a dev or rig server built apart from the games).
+    bool IsServerBuildChecked() const {
+        QReadLocker lk(&m_lock);
+        return m_checkServerBuild;
+    }
 
     ShardConfig GetShard() const {
         QReadLocker lk(&m_lock);
@@ -207,6 +213,7 @@ private:
     bool m_statsEnabled = true;
     bool m_matching2Enabled = true;
     bool m_bloodborneSeamlessCoop = false;
+    bool m_checkServerBuild = true;
     BackendConfig m_backend;
     HostedConfig m_hosted;
     ShardConfig m_shard;

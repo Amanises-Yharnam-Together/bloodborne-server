@@ -36,6 +36,7 @@ struct FfxVkPortableFrameGenerationContext;
 
 namespace Vulkan {
 
+class Dlss;
 class Instance;
 class Scheduler;
 
@@ -172,6 +173,8 @@ private:
     bool ChooseOutputFormat(vk::Format format);
     bool CreateContext(u32 width, u32 height, vk::Format format);
     void DestroyContext();
+    /// DLSS Frame Generation's feature released, with no present beside it.
+    void ReleaseDlssFrameGen(Dlss& dlss);
     /// Switched off: the contexts and the captured inputs are freed.
     void ReleaseAll();
     /// The provider of this frame: DLSS when asked for and it can run, else FSR 3.1.

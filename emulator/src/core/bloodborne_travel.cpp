@@ -1534,7 +1534,7 @@ void GiveBackPhantomKeyItems() {
             for (const HeldGoods& held : OwnKeyItemsForPhantom(own_look, last_look)) {
                 const TradeItem item{BloodborneCoop::TradeItemKind::Goods, held.goods,
                                      static_cast<u32>(held.count)};
-                AddTradeItems(std::span{&item, 1});
+                AddTradeItems(std::span{&item, 1}, ItemPopup::Silent);
                 LOG_INFO(Debug,
                          "Bloodborne party: {} x goods {} of the guest's own in the phantom's key "
                          "items",
@@ -1554,7 +1554,7 @@ void GiveBackPhantomKeyItems() {
     for (const HeldGoods& held : PhantomKeyItemsToGiveBack(first_look, last_look, HeldKeyGoods())) {
         const TradeItem item{BloodborneCoop::TradeItemKind::Goods, held.goods,
                              static_cast<u32>(held.count)};
-        AddTradeItems(std::span{&item, 1});
+        AddTradeItems(std::span{&item, 1}, ItemPopup::Silent);
         LOG_INFO(Debug,
                  "Bloodborne party: gave back {} x goods {}: gained as a phantom, dropped by "
                  "the game with its key item list",
@@ -1684,6 +1684,37 @@ void KeepHeldItemFlagsOwn() {
     }
 }
 
+// See GestureFlagFix: every second, a gesture's flag goes off while this player has not learned
+// the gesture, so the NPC's talk gives it (a save that took the host's flag from a team world).
+void KeepGestureFlagsOwn() {
+    static s64 checked_ms = 0;
+    const s64 now_ms = SteadyMilliseconds();
+    if (!party_controller || now_ms - checked_ms < 1'000 || GetLocalPlayer() < 0x10000 ||
+        !IsUsablePackedMap(PlayingMap())) {
+        return;
+    }
+    checked_ms = now_ms;
+    const std::vector<GestureSlot> gestures = PlayerGestures();
+    if (std::ranges::none_of(gestures, &GestureSlot::learned)) {
+        return; // no list yet (every character starts with gestures learned)
+    }
+    for (const GestureFlag& given : GestureFlags) {
+        const bool learned = std::ranges::any_of(gestures, [&](const GestureSlot& slot) {
+            return slot.learned && slot.gesture == given.gesture;
+        });
+        const auto fix = GestureFlagFix(true, EventFlagOn(given.flag), learned);
+        if (!fix) {
+            continue;
+        }
+        reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+            image_base + PartyGhostSetEventFlagOffset)(0, given.flag, *fix);
+        LOG_INFO(Debug,
+                 "Bloodborne party: gesture flag {} cleared: this player has not learned gesture "
+                 "{}",
+                 given.flag, given.gesture);
+    }
+}
+
 // See OwnedWeaponFlagFix: every second in a loaded world, an owned-weapon flag comes on once this
 // player holds the weapon; once per save slot (a file marks it done), those of weapons it does not
 // hold go off, so the Bath shop sells this character's own weapons only. 5500-5521 go off at any
@@ -1747,6 +1778,7 @@ void TickPlayersOnThisMap() {
     // The boards go both ways in and out of a session (a guest on its own trip is out of one).
     const bool sharing = SharesWithParty(party_controller.has_value(), GetLocalPlayer() >= 0x10000);
     UnlockPartyTrophies(sharing);
+    KeepRitualAltarsWhole();
     SetPartyWorldChanges(sharing);
     KeepGuestProgress(in_session);
     LogFlagChangesInSession(sharing);
@@ -1810,6 +1842,7 @@ void TickPlayersOnThisMap() {
     RecheckShopLinesOnce(IsUsablePackedMap(map) ? map : 0);
     GiveBackPhantomKeyItems();
     KeepHeldItemFlagsOwn();
+    KeepGestureFlagsOwn();
     KeepOwnedWeaponFlagsOwn();
     KeepHeadstoneFlagsOwn();
     static RecreateAfterJoin recreate_after_join;

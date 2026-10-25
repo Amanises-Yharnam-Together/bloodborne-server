@@ -236,7 +236,10 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_party_rules.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_party_death.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_portrait.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_altar.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_compass.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_pings.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_pings_game.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map_screen.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_boards.cpp
@@ -451,6 +454,14 @@ endif()
 add_executable(pm4-resync-test EXCLUDE_FROM_ALL ../tests/test_pm4_resync.cpp)
 target_compile_options(pm4-resync-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(pm4-resync-test PRIVATE ..)
+add_executable(pm4-lod-stats-test EXCLUDE_FROM_ALL ../tests/test_pm4_lod_stats.cpp)
+# pm4_cmds.h has static helpers the test does not call.
+target_compile_options(pm4-lod-stats-test PRIVATE -UNDEBUG -Wall -Wextra -Werror
+                       -Wno-unneeded-internal-declaration)
+target_include_directories(pm4-lod-stats-test PRIVATE shim shadps4 third_party/gcn/include)
+if (WIN32)
+    target_link_libraries(pm4-lod-stats-test PRIVATE ws2_32) # the headers' inline socket setup
+endif()
 add_executable(texture-gc-test EXCLUDE_FROM_ALL ../tests/test_texture_gc.cpp)
 target_compile_options(texture-gc-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(texture-gc-test PRIVATE ..)
@@ -491,6 +502,11 @@ add_executable(pixel-format-test EXCLUDE_FROM_ALL ../tests/test_pixel_format.cpp
 target_compile_options(pixel-format-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(pixel-format-test PRIVATE shim shadps4)
 target_link_libraries(pixel-format-test PRIVATE bbgpu)
+# Vertex stream formats without dynamic vertex input (a player's RX 580 stopped on data format 15).
+add_executable(vertex-formats-test EXCLUDE_FROM_ALL ../tests/test_vertex_formats.cpp)
+target_compile_options(vertex-formats-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(vertex-formats-test PRIVATE shim shadps4)
+target_link_libraries(vertex-formats-test PRIVATE bbgpu)
 # Stencil-only depth target sizes (shadPS4 #5384).
 add_executable(depth-stencil-test EXCLUDE_FROM_ALL ../tests/test_depth_stencil.cpp)
 target_compile_options(depth-stencil-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -542,6 +558,10 @@ target_include_directories(cp-decoder-test PRIVATE cp)
 add_executable(settings-test EXCLUDE_FROM_ALL ../tests/test_settings.cpp shim/bbport_settings.cpp)
 target_compile_options(settings-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(settings-test PRIVATE .. shim)
+# bbport: the output resolutions the menus offer, borderless and 16:9 outputs (shim/bbport_output_sizes.h).
+add_executable(output-sizes-test EXCLUDE_FROM_ALL ../tests/test_output_sizes.cpp)
+target_compile_options(output-sizes-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(output-sizes-test PRIVATE ..)
 
 # bbport co-op: trading's Give rows run for any item, weapons too (shim/bbport_trade_rows.h).
 add_executable(trade-rows-test EXCLUDE_FROM_ALL ../tests/test_trade_rows.cpp shim/bbport_trade_rows.cpp)
@@ -572,9 +592,20 @@ target_compile_options(push-data-test PRIVATE -UNDEBUG)
 target_include_directories(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
 target_compile_definitions(push-data-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
 
+add_executable(sendmsg-simm-test EXCLUDE_FROM_ALL ../tests/test_sendmsg_simm.cpp)
+target_compile_options(sendmsg-simm-test PRIVATE -UNDEBUG)
+target_include_directories(sendmsg-simm-test PRIVATE $<TARGET_PROPERTY:bbgpu,INCLUDE_DIRECTORIES>)
+target_compile_definitions(sendmsg-simm-test PRIVATE $<TARGET_PROPERTY:bbgpu,COMPILE_DEFINITIONS>)
+
 add_executable(prompt-sets-test EXCLUDE_FROM_ALL ../tests/test_prompt_sets.cpp)
 target_compile_options(prompt-sets-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(prompt-sets-test PRIVATE shim)
+
+# The icons that follow the device in use, found again when the game loads its menu file anew.
+add_executable(prompts-test EXCLUDE_FROM_ALL ../tests/test_prompts.cpp shim/bbport_prompts.cpp)
+target_compile_options(prompts-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(prompts-test PRIVATE shim)
+target_link_libraries(prompts-test PRIVATE PkgConfig::XXHASH)
 
 add_executable(frame-gen-pace-test EXCLUDE_FROM_ALL ../tests/test_frame_gen_pace.cpp)
 target_compile_options(frame-gen-pace-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

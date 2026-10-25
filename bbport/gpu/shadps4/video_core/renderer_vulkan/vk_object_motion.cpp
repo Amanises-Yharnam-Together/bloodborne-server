@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_object_motion.h"
+#include "video_core/texture_cache/vram_placement.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -70,6 +71,26 @@ ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
         }
     }
 #endif
+    // bbport: under 6 GB of VRAM its ~225 MiB go to textures instead (Supermedo d257021):
+    // off there unless BB_OBJECT_MOTION=1 asks for it.
+    {
+        const auto& memory = instance.GetMemoryProperties();
+        u64 vram = 0;
+        for (u32 heap = 0; heap < memory.memoryHeapCount; ++heap) {
+            if (memory.memoryHeaps[heap].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+                vram = std::max<u64>(vram, memory.memoryHeaps[heap].size);
+            }
+        }
+        const char* forced = std::getenv("BB_OBJECT_MOTION");
+        const bool discrete = instance.GetPhysicalDevice().getProperties().deviceType ==
+                              vk::PhysicalDeviceType::eDiscreteGpu;
+        if (!VideoCore::ObjectMotionFitsVram(discrete, vram, forced && forced[0] == '1')) {
+            std::printf("Object motion: off with %llu MiB of VRAM (under 6 GB the memory goes to "
+                        "textures; BB_OBJECT_MOTION=1 turns it on)\n",
+                        (unsigned long long)(vram >> 20));
+            return;
+        }
+    }
     const auto& features = instance.GetPhysicalDevice().getFeatures();
     if (!features.vertexPipelineStoresAndAtomics) {
         std::printf("Object motion: vertexPipelineStoresAndAtomics unsupported, off\n");

@@ -226,7 +226,8 @@ class CloseOnPlayTests(unittest.TestCase):
             job=None, close_scheduled=False, drain_output=lambda: None,
             root=types.SimpleNamespace(after=lambda ms, fn: scheduled.append((ms, fn)), destroy=lambda: None),
             status=types.SimpleNamespace(configure=lambda **kwargs: None),
-            set_running=lambda *args, **kwargs: None, append=lambda text: None, refresh_status=lambda: None)
+            set_running=lambda *args, **kwargs: None, append=lambda text: None, refresh_status=lambda: None,
+            coop_watch_line=lambda line: None, coop_game_ended=lambda: None)
         for line in lines:
             window.output.put(line)
         launcher.Launcher.drain_output(window)

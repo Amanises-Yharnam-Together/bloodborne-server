@@ -14,7 +14,7 @@ tests for the recent bugs, keep scenarios short, and use lanes to run rigs in pa
 
 Tiers (run_scenario.py --tier <name> [more names]):
 - quick: smoke, plus the suites of the code being changed (named after it), on every change.
-- full: every suite, before a PR merges into server-coop.
+- full: every suite and the RECENT bugs' scenarios, before a PR merges into server-coop.
 - long: LONG, before a local release.
 """
 import re
@@ -29,19 +29,52 @@ BOOT_S = 100
 # A suite's games boot and join once (its join chapter's budget is its own); this is the rest.
 SUITE_BOOT_S = 150
 
+# The scenarios of the recent playtest bugs (Kaniel 2026-10-25: "update rig with recent bugs"),
+# run in the full tier after the suites; a LONG one runs in the long tier instead.
+RECENT = {
+    "dog-alone": "10-23 a lone guest drew the NPCs its story hid (#356)",
+    "dog-alone3": "10-24 Eileen: a guest following another guest's game drew her (#390)",
+    "lone-guest-kill": "10-23 the hag a lone guest killed lived on for the host (#356)",
+    "lone-guest-progress": "10-23 a door a lone guest opened stayed shut for the host (#356)",
+    "lone-guest-progress3": "10-23 the same with three games (#356)",
+    "host-progress3": "10-23 the host's own progress with a lone guest about (#356)",
+    "team-story-trip": "10-23 a guest's own story steps over the team world at a trip (#356)",
+    "void-fall-respawn": "10-22 a player fallen into the void stayed invisible (#341, #372)",
+    "bloodstain": "10-20 bloodstains on the compass and the map (#299)",
+    "bloodstain-alone": "10-22 a guest dying apart from the host (#343)",
+    "bloodstain-far-lamp": "10-22 a guest's stain by a far lamp (#343)",
+    "bloodstain-trip": "10-22 a stain after a trip (#343)",
+    "impurity-rune": "10-22 the Impurity rune gave no HP in co-op (#340)",
+    "shop-own-weapons": "10-22 the shop sold a guest the host's weapons (#329)",
+    "dream-shop-messengers": "10-22 the Dream's shop messengers for a guest (#331)",
+    "nightmare-flags": "10-24 Wandering Nightmares vanished because of a guest (#384)",
+    "pings": "10-24 team pings (#386)",
+    "build-check-harder": "10-24 a game on other settings joined a party (#381)",
+    "build-check-same": "10-24 games on the same settings still link (#381)",
+    "altar-record-capture": "10-24 the chalice dungeon crash: whole altar records (#391)",
+    "chalice-enter-broken": "10-24 entering a dungeon with a broken altar record crashed (#391)",
+}
+
 # Single scenarios that do not fit the budget (their own boot plus fixed waits over 30 s, or
 # runs measured near or over 300 s), each kept for the long tier until it becomes a suite
 # chapter. Most are older versions of a suite chapter (named after the arrow).
 LONG = {
     "story-hostless": "the 10-20 case #286: a team join and a trip",
     "key-items-kept": "the 10-19 playtest case #267: a join, two trips",
+    "gesture-own": "the 10-23 gestures case: a join, two trips",
+    "key-items-silent": "Kaniel 2026-10-23: a join, two trips",
     "team-world-other-block": "the 10-19 playtest case #266: two team sessions",
     "npc-progress-after-trip": "the 10-19 playtest case #269: a join, two trips",
     "wipe-one-map": "the 10-19 playtest case #270: three games, a death and a wake",
     "boss-hp-after-wipe": "the 10-19 playtest case #272: a wipe and a wake",
+    "paarl-after-wipe": "Kaniel's playtest 2026-10-22: three games, a wipe, a wake and a walk back",
     "kill-reaches-arrival": "the 10-19 playtest case #278: three games, two trips",
     "soak": "a long session by design",
+    "solo-death-tick": "70 s and 100 s waits: the co-op time lines come every 30 s",
     "chalice-team": "two rituals and two dungeon loads, measured 313 s",
+    "chalice-load-inside-guest": "Kaniel 2026-10-24: a ritual, two dungeon loads, a restart",
+    "chalice-load-inside-host": "Kaniel 2026-10-24: a ritual, two dungeon loads, a restart",
+    "chalice-altar-same": "Kaniel 2026-10-24: a ritual and six dungeon loads",
     "chalice-altar-host": "a ritual and two dungeon loads, measured 315 s",
     "chalice-altar-team": "a ritual and two dungeon loads, measured 315 s",
     "chalice-altar-no-chalice": "a ritual and two dungeon loads, measured 353 s",
@@ -51,6 +84,9 @@ LONG = {
     "boss-guest-runs": "50 s and 90 s waits by the boss (Kaniel's playtest 2026-10-16)",
     "witch-summons": "a 90 s wait for the Witch of Hemwick to summon her Mad Ones",
     "boss-whole-fight": "a lamp trip, then 70 s of fixed waits in the fight (#292)",
+    "team-guest-restart": "two stages (two boots), the guest's game starts again",
+    "team-host-restart": "two stages (two boots), the host's game starts again",
+    "team-wipe-host-restart": "two stages (two boots), a wipe first, then the host's game starts again",
     "cutscene-skip": "two stages (two boots), the opening cutscene played in between",
     "dead-in-host-save": "two stages (two boots): the host's game starts again after its kill",
     "team-load-beside-host": "two stages (two boots), a 45 s wait for the guest to leave the Dream",
@@ -202,7 +238,7 @@ def tiers(suites: dict, scenarios: dict) -> dict[str, list[str]]:
     full = sorted(suites, key=lambda name: -suite_timeout(suites[name]))
     return {
         "quick": ["smoke"],
-        "full": full,
+        "full": full + [name for name in RECENT if name in scenarios and name not in LONG],
         "long": [name for name in LONG if name in scenarios],
     }
 

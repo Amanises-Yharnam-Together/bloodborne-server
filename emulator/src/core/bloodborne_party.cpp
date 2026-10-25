@@ -835,10 +835,14 @@ void CoopTimeMeter::Add(std::string_view section, s64 ns, s64 now_ms) {
     ++it->calls;
 }
 
-std::optional<std::string> CoopTimeMeter::Report(s64 now_ms) {
+std::optional<std::string> CoopTimeMeter::Report(s64 now_ms, size_t slowest) {
     std::scoped_lock lock{mutex};
     if (!since_ms || now_ms - *since_ms < period_ms) {
         return std::nullopt;
+    }
+    if (slowest < sections.size()) {
+        std::ranges::stable_sort(sections, std::ranges::greater{}, &Section::total_ns);
+        sections.resize(slowest);
     }
     std::string line;
     for (const Section& section : sections) {
@@ -1025,6 +1029,26 @@ std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool ho
         return std::nullopt;
     }
     return holds;
+}
+
+std::optional<bool> GestureFlagFix(bool party_configured, bool flag_on, bool learned) {
+    if (!party_configured || !flag_on || learned) {
+        return std::nullopt;
+    }
+    return false;
+}
+
+std::optional<GestureSlot> DecodeGestureSlot(u32 entry) {
+    // 0x02042B01: above 0xFFFEFFFF, or 0xFFFE / 0xFFFF in the low half, is no gesture.
+    if (entry > 0xFFFEFFFF || (entry & 0xFFFE) == 0xFFFE) {
+        return std::nullopt;
+    }
+    // The gesture table's row (0x014EC980: 31 rows, row 0 none, row k gesture k - 1).
+    const s32 row = static_cast<s16>(entry & 0xFFFF) >> 1;
+    if (row < 1 || row > 30) {
+        return std::nullopt;
+    }
+    return GestureSlot{row - 1, (entry & 1) != 0};
 }
 
 bool HoldsWeapon(u32 weapon, std::span<const u32> held) {
@@ -1266,6 +1290,43 @@ std::vector<std::pair<s32, bool>> FlagsToShare(const FlagChanges& changes) {
     return shared;
 }
 
+std::vector<std::pair<s32, bool>> LoneGuestFlagsToShare(const FlagChanges& changes, u32 map) {
+    const s32 first = MapFlagBase(map);
+    const auto takes = [first](s32 flag) {
+        return flag >= first && flag < first + MapFlagCount && TakesHostMapFlag(flag) &&
+               RuleFor(flag).owner == FlagOwner::Host;
+    };
+    std::vector<std::pair<s32, bool>> shared;
+    for (const s32 flag : changes.set) {
+        if (takes(flag)) {
+            shared.emplace_back(flag, true);
+        }
+    }
+    for (const s32 flag : changes.cleared) {
+        if (takes(flag)) {
+            shared.emplace_back(flag, false);
+        }
+    }
+    std::ranges::sort(shared);
+    return shared;
+}
+
+std::vector<std::pair<s32, bool>> LoneGuestShares::Take(const FlagChanges& changes, u32 map,
+                                                        s64 since_load_ms) {
+    std::set<s32>& known = load_flags[map];
+    auto shared = LoneGuestFlagsToShare(changes, map);
+    if (since_load_ms < LoadFlagsMs) {
+        for (const auto& [flag, on] : shared) {
+            known.insert(flag);
+        }
+        return {};
+    }
+    std::erase_if(shared, [&known](const std::pair<s32, bool>& change) {
+        return known.contains(change.first);
+    });
+    return shared;
+}
+
 namespace {
 constexpr s32 CurrentAltar = 92900000;
 constexpr s32 AltarFlags = 6000;
@@ -1273,21 +1334,6 @@ constexpr s32 AltarFlags = 6000;
 
 bool IsCurrentAltarFlag(s32 flag) {
     return flag >= CurrentAltar && flag < CurrentAltar + AltarFlags;
-}
-
-FlagChanges AsAltarFlags(const FlagChanges& changes, std::optional<s32> altar) {
-    const auto map = [altar](const std::vector<s32>& flags) {
-        std::vector<s32> out;
-        for (const s32 flag : flags) {
-            if (!IsCurrentAltarFlag(flag)) {
-                out.push_back(flag);
-            } else if (altar && *altar >= 0 && *altar < 10) {
-                out.push_back(94000000 + *altar * 100000 + (flag - CurrentAltar));
-            }
-        }
-        return out;
-    };
-    return FlagChanges{map(changes.set), map(changes.cleared)};
 }
 
 std::optional<u32> AltarChaliceGoods(u32 depth_area) {
@@ -2348,6 +2394,10 @@ bool CharacterSettles(s64 now_ms, s64 world_changed_ms, std::optional<s64> owner
         std::chrono::duration_cast<std::chrono::milliseconds>(EnemyOwnerChangeSettles).count();
     return now_ms - world_changed_ms < settle ||
            (owner_changed_ms && now_ms - *owner_changed_ms < settle);
+}
+
+bool SettlingHidesDeath(bool settling, std::optional<bool> last_hit_mine) {
+    return settling && last_hit_mine != true;
 }
 
 bool SeenDead(u8 death_flags, s32 hp, std::optional<s64> zero_hit_ms, s64 now_ms) {
@@ -3986,6 +4036,14 @@ std::optional<u16> AwakeEnemyWord(EnemyRole role, s32 level, s32 applied, u16 wo
     return OwnedEnemyWord;
 }
 
+bool LoneGuestSwitchesOff(bool lone_guest, bool hidden, bool disabled, s32 wanted, s32 applied) {
+    return lone_guest && hidden && !disabled && wanted == 0 && applied > 0;
+}
+
+bool LoneGuestSwitchesBackOn(bool lone_guest, bool hidden) {
+    return !lone_guest || !hidden;
+}
+
 std::optional<u16> HostFollowerWord(EnemyRole role, bool hosting, u16 word) {
     if (role != EnemyRole::Follower || !hosting || static_cast<s16>(word) < 0) {
         return std::nullopt;
@@ -5142,10 +5200,21 @@ void WritePromptData(std::span<u8, HudPromptDataSize> data,
     put(HudPromptTextAt + 0x20, 63);
 }
 
+namespace {
+std::atomic<float> hud_shift_x{0.0f}, hud_shift_y{0.0f};
+} // namespace
+
+void SetHudEdgeShift(float dx, float dy) {
+    hud_shift_x.store(dx, std::memory_order_relaxed);
+    hud_shift_y.store(dy, std::memory_order_relaxed);
+}
+
 std::pair<s32, s32> PartyListPosition(int index) {
     // hud_patch.py LIST_X/LIST_Y/LIST_STEP: each tag's HP bar starts where the player's own does
-    // (x 61 on the 1920 stage: the tag's bar starts 143 left of its position), its icon left of it.
-    return {204, 330 + 95 * index};
+    // (x 61 on the 1920 stage: the tag's bar starts 143 left of its position), its icon left of it;
+    // with the player's bars where the port's aspect hooks moved them (SetHudEdgeShift).
+    return {204 - s32(std::lround(hud_shift_x.load(std::memory_order_relaxed))),
+            330 + 95 * index - s32(std::lround(hud_shift_y.load(std::memory_order_relaxed)))};
 }
 
 void WriteTagData(std::span<u8, HudTagDataSize> data, std::span<const u8, HudTagDataSize> game,
@@ -5406,6 +5475,9 @@ std::vector<u8> EncodePeerHello(const PeerHello& hello) {
     payload.push_back(static_cast<u8>(member));
     payload.insert(payload.end(), hello.member.begin(), hello.member.begin() + member);
     payload.push_back(hello.features);
+    const size_t build = std::min<size_t>(hello.build.size(), 0xFFFF);
+    AppendLittleEndian(payload, static_cast<u16>(build));
+    payload.insert(payload.end(), hello.build.begin(), hello.build.begin() + build);
     return payload;
 }
 
@@ -5423,8 +5495,19 @@ std::optional<PeerHello> DecodePeerHello(std::span<const u8> payload) {
         return std::nullopt;
     }
     hello.member.assign(payload.begin() + member_at + 1, payload.begin() + member_at + 1 + member);
-    if (const size_t features_at = member_at + 1 + member; payload.size() > features_at) {
+    const size_t features_at = member_at + 1 + member;
+    if (payload.size() > features_at) {
         hello.features = payload[features_at];
+    }
+    if (const size_t build_at = features_at + 1; payload.size() > build_at) {
+        if (payload.size() < build_at + 2) {
+            return std::nullopt;
+        }
+        const size_t build = ReadLittleEndian<u16>(payload, build_at);
+        if (payload.size() < build_at + 2 + build) {
+            return std::nullopt;
+        }
+        hello.build.assign(payload.begin() + build_at + 2, payload.begin() + build_at + 2 + build);
     }
     return hello;
 }
@@ -5434,20 +5517,39 @@ std::optional<std::string> PeerBuildCheck::Take(const PeerHello& theirs, const P
     const bool events_differ =
         theirs.event_files != 0 && mine.event_files != 0 && theirs.event_files != mine.event_files;
     const bool features_differ = theirs.features != mine.features;
+    // Build check on join: both say their build fingerprint, so the differences go by field (the
+    // server refused a game on other settings; this names them in the games' logs too).
+    const auto their_build = BloodborneCoop::ParseBuildFingerprint(theirs.build);
+    const auto my_build = BloodborneCoop::ParseBuildFingerprint(mine.build);
+    const std::string fields =
+        their_build && my_build ? BloodborneCoop::DescribeDifferences(*my_build, *their_build) : "";
+    const bool no_fingerprint = my_build && !their_build;
     if (theirs.protocol == mine.protocol && theirs.revision == mine.revision && !events_differ &&
-        !features_differ) {
+        !features_differ && fields.empty() && !no_fingerprint) {
         return std::nullopt;
     }
     if (!warned
              .emplace(theirs.member, theirs.protocol, theirs.revision, theirs.event_files,
-                      theirs.features)
+                      theirs.features, theirs.build)
              .second) {
         return std::nullopt;
     }
-    std::string line = fmt::format("Co-op: {} runs build {}, this game runs {}",
-                                   theirs.member.empty() ? "a peer" : theirs.member,
-                                   theirs.revision.empty() ? "?" : theirs.revision,
-                                   mine.revision.empty() ? "?" : mine.revision);
+    const std::string who = theirs.member.empty() ? "a peer" : theirs.member;
+    if (their_build && my_build) {
+        std::string line = fmt::format("Co-op: {}'s build differs from this game's: {}", who,
+                                       fields.empty() ? "build " + theirs.revision : fields);
+        if (features_differ) {
+            line += fmt::format("; world log {}, this game's {}",
+                                (theirs.features & WorldLogFeature) != 0 ? "on" : "off",
+                                (mine.features & WorldLogFeature) != 0 ? "on" : "off");
+        }
+        return line;
+    }
+    std::string line =
+        fmt::format("Co-op: {} runs build {}{}, this game runs {}", who,
+                    theirs.revision.empty() ? "?" : theirs.revision,
+                    no_fingerprint ? " (no build fingerprint: an older release)" : "",
+                    mine.revision.empty() ? "?" : mine.revision);
     if (theirs.protocol != mine.protocol) {
         line += fmt::format(" (co-op protocol {}, this game's {})", theirs.protocol, mine.protocol);
     }
@@ -5463,6 +5565,63 @@ std::optional<std::string> PeerBuildCheck::Take(const PeerHello& theirs, const P
                             (mine.features & WorldLogFeature) != 0 ? "on" : "off");
     }
     return line;
+}
+
+u64 FileHash(const std::filesystem::path& file) {
+    std::ifstream stream{file, std::ios::binary};
+    if (!stream) {
+        return 0;
+    }
+    // FNV-1a, as EventFilesHash.
+    u64 hash = 0xcbf29ce484222325ull;
+    std::vector<char> chunk(1 << 16);
+    while (stream.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) ||
+           stream.gcount() > 0) {
+        for (std::streamsize i = 0; i < stream.gcount(); ++i) {
+            hash = (hash ^ static_cast<u8>(chunk[i])) * 0x100000001b3ull;
+        }
+    }
+    return hash != 0 ? hash : 1;
+}
+
+BloodborneCoop::BuildFingerprint CoopBuildFingerprint(
+    const BuildIdentity& identity, const std::function<const char*(const char*)>& env) {
+    const auto setting = [&env](const char* name, std::string_view absent) {
+        const char* value = env(name);
+        return std::string{value != nullptr && *value != '\0' ? std::string_view{value} : absent};
+    };
+    // 12 hex digits of a hash (enough to tell files apart; the link's text holds 255 bytes).
+    const auto hash = [](u64 value) {
+        return value != 0 ? fmt::format("{:012x}", value & 0xFFFF'FFFF'FFFFull) : std::string{};
+    };
+    BloodborneCoop::BuildFingerprint build;
+    build.Set("version", setting("BB_RELEASE_VERSION", "dev"));
+    build.Set("revision", BloodborneCoop::FingerprintRevision(identity.revision));
+    build.Set("protocol", std::to_string(CoopProtocolVersion));
+    build.Set("eboot", hash(identity.eboot));
+    build.Set("events", hash(identity.event_files));
+    // The multipliers as the game reads them (ParseHarderEnemies): "off" is the normal game.
+    const auto harder = ParseHarderEnemies(setting("SHADPS4_BLOODBORNE_HARDER_ENEMIES", ""));
+    build.Set("harder",
+              harder ? fmt::format("{:g},{:g},{:g}", harder->hp, harder->damage, harder->poise)
+                     : "off");
+    build.Set("cheats", setting("BB_PATCH_GAMEPLAY", "none"));
+    const char* revive = env("SHADPS4_BLOODBORNE_REVIVE_HITS");
+    std::string rules = fmt::format(
+        "lamp rests {}, revive hits {}",
+        LampRestsEnabled(env("SHADPS4_BLOODBORNE_LAMP_REST")) ? "on" : "off",
+        revive != nullptr && std::string_view{revive} == "presses" ? "presses" : "real");
+    if (SettingIsOn(env("SHADPS4_BLOODBORNE_GUEST_AS_HOST"))) {
+        rules += ", guest as host";
+    }
+    build.Set("rules", rules);
+    // Only logged: they change how the game looks, not what happens in it.
+    build.Set("fps", setting("BB_FPS_PRESET", "?") +
+                         (setting("BB_ONLINE_UNLOCKED_FPS", "") == "1" ? " unlocked" : ""));
+    build.Set("mods", setting("BB_MODS_ENABLED", "1") == "0" ? "off" : "on");
+    build.Set("patches", setting("BB_PATCH_OTHER", "none"));
+    build.Set("pbin", hash(identity.patches_bin));
+    return build;
 }
 
 u64 EventFilesHash(const std::filesystem::path& folder) {
@@ -5765,6 +5924,27 @@ std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
     }
     current = nearest ? nearest->member : std::string{};
     return current;
+}
+
+std::vector<u32> ClearBossGauges(std::span<u8> gauges) {
+    std::vector<u32> up;
+    for (std::size_t slot = 0; slot < BossGaugeSlots; ++slot) {
+        if ((slot + 1) * BossGaugeSize > gauges.size()) {
+            break;
+        }
+        u8* gauge = gauges.data() + slot * BossGaugeSize;
+        s32 handle = 0;
+        std::memcpy(&handle, gauge + 4, sizeof(handle));
+        if (handle != -1) {
+            up.push_back(static_cast<u32>(handle));
+        }
+        constexpr s32 None = -1;
+        std::memcpy(gauge, &None, sizeof(None));
+        std::memcpy(gauge + 4, &None, sizeof(None));
+        std::memset(gauge + 8, 0, 8);
+        gauge[0x10] = 0;
+    }
+    return up;
 }
 
 bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies) {
@@ -6142,6 +6322,18 @@ std::optional<Bloodstain> BloodstainOf(bool has_mark, u32 map, const LampPositio
     return Bloodstain{.map = map, .at = at, .echoes = echoes};
 }
 
+std::optional<Bloodstain> BloodstainOfRecord(bool has_mark, std::span<const u8> record) {
+    if (record.size() < BloodstainRecordSize) {
+        return std::nullopt;
+    }
+    const auto read = [record]<typename T>(size_t offset, T value) {
+        std::memcpy(&value, record.data() + offset, sizeof(value));
+        return value;
+    };
+    return BloodstainOf(has_mark, read(0x3C, u32{}),
+                        {read(0x00, 0.0f), read(0x04, 0.0f), read(0x08, 0.0f)}, read(0x38, s32{}));
+}
+
 PartyPanel BuildPartyPanel(std::span<const MemberVitals> board, std::string_view self, u32 map,
                            const std::optional<LampPosition>& me) {
     PartyPanel panel;
@@ -6179,10 +6371,22 @@ bool PresenceHides(s64 now_ms, s64 first_seen_ms, s64 unmatched_since_ms) {
 std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>> characters,
                                     std::span<const MemberVitals> board, std::string_view self,
                                     u32 map) {
+    const std::vector<std::optional<size_t>> members =
+        VouchingMembers(characters, board, self, map);
+    std::vector<bool> shown(characters.size(), false);
+    for (size_t c = 0; c < characters.size(); ++c) {
+        shown[c] = !characters[c] || members[c].has_value();
+    }
+    return shown;
+}
+
+std::vector<std::optional<size_t>> VouchingMembers(
+    std::span<const std::optional<LampPosition>> characters, std::span<const MemberVitals> board,
+    std::string_view self, u32 map) {
     // Kaniel's playtest 2026-10-16: krolebord's copy stayed by the lantern after his Dream trip,
     // kept shown by Lisara standing 16 m away. Each member on this map vouches for one character
     // only: the nearest pairs first.
-    std::vector<bool> shown(characters.size(), false);
+    std::vector<std::optional<size_t>> vouched_by(characters.size());
     struct Pair {
         float distance;
         size_t character;
@@ -6192,7 +6396,6 @@ std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>>
     for (size_t c = 0; c < characters.size(); ++c) {
         const std::optional<LampPosition>& at = characters[c];
         if (!at) {
-            shown[c] = true;
             continue;
         }
         for (size_t m = 0; m < board.size(); ++m) {
@@ -6212,12 +6415,25 @@ std::vector<bool> ShownOtherPlayers(std::span<const std::optional<LampPosition>>
     std::ranges::sort(pairs, {}, &Pair::distance);
     std::vector<bool> vouched(board.size(), false);
     for (const Pair& pair : pairs) {
-        if (!shown[pair.character] && !vouched[pair.member]) {
-            shown[pair.character] = true;
+        if (!vouched_by[pair.character] && !vouched[pair.member]) {
+            vouched_by[pair.character] = pair.member;
             vouched[pair.member] = true;
         }
     }
-    return shown;
+    return vouched_by;
+}
+
+bool FadeBack::Tick(float fade, bool someone_died, std::optional<Vital> member) {
+    if (fade >= 1.0f) {
+        died = false;
+        return false;
+    }
+    died = died || someone_died;
+    if (!died || member != Vital::Up) {
+        return false;
+    }
+    died = false;
+    return true;
 }
 
 std::vector<bool> StaleDuplicatePlayers(std::span<const u64> identities,

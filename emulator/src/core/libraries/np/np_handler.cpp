@@ -13,6 +13,7 @@
 #include "core/libraries/network/rpc_bridge.h"
 #include "core/libraries/network/server_link.h"
 #include "core/libraries/network/sockets.h"
+#include "core/libraries/network/windows_trust.h"
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_manager.h"
 #include "core/libraries/np/np_matching2/np_matching2_mm.h"
@@ -610,6 +611,7 @@ bool NpHandler::SendSessionInvitation(s32 user_id, const std::string& session_id
     const std::string content_type = "multipart/mixed; boundary=" + boundary;
 
     httplib::Client cli(base_url);
+    Libraries::Http::TrustWindowsRoots(cli, base_url);
     cli.set_connection_timeout(5);
     cli.set_read_timeout(10);
     const httplib::Headers headers = {{"Authorization", "Bearer " + token}};
@@ -711,6 +713,7 @@ bool NpHandler::AcceptSessionInvitation(s32 user_id, const std::string& invitati
         return false;
     }
     httplib::Client cli(base_url);
+    Libraries::Http::TrustWindowsRoots(cli, base_url);
     cli.set_connection_timeout(5);
     cli.set_read_timeout(10);
     const httplib::Headers headers = {{"Authorization", "Bearer " + token}};

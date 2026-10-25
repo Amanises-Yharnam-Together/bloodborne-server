@@ -501,6 +501,24 @@ class LayerTests(unittest.TestCase):
         self.source.write_bytes(icons.dcx_pack(make_tpf(real_layout(), platform=4) + b'\0' * 16))
         self.assertNotEqual(self.layer()[0], folder)
 
+    def test_a_mod_s_own_file_is_the_source_when_given(self):
+        # A mod with its own menu/common.tpf.dcx (Bloodborne Enhanced): the icons are drawn on that file, whose other
+        # art the mod changed, and the game's file is not read.
+        mod = self.root / 'mods/Enhanced' / icons.COMMON_TPF
+        mod.parent.mkdir(parents=True)
+        mod.write_bytes(icons.dcx_pack(make_tpf(real_layout(), platform=4) + b'\0' * 16))
+        self.source.write_bytes(b'not a game file')
+        folder, built, _kept = icons.ensure_layer(self.game, self.cache, 'xbox', {}, mod)
+        self.assertTrue(built)
+        original = icons.dcx_unpack(mod.read_bytes())
+        patched = icons.dcx_unpack((folder / icons.COMMON_TPF).read_bytes())
+        self.assertEqual(len(patched), len(original))
+        self.assertEqual(patched[-16:], original[-16:])  # the mod's own bytes stay
+        ok = icons.check_layout(patched)['KG_OK']
+        self.assertNotEqual(patched[ok.offset:ok.offset + 1024], original[ok.offset:ok.offset + 1024])
+        path, built = icons.ensure_prompt_sets(self.game, self.cache, {}, mod)
+        self.assertTrue(built and path.is_file())
+
     def test_a_cache_with_a_missing_file_is_built_again(self):
         folder, _ = self.layer()
         (folder / icons.COMMON_TPF).unlink()

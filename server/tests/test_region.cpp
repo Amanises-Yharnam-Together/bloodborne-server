@@ -77,7 +77,12 @@ LinkAuth::Key Filled(u8 byte) {
   return key;
 }
 
-const QByteArray Build = "92829ac4 events 1f protocol 9";
+// The contracts' hello carries the text before the build fingerprint (main's
+// #381); a game's hello says its fingerprint, else the build check refuses it.
+const QByteArray ContractBuild = "92829ac4 events 1f protocol 9";
+const QByteArray Build =
+    "bb-build 1;version=1.2.0;revision=92829ac4;protocol=9;"
+    "events=1f;harder=off;fps=60;";
 const Endpoint Kaniel{0x7F000001, 40001};
 
 // The Redirect (link kind 11) and the hello carrying its ticket, as the game
@@ -96,7 +101,8 @@ int RedirectContracts() {
   CHECK(!DecodeRedirect(datagram("redirect").chopped(1)));
   CHECK(!DecodeRedirect(datagram("ping")));
 
-  Hello hello{LinkVersion, "Kaniel", Build, "s3cr3t", QByteArray(16, '\x11')};
+  Hello hello{LinkVersion, "Kaniel", ContractBuild, "s3cr3t",
+              QByteArray(16, '\x11')};
   hello.ticket = "TICKET";
   CHECK(Encode(hello) == datagram("hello.ticket"));
   const auto decoded = DecodeHello(datagram("hello.ticket"));

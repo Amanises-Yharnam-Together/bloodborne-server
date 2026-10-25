@@ -279,6 +279,7 @@ set(HTTP_TEST_SOURCES
     network/test_http_status_line.cpp
     network/test_http_parse_response_header.cpp
     network/test_http_lifecycle.cpp
+    network/test_windows_trust.cpp
     network/test_net_delay.cpp
     network/test_net_silence.cpp
     network/test_net_link.cpp
@@ -364,11 +365,15 @@ add_executable(shadps4_bloodborne_test
     ${CMAKE_SOURCE_DIR}/../server/coop/coop_messages.cpp
     "${COOP_TEST_PROTO_OUT}/coop.pb.cc"
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_portrait.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/bloodborne_altar.cpp
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_compass.cpp
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_map.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/bloodborne_pings.cpp
     bloodborne/test_bloodborne_party.cpp
     bloodborne/test_bloodborne_portrait.cpp
+    bloodborne/test_bloodborne_altar.cpp
     bloodborne/test_bloodborne_compass.cpp
+    bloodborne/test_bloodborne_pings.cpp
     bloodborne/test_bloodborne_map.cpp
     bloodborne/test_bloodborne_party_controller.cpp
     bloodborne/test_bloodborne_lamp_rest.cpp

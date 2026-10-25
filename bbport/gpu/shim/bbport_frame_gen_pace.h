@@ -7,12 +7,14 @@
 //    decided once a second; always so with V-Sync (FIFO), where each frame more waits for the
 //    display (upstream caps the game instead, which would slow co-op's fixed 60 FPS);
 //  - a pause when presenting takes the whole frame interval (a GPU or display too slow);
-//  - the FPS counter: the total and, with frames generated, the game's own rate.
+//  - the FPS counter: the total and, with frames generated, the game's own rate;
+//  - DLSS Frame Generation's release apart from the swap thread's present.
 #pragma once
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <mutex>
 
 namespace BbFrameGenPace {
 
@@ -130,6 +132,17 @@ inline void FpsText(char* text, std::size_t size, float shown_fps, float game_fp
     } else {
         std::snprintf(text, size, "%.0f FPS  %.1f ms", shown_fps, frame_ms);
     }
+}
+
+/// DLSS Frame Generation released (switched off, or another provider): under the present's lock
+/// (`present_lock`, which every present and queue submit takes), once the queues are idle
+/// (`wait_idle`), so no present runs beside the release. Kaniel's playtest 2026-10-22 (v1.1.5):
+/// NVIDIA's driver crashed in the swap thread's present right after frame generation went off.
+template <class Lock, class WaitIdle, class Release>
+void ReleaseBesidePresent(Lock& present_lock, WaitIdle&& wait_idle, Release&& release) {
+    std::scoped_lock lock{present_lock};
+    wait_idle();
+    release();
 }
 
 } // namespace BbFrameGenPace

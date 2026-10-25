@@ -13,8 +13,9 @@ import urllib.request
 try:
     import fakeredis
     import directory as d
-except ImportError as missing:  # ctest runs this where they are installed only
-    raise unittest.SkipTest(f'{missing.name} is not installed')
+    MISSING = None
+except ImportError as missing:  # ctest runs them where they are installed only
+    MISSING = f'{missing.name} is not installed'
 
 KEY = 'ab' * 32
 
@@ -34,6 +35,7 @@ def beat(shard, port, players=(), codes=(), worlds=(), started=(), capacity=800,
             'codes': list(codes), 'worlds': list(worlds), 'started': list(started)}
 
 
+@unittest.skipIf(MISSING, MISSING)
 class DirectoryTests(unittest.TestCase):
     def setUp(self):
         self.server = fakeredis.FakeServer()
@@ -129,6 +131,7 @@ class DirectoryTests(unittest.TestCase):
                 self.directory.heartbeat(bad)
 
 
+@unittest.skipIf(MISSING, MISSING)
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.directory = d.Directory(fakeredis.FakeRedis())

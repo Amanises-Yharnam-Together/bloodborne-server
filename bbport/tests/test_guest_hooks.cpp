@@ -8,6 +8,7 @@
 #include "bbport_guest_hooks.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -28,9 +29,15 @@ using u64 = std::uint64_t;
 #define GUEST_ABI __attribute__((sysv_abi))
 
 constexpr u64 ImageBase = 0x800000000ull;
-constexpr u64 ImageSize = 0x2700000ull;
+// Up to the HUD wrapper's vtable (0x539a070), the aspect hooks' last address.
+constexpr u64 ImageSize = 0x5400000ull;
 constexpr u64 AllocReturn = 0x26aa255, HeapReturn = 0x11e6629, CopyCall = 0x216d5ea,
               Memcpy = 0x261a1b0, GxNodeSite = 0x2199310, GxNodeSkip = 0x219934e;
+// The output's aspect ratio: a camera parameter store, a HUD marker placement and its constants,
+// Scaleform's SetViewport and the in-game screen's update.
+constexpr u64 CameraStore = 0x1436c2c, MarkerSite = 0x1644379, MarkerScale = 0x48f9a00,
+              MarkerBias = 0x48f9a10, SetViewport = 0x1f510, HudFrame = 0x1bf9e10;
+using v4 = float __attribute__((vector_size(16)));
 
 u64 noted_address = 0, noted_size = 0, range_start = 0, range_size = 0;
 int ranges = 0;
@@ -105,6 +112,33 @@ u64 WriteGxNodeFunction() {
     Put(GxNodeSkip, {0x31, 0xc0, 0x41, 0x5f, 0x41, 0x5d, 0x41, 0x5c, 0xc3});
     return ImageBase + entry;
 }
+/// The camera manager's copy (rdi the current camera): `vmovss %xmm0, 0x5c(%rbx)` at CameraStore.
+u64 WriteCameraFunction() {
+    const u64 entry = CameraStore - 4;
+    // push rbx; mov rbx, rdi; vmovss [rbx + 0x5c], xmm0; pop rbx; ret
+    Put(entry, {0x53, 0x48, 0x89, 0xfb, 0xc5, 0xfa, 0x11, 0x43, 0x5c, 0x5b, 0xc3});
+    return ImageBase + entry;
+}
+
+/// A marker's place: `vmulps scale(%rip), %xmm0, %xmm0; vaddps bias(%rip), %xmm0, %xmm0; ret`.
+u64 WriteMarkerFunction() {
+    const auto rel = [](u64 at, u64 target) { return std::uint32_t(std::int32_t(target - (at + 8))); };
+    u8* at = Put(MarkerSite, {0xc5, 0xf8, 0x59, 0x05});
+    at = Put32(at, rel(MarkerSite, MarkerScale));
+    at = More(at, {0xc5, 0xf8, 0x58, 0x05});
+    at = Put32(at, rel(MarkerSite + 8, MarkerBias));
+    More(at, {0xc3});
+    const float scale[4] = {0.5f, -0.5f, 1.0f, 1.0f}, bias[4] = {0.5f, 0.5f, 0.0f, 0.0f};
+    std::memcpy(reinterpret_cast<void*>(ImageBase + MarkerScale), scale, sizeof(scale));
+    std::memcpy(reinterpret_cast<void*>(ImageBase + MarkerBias), bias, sizeof(bias));
+    return ImageBase + MarkerSite;
+}
+
+/// A function entry `push rbp; mov rbp, rsp; push r15` that returns at once.
+u64 WriteEntryFunction(u64 offset) {
+    Put(offset, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x5f, 0x5d, 0xc3});
+    return ImageBase + offset;
+}
 } // namespace
 
 extern "C" void runtime_memory_note_write(uintptr_t address, uint64_t size) {
@@ -147,6 +181,14 @@ int main(int argc, char** argv) {
     const auto copy_fn = reinterpret_cast<Copy>(WriteCopyFunction());
     using GxNode = GUEST_ABI u64 (*)(u64*, u64);
     const auto gx_fn = reinterpret_cast<GxNode>(WriteGxNodeFunction());
+    using CameraCopy = GUEST_ABI void (*)(float* camera, float far);
+    const auto camera_fn = reinterpret_cast<CameraCopy>(WriteCameraFunction());
+    using Marker = GUEST_ABI v4 (*)(v4);
+    const auto marker_fn = reinterpret_cast<Marker>(WriteMarkerFunction());
+    using Viewport = GUEST_ABI void (*)(void* movie, std::int32_t* viewport);
+    const auto viewport_fn = reinterpret_cast<Viewport>(WriteEntryFunction(SetViewport));
+    using Screen = GUEST_ABI void (*)(u64 screen);
+    const auto screen_fn = reinterpret_cast<Screen>(WriteEntryFunction(HudFrame));
 
     BbGuestHooks::Install([](u64 address, u64 size) {
         range_start = address;
@@ -180,6 +222,68 @@ int main(int argc, char** argv) {
             assert(gx_fn(gx_node, 0x1234) == 1 && gx_node[1] == 0x1234);
             assert(gx_fn(nullptr, 0x1234) == 0);
         }
+    }
+    // The output's aspect ratio (detours only; traps: not installed, the output keeps 16:9).
+    assert(BbGuestHooks::AspectSupported() == !traps);
+    if (!traps) {
+        assert(code[CameraStore] == 0xe9 && code[MarkerSite] == 0xe9 && code[SetViewport] == 0xe9 &&
+               code[HudFrame] == 0xe9);
+        float camera[24] = {};
+        const float fov = 0.75f;
+        const auto copy = [&](float aspect_then) {
+            camera[0x50 / 4] = fov;
+            camera[0x54 / 4] = aspect_then;
+            camera_fn(camera, 5000.0f);
+            assert(camera[0x5c / 4] == 5000.0f && "the game's own store still runs");
+        };
+        copy(16.0f / 9.0f);
+        assert(camera[0x54 / 4] == 16.0f / 9.0f && camera[0x50 / 4] == fov && "16:9: as the game has it");
+        // 21:9: the same height, more to the sides.
+        BbGuestHooks::SetDisplayAspect(2560.0f / 1080.0f);
+        copy(16.0f / 9.0f);
+        assert(camera[0x54 / 4] == 2560.0f / 1080.0f && camera[0x50 / 4] == fov);
+        // A marker in the middle stays there; one at the 16:9 screen's right edge (NDC x 1) lands
+        // at the output's edge, 4/3 of the half width out in the 16:9 UI.
+        const v4 middle = marker_fn(v4{0.0f, 0.0f, 0.0f, 0.0f});
+        assert(middle[0] == 0.5f && middle[1] == 0.5f);
+        const v4 edge = marker_fn(v4{1.0f, 1.0f, 0.0f, 0.0f});
+        assert(std::abs(edge[0] - (0.5f + 0.5f * 2560.0f / 1080.0f * 9.0f / 16.0f)) < 1e-5f);
+        assert(edge[1] == 0.0f);
+        const auto shift = BbGuestHooks::HudEdgeShift();
+        assert(std::abs(shift.dx - 320.0f) < 0.01f && shift.dy == 0.0f);
+        // The game's full-screen movies get the output's pixel aspect ratio; others keep theirs.
+        std::int32_t full[16] = {1920, 1080, 0, 0, 1920, 1080};
+        std::int32_t small[16] = {512, 512, 0, 0, 512, 512};
+        const float one = 1.0f;
+        std::memcpy(full + 12, &one, 4);
+        std::memcpy(small + 12, &one, 4);
+        char movie[0x100] = {};
+        viewport_fn(movie, full);
+        viewport_fn(movie, small);
+        float pixel_aspect = 0.0f;
+        std::memcpy(&pixel_aspect, full + 12, 4);
+        assert(std::abs(pixel_aspect - 4.0f / 3.0f) < 1e-5f);
+        std::memcpy(&pixel_aspect, small + 12, 4);
+        assert(pixel_aspect == 1.0f);
+        // The screen update without a HUD yet: nothing to move.
+        static u8 screen[0xb00] = {};
+        screen_fn(reinterpret_cast<u64>(screen));
+        // 4:3: the same width, the field of view widened (more above and below).
+        BbGuestHooks::SetDisplayAspect(4.0f / 3.0f);
+        copy(16.0f / 9.0f);
+        const float widened = 2.0f * std::atan(std::tan(fov / 2.0f) * (16.0f / 9.0f) / (4.0f / 3.0f));
+        assert(camera[0x54 / 4] == 4.0f / 3.0f && std::abs(camera[0x50 / 4] - widened) < 1e-5f);
+        assert(std::abs(BbGuestHooks::HudEdgeShift().dy - 180.0f) < 0.01f);
+        const v4 top = marker_fn(v4{0.0f, 1.0f, 0.0f, 0.0f});
+        assert(std::abs(top[1] - (0.5f - 0.5f * (16.0f / 9.0f) / (4.0f / 3.0f))) < 1e-5f);
+        // Back to 16:9: the game's values.
+        BbGuestHooks::SetDisplayAspect(16.0f / 9.0f);
+        copy(16.0f / 9.0f);
+        assert(camera[0x54 / 4] == 16.0f / 9.0f && camera[0x50 / 4] == fov);
+        assert(BbGuestHooks::HudEdgeShift().dx == 0.0f && BbGuestHooks::HudEdgeShift().dy == 0.0f);
+        viewport_fn(movie, full);
+        std::memcpy(&pixel_aspect, full + 12, 4);
+        assert(pixel_aspect == 1.0f);
     }
     std::printf("guest hooks (%s): ok\n", traps ? "int3 traps" : "native detours");
     return 0;
