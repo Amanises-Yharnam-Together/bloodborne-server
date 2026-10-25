@@ -997,7 +997,7 @@ int AMemberUpAgainAfterDyingFirstDoesNotStopTheWipe() {
   const u64 before = krolebord.member.Epoch();
   CHECK(Killed(krolebord, 7));
   host.Send(VitalsOf(Castle, Down, 18), now + 1000);
-  lisara.Send(VitalsOf(Castle, Dead), now + 6000); // the pit
+  lisara.Send(VitalsOf(Castle, Dead), now + 6000);      // the pit
   krolebord.Send(VitalsOf(Castle, Dead), now + 10'000); // the pit too
   Pump(service, {&host, &lisara, &krolebord}, now + 10'000);
   host.Send(VitalsOf(Castle, Dead, 18), now + 10'050); // the server's wipe
