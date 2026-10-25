@@ -44,28 +44,41 @@ u32 BigEndianWord(std::span<const u8> record, size_t word) {
 // A ritual's record mirrors the server's FormData (bloodborne_backend.cpp, StandardDungeon) from
 // its fourth byte on, every 32-bit word big endian: the rig's altar-record-capture (Pthumeru
 // Chalice, 2026-10-24) logged 1D 0A 5A 00, the ChannelId, 0, then FormData's 1D 0A 5A 00, the goods
-// (6109), its nine layers (id, code), "Hunter" twice, 02 00 30 00, the glyph's length and text
-// ("chs2c"), and the server's date (00 18 37 DF) twice. The same for every standard chalice
-// (StandardChalices there): each depth and area's goods and layer codes, 0xFF for none.
+// (6109), its nine feature slots (id, code), "Hunter" twice, 02 00 30 00, the glyph's length and
+// text ("chs2c"), and the server's date (00 18 37 DF) twice. Each standard chalice's slots are the
+// game's own for it (HolygrailExParam row <goods>, its eight slot ids; DungeonSubFeatLotParam
+// gives each id its one code), as the server has them.
+struct FeatureSlot {
+    u32 id = 0xFFFFFFFFu; // none
+    u8 code = 0xFF;
+    u8 flag = 0; // the code's DungeonFeatureParam flag, 5300 + this in the record
+};
 struct StandardChalice {
     u8 key;
     u32 goods;
-    std::array<u8, 5> codes;
-    size_t layers;
+    std::array<FeatureSlot, 9> slots;
 };
+constexpr FeatureSlot No{};
+constexpr FeatureSlot S90{995'010'110, 90, 78};
+constexpr FeatureSlot S91{995'010'120, 91, 0};
+constexpr FeatureSlot S93{995'010'140, 93, 0};
+constexpr FeatureSlot S94{995'010'220, 94, 78};
+constexpr FeatureSlot S96{995'010'340, 96, 78};
+constexpr FeatureSlot S45{994'500'000, 45, 45};
+constexpr FeatureSlot S10{991'000'000, 10, 10};
+constexpr FeatureSlot S62{996'200'000, 62, 0};
 constexpr std::array<StandardChalice, 10> StandardChalices{{
-    {10, 6109, {0xFF, 0x23, 0x32}, 3},
-    {20, 6209, {0xFF, 0x24, 0x32, 0x3C}, 4},
-    {21, 6219, {0xFF, 0x23, 0x33, 0x3C, 0x0A}, 5},
-    {30, 6309, {0xFF, 0x24, 0x32, 0x3D}, 4},
-    {31, 6319, {0xFF, 0x25, 0x33, 0x3C, 0x0A}, 5},
-    {40, 6409, {0xFF, 0x24, 0x32, 0x3D, 0x0E}, 5},
-    {42, 6429, {0xFF, 0x23, 0x34, 0x3C}, 4},
-    {50, 6509, {0xFF, 0x24, 0x32, 0x3D, 0x0E}, 5},
-    {52, 6529, {0xFF, 0x26, 0x34, 0x3C}, 4},
-    {53, 6539, {0x4F, 0x27, 0x35, 0x43, 0x0F}, 5},
+    {10, 6109, {{No, No, S90, No, No, S45}}},
+    {20, 6209, {{No, No, S90, S91, No, S45}}},
+    {21, 6219, {{No, No, S94, S10, No, S45}}},
+    {30, 6309, {{{996'100'000, 61, 60}, {998'500'000, 85, 85}, S90, S91, No, S45}}},
+    {31, 6319, {{No, {998'600'000, 86, 86}, S94, {995'010'230, 95, 0}, S10, S45}}},
+    {40, 6409, {{S62, {997'000'000, 70, 70}, S90, S91, S93, S45}}},
+    {42, 6429, {{No, No, S96, No, No, S45}}},
+    {50, 6509, {{S62, {998'700'000, 87, 87}, S90, S91, S93, S45}}},
+    {52, 6529, {{No, {998'800'000, 88, 88}, S96, {995'010'350, 97, 0}, No, S45}}},
+    {53, 6539, {{S90, {998'900'000, 89, 89}, {995'010'450, 98, 78}, S91, S94, S45}}},
 }};
-constexpr std::array<u32, 5> StandardLayerIds{30, 35, 50, 60, 11};
 constexpr std::string_view GlyphAlphabet = "23456789abcdefghijkmnpqrstuvwxyz";
 // An empty altar's record: FF FF FF FF, 0, 80 00 00 00, FF up to the conductor, zeros from there
 // but 02 00 30 00 at byte 124 (the capture's untouched altars).
@@ -73,9 +86,16 @@ constexpr size_t ConductorAt = 92;
 constexpr size_t SettingsAt = 124;
 constexpr size_t GlyphAt = 128;
 constexpr size_t DatesAt = 164;
+constexpr size_t SlotsAt = 20;
 // Bytes from 625 (flags 5000-5999: "a chalice on it" 5001, the layers' switches) are the
 // dungeon's state, not its name: a rebuild keeps them (the merge of 2026-10-24 left them right).
 constexpr size_t StateAt = 625;
+// But for flags 5310-5399, the slots' features: a ritual clears them and sets 5300 + each code's
+// DungeonFeatureParam flag (eboot 0x01AB25A2). The chalice reward (m29 event 12901693) gives the
+// next chalice only with 5385 or 5378 on, which only a story chalice's own features set.
+constexpr s32 FeatureFlagsFrom = 5310;
+constexpr s32 FeatureFlagsTo = 5399;
+constexpr s32 FeatureFlagBase = 5300;
 
 void PutBigEndian(AltarRecord& record, size_t at, u32 value) {
     for (size_t byte = 0; byte < 4; ++byte) {
@@ -89,6 +109,31 @@ void PutText(AltarRecord& record, size_t at, std::string_view text, size_t size)
     for (size_t index = 0; index < size; ++index) {
         const size_t source = (index & ~size_t{3}) + (3 - (index & 3));
         record[at + index] = source < text.size() ? static_cast<u8>(text[source]) : 0;
+    }
+}
+
+void PutFlag(AltarRecord& record, s32 flag, bool on) {
+    const u8 bit = static_cast<u8>(0x80 >> (flag % 8));
+    record[flag / 8] = on ? record[flag / 8] | bit : record[flag / 8] & ~bit;
+}
+
+void PutSlots(AltarRecord& record, const StandardChalice& chalice) {
+    for (size_t slot = 0; slot < chalice.slots.size(); ++slot) {
+        const FeatureSlot& feature = chalice.slots[slot];
+        PutBigEndian(record, SlotsAt + slot * 8, feature.id);
+        PutBigEndian(record, SlotsAt + 4 + slot * 8,
+                     feature.code == 0xFF ? 0xFFFFFFFFu : feature.code);
+    }
+}
+
+void PutFeatures(AltarRecord& record, const StandardChalice& chalice) {
+    for (s32 flag = FeatureFlagsFrom; flag <= FeatureFlagsTo; ++flag) {
+        PutFlag(record, flag, false);
+    }
+    for (const FeatureSlot& slot : chalice.slots) {
+        if (slot.code != 0xFF) {
+            PutFlag(record, FeatureFlagBase + slot.flag, true);
+        }
     }
 }
 
@@ -162,7 +207,26 @@ bool SharesAltarRecord(const AltarShareFrame& frame) {
 
 AltarRepair RepairAltarRecord(std::span<const u8> record) {
     AltarRepair repair;
-    if (ClassifyAltarRecord(record) != AltarRecordKind::Broken) {
+    const AltarRecordKind kind = ClassifyAltarRecord(record);
+    if (kind == AltarRecordKind::Dungeon && record.size() == AltarRecordBytes) {
+        // A standard chalice's story dungeon from a server before 2026-10-25 (root features): its
+        // slots and features the chalice's own, all else kept (its layout's files are loaded).
+        const auto key = StandardChannelKey(record);
+        const auto chalice = key ? std::ranges::find(StandardChalices, *key, &StandardChalice::key)
+                                 : StandardChalices.end();
+        const auto dungeon = AltarRecordDungeon(record);
+        if (chalice != StandardChalices.end() && dungeon && dungeon->key == *key &&
+            dungeon->variant == StoryVariant) {
+            std::ranges::copy(record, repair.record.begin());
+            PutSlots(repair.record, *chalice);
+            PutFeatures(repair.record, *chalice);
+            if (!std::ranges::equal(repair.record, record)) {
+                repair.action = AltarRepair::Action::Features;
+            }
+        }
+        return repair;
+    }
+    if (kind != AltarRecordKind::Broken) {
         return repair;
     }
     if (const auto key = StandardChannelKey(record)) {
@@ -196,13 +260,7 @@ std::optional<AltarRecord> StandardAltarRecord(u8 key, std::span<const u8> state
     PutBigEndian(record, 8, 0);
     PutBigEndian(record, 12, name);
     PutBigEndian(record, 16, chalice->goods);
-    for (size_t slot = 0; slot < 9; ++slot) {
-        const bool layer = slot < chalice->layers;
-        const u8 code = layer ? chalice->codes[slot] : 0xFF;
-        PutBigEndian(record, 20 + slot * 8,
-                     layer ? 9'900'000 + u32{key} * 1000 + StandardLayerIds[slot] : 0xFFFFFFFFu);
-        PutBigEndian(record, 24 + slot * 8, code == 0xFF ? 0xFFFFFFFFu : code);
-    }
+    PutSlots(record, *chalice);
     PutText(record, ConductorAt, "Hunter", 16);
     PutText(record, ConductorAt + 16, "Hunter", 16);
     PutBigEndian(record, GlyphAt, 6);
@@ -214,10 +272,11 @@ std::optional<AltarRecord> StandardAltarRecord(u8 key, std::span<const u8> state
         std::copy(state.begin() + StateAt, state.end(), record.begin() + StateAt);
     } else {
         // A ritual's own (Pthumeru's three layers): a chalice on it, its layers.
-        for (const s32 flag : {5001, 5002, 5100, 5200, 5300, 5335, 5350, 5500}) {
-            record[flag / 8] |= static_cast<u8>(0x80 >> (flag % 8));
+        for (const s32 flag : {5001, 5002, 5100, 5200, 5300, 5500}) {
+            PutFlag(record, flag, true);
         }
     }
+    PutFeatures(record, *chalice);
     return record;
 }
 

@@ -1074,40 +1074,52 @@ Json IdObjects(const std::vector<qint64>& ids, const QString& key) {
 // returns to the title. The server makes them itself. FormData is the dungeon as the game uploads
 // one (ChannelUpload after a root chalice's ritual, format 5, little endian): u32 5, u32 140;
 // layout, rites, depth*10 + area (0 Pthumeru, 1 Hintertomb, 2 Loran, 3 Isz), 0x1D; u32 the
-// chalice's goods id; 9 layers of {u32 id, s32 code} (ids 9900000 + key*1000 + 30, 35, 50, 60,
-// 11; -1 for none); the conductor's name, 16 bytes ASCII, and 32 bytes UTF-16; zeros to 140. A
-// ritual takes the chalice from the player's hands but its layout from the record's rites byte:
-// 90 is a standard chalice's story layout, m29_<key>_90_00 (0 gave the story Pthumeru Chalice
-// the root layout m29_10_00_00 and its boss the root loot, rig BB_FILE_TRACE 2026-10-21); a join
-// through Chalice Dungeon Search builds it from FormData alone. Keyed by RitualLevel * 10 +
-// HolyGrailTypeId: (rites, goods id, layer codes, 0xFF for none).
+// chalice's goods id; 9 feature slots of {u32 id, s32 code} (-1 for none); the conductor's name,
+// 16 bytes ASCII, and 32 bytes UTF-16; zeros to 140. A ritual takes the chalice from the player's
+// hands but its layout from the record's rites byte: 90 is a standard chalice's story layout,
+// m29_<key>_90_00 (0 gave the story Pthumeru Chalice the root layout m29_10_00_00 and its boss the
+// root loot, rig BB_FILE_TRACE 2026-10-21); a join through Chalice Dungeon Search builds it from
+// FormData alone. The slots are the game's own for the chalice: HolygrailExParam row <goods> names
+// eight slot ids, DungeonSubFeatLotParam gives each id its one code (a DungeonFeatureParam row).
+// The ritual sets the altar's flag 5300 + each code's feature flag, and the dungeon's last bosses
+// give the next chalice only with 5378 or 5385 on (m29 event 12901693): the root slots these had
+// before (9900000 + key*1000 + 30, 35, 50, ...) gave none (Kaniel's playtest 2026-10-25). Keyed by
+// RitualLevel * 10 + HolyGrailTypeId: (rites, goods id, feature slots).
+struct StandardSlot {
+    quint32 id;
+    qint32 code;
+};
 struct StandardChalice {
     int key;
     quint8 rites;
     quint32 goods;
-    std::vector<quint8> codes;
+    std::vector<StandardSlot> features;
 };
+constexpr StandardSlot NoSlot{0xFFFFFFFFu, -1};
 
 const std::vector<StandardChalice>& StandardChalices() {
+    constexpr StandardSlot S90{995010110, 90};
+    constexpr StandardSlot S91{995010120, 91};
+    constexpr StandardSlot S93{995010140, 93};
+    constexpr StandardSlot S94{995010220, 94};
+    constexpr StandardSlot S45{994500000, 45};
     static const std::vector<StandardChalice> chalices = {
-        {10, 90, 6109, {0xFF, 0x23, 0x32}},
-        {20, 90, 6209, {0xFF, 0x24, 0x32, 0x3C}},
-        {21, 90, 6219, {0xFF, 0x23, 0x33, 0x3C, 0x0A}},
-        {30, 90, 6309, {0xFF, 0x24, 0x32, 0x3D}},
-        {31, 90, 6319, {0xFF, 0x25, 0x33, 0x3C, 0x0A}},
-        {40, 90, 6409, {0xFF, 0x24, 0x32, 0x3D, 0x0E}},
-        {42, 90, 6429, {0xFF, 0x23, 0x34, 0x3C}},
-        {50, 90, 6509, {0xFF, 0x24, 0x32, 0x3D, 0x0E}},
-        {52, 90, 6529, {0xFF, 0x26, 0x34, 0x3C}},
-        {53, 90, 6539, {0x4F, 0x27, 0x35, 0x43, 0x0F}},
+        {10, 90, 6109, {NoSlot, NoSlot, S90, NoSlot, NoSlot, S45}},
+        {20, 90, 6209, {NoSlot, NoSlot, S90, S91, NoSlot, S45}},
+        {21, 90, 6219, {NoSlot, NoSlot, S94, {991000000, 10}, NoSlot, S45}},
+        {30, 90, 6309, {{996100000, 61}, {998500000, 85}, S90, S91, NoSlot, S45}},
+        {31, 90, 6319, {NoSlot, {998600000, 86}, S94, {995010230, 95}, {991000000, 10}, S45}},
+        {40, 90, 6409, {{996200000, 62}, {997000000, 70}, S90, S91, S93, S45}},
+        {42, 90, 6429, {NoSlot, NoSlot, {995010340, 96}, NoSlot, NoSlot, S45}},
+        {50, 90, 6509, {{996200000, 62}, {998700000, 87}, S90, S91, S93, S45}},
+        {52, 90, 6529, {NoSlot, {998800000, 88}, {995010340, 96}, {995010350, 97}, NoSlot, S45}},
+        {53, 90, 6539, {S90, {998900000, 89}, {995010450, 98}, S91, S94, S45}},
     };
     return chalices;
 }
 
 // Their ChannelIds: this base plus the key, far above any stored dungeon's.
 constexpr qint64 StandardChannelBase = 2'000'000'000;
-// A layer's id is 9900000 + key * 1000 + its own offset.
-constexpr int StandardLayerIds[] = {30, 35, 50, 60, 11};
 constexpr char StandardConductor[] = "Hunter";
 
 void AppendLe32(QByteArray& out, quint32 value) {
@@ -1129,14 +1141,9 @@ std::optional<Json> StandardDungeon(qint64 key) {
     form.append('\0').append(char(it->rites)).append(char(it->key)).append(char(0x1D));
     AppendLe32(form, it->goods);
     for (size_t slot = 0; slot < 9; ++slot) {
-        if (slot < it->codes.size()) {
-            const quint8 code = it->codes[slot];
-            AppendLe32(form, quint32(9'900'000 + key * 1000 + StandardLayerIds[slot]));
-            AppendLe32(form, code == 0xFF ? 0xFFFFFFFFu : code);
-        } else {
-            AppendLe32(form, 0xFFFFFFFFu);
-            AppendLe32(form, 0xFFFFFFFFu);
-        }
+        const StandardSlot& feature = slot < it->features.size() ? it->features[slot] : NoSlot;
+        AppendLe32(form, feature.id);
+        AppendLe32(form, quint32(feature.code));
     }
     const QByteArray conductor(StandardConductor);
     form.append(conductor.leftJustified(16, '\0'));

@@ -304,6 +304,12 @@ void RepairRitualAltars() {
             return;
         }
         WriteAltarFlags(base, repair.record);
+        if (repair.action == AltarRepair::Action::Features) {
+            LOG_WARNING(Debug,
+                        "Bloodborne team altar: {} ({}) had root features: given its chalice's own",
+                        which, RecordName(*record));
+            return;
+        }
         LOG_WARNING(Debug, "Bloodborne team altar: {} named no dungeon ({}): {} ({})", which,
                     RecordName(*record),
                     repair.action == AltarRepair::Action::Rebuild ? "made again" : "cleared",

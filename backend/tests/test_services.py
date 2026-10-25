@@ -5,6 +5,7 @@ import json
 import os
 import re
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -82,12 +83,13 @@ class ServiceTest(unittest.TestCase):
                        "UnlockedFlagList": [{"UnlockedFlag": 0}, {"UnlockedFlag": 1},
                                             {"UnlockedFlag": 0}], "UserId": 1}
     # The Pthumeru Chalice's dungeon as the game uploads dungeons (format 5, 140 bytes, little
-    # endian): depth 1 in Pthumeru, layout 0, rites 90, the chalice (goods 6109), its layers
-    # (ids 9910030/35/50 with their codes), conductor "Hunter". A join through Chalice Dungeon
-    # Search reads only this (rig 2026-10-18: the old layout showed Depth 0 and died in the load).
-    PTHUMERU_FORM = ("050000008c000000005a0a1ddd170000" "0e379700ffffffff1337970023000000"
-                     "2237970032000000" + "ff" * 48 + "48756e74657200000000000000000000"
-                     "480075006e007400650072" + "00" * 25)
+    # endian): depth 1 in Pthumeru, layout 0, rites 90, the chalice (goods 6109), its feature
+    # slots as the game's HolygrailExParam 6109 has them (slot 2: 995010110, code 90; slot 5:
+    # 994500000, code 45), conductor "Hunter". A join through Chalice Dungeon Search reads only
+    # this (rig 2026-10-18: the old layout showed Depth 0 and died in the load).
+    PTHUMERU_FORM = ("050000008c000000005a0a1ddd170000" + "ff" * 16 + "3ea64e3b5a000000" +
+                     "ff" * 16 + "a0dd463b2d000000" + "ff" * 24 +
+                     "48756e74657200000000000000000000" "480075006e007400650072" + "00" * 25)
 
     def test_standard_chalice_search_finds_its_dungeon(self):
         found = self.post("/channel/search?user_id=1", self.PTHUMERU_SEARCH)["ChannelList"]
@@ -108,6 +110,21 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(len(found), 1, key)
             form = base64.b64decode(found[0]["FormData"])
             self.assertEqual((form[8], form[9], form[10]), (0, 90, key), key)
+
+    def test_standard_chalices_have_their_own_features(self):
+        # Kaniel's playtest 2026-10-25: the story Pthumeru Chalice's last boss gave no chalice.
+        # The ritual sets the altar's flag 5300 + each slot code's DungeonFeatureParam flag, and
+        # the reward (m29 event 12901693) needs 5378 (codes 90, 94, 96, 98) or 5385 (code 85);
+        # the root slots (9910030/35/50, codes 0x23 and 0x32) set neither.
+        for key in (10, 20, 21, 30, 31, 40, 42, 50, 52, 53):
+            search = dict(self.PTHUMERU_SEARCH, RitualLevel=key // 10, HolyGrailTypeId=key % 10)
+            form = base64.b64decode(self.post("/channel/search?user_id=1", search)
+                                    ["ChannelList"][0]["FormData"])
+            slots = [struct.unpack_from("<Ii", form, 16 + slot * 8) for slot in range(9)]
+            codes = {code for _, code in slots}
+            self.assertTrue(codes & {85, 90, 94, 96, 98}, key)
+            self.assertEqual(slots[5], (994500000, 45), key)
+            self.assertFalse(any(9900000 <= ident < 10000000 for ident, _ in slots), key)
 
     def test_standard_chalice_dungeon_details(self):
         found = self.post("/channel/search?user_id=1", self.PTHUMERU_SEARCH)["ChannelList"]

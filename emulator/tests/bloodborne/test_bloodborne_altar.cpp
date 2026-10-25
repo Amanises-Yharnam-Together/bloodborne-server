@@ -133,11 +133,45 @@ AltarRecord FromHex(std::string_view hex) {
     return record;
 }
 
+bool FlagOn(const AltarRecord& record, s32 flag) {
+    return (record[flag / 8] & (0x80 >> (flag % 8))) != 0;
+}
+
+u32 Word(const AltarRecord& record, size_t at) {
+    return u32{record[at]} << 24 | u32{record[at + 1]} << 16 | u32{record[at + 2]} << 8 |
+           record[at + 3];
+}
+
+// The capture's record with the Pthumeru Chalice's own feature slots (HolygrailExParam 6109:
+// slot 2 995010110, code 90; slot 5 994500000, code 45) and their flags (5378, 5345) for the root
+// features the old server gave it (codes 0x23 and 0x32, flags 5335 and 5350).
+AltarRecord WithPthumeruFeatures(AltarRecord record) {
+    for (size_t at = 20; at < 92; ++at) {
+        record[at] = 0xFF;
+    }
+    const auto put = [&record](size_t at, u32 value) {
+        for (size_t byte = 0; byte < 4; ++byte) {
+            record[at + byte] = static_cast<u8>(value >> (24 - 8 * byte));
+        }
+    };
+    put(20 + 2 * 8, 995'010'110);
+    put(24 + 2 * 8, 90);
+    put(20 + 5 * 8, 994'500'000);
+    put(24 + 5 * 8, 45);
+    for (const s32 flag : {5335, 5350}) {
+        record[flag / 8] &= static_cast<u8>(~(0x80 >> (flag % 8)));
+    }
+    for (const s32 flag : {5345, 5378}) {
+        record[flag / 8] |= static_cast<u8>(0x80 >> (flag % 8));
+    }
+    return record;
+}
+
 } // namespace
 
 TEST(BloodborneAltar, TheRigsRecordsAreTheBuiltOnes) {
     EXPECT_EQ(EmptyAltarRecord(), FromHex(CapturedEmpty));
-    EXPECT_EQ(StandardAltarRecord(10), FromHex(CapturedPthumeru));
+    EXPECT_EQ(StandardAltarRecord(10), WithPthumeruFeatures(FromHex(CapturedPthumeru)));
     EXPECT_EQ(ClassifyAltarRecord(FromHex(CapturedPthumeru)), AltarRecordKind::Dungeon);
     EXPECT_EQ(ClassifyAltarRecord(FromHex(CapturedEmpty)), AltarRecordKind::Empty);
 }
@@ -149,7 +183,47 @@ TEST(BloodborneAltar, KanielsAltarIsTheRitualsAgain) {
     EXPECT_EQ(ClassifyAltarRecord(broken), AltarRecordKind::Broken);
     const AltarRepair repair = RepairAltarRecord(broken);
     ASSERT_EQ(repair.action, AltarRepair::Action::Rebuild);
-    EXPECT_EQ(repair.record, FromHex(CapturedPthumeru));
+    EXPECT_EQ(repair.record, WithPthumeruFeatures(FromHex(CapturedPthumeru)));
+}
+
+// Kaniel's playtest 2026-10-25: the team beat the story Pthumeru Chalice's last boss and nobody got
+// the next chalice. Its reward (m29 event 12901693) gives one only with flag 5385 or 5378 of the
+// current altar on; a ritual sets 5300 + each feature slot's DungeonFeatureParam flag, and the
+// old server's slots were root ones (5335, 5350). The game's own slots for each story chalice
+// (HolygrailExParam) set 5378, or 5385 for 6309's dungeon.
+TEST(BloodborneAltar, EveryStoryChaliceCanGiveTheNextChalice) {
+    for (const u8 key : {10, 20, 21, 30, 31, 40, 42, 50, 52, 53}) {
+        const auto record = StandardAltarRecord(key);
+        ASSERT_TRUE(record) << int{key};
+        EXPECT_TRUE(FlagOn(*record, 5378) || FlagOn(*record, 5385)) << int{key};
+        EXPECT_FALSE(FlagOn(*record, 5335)) << int{key} << ": a root feature";
+        EXPECT_FALSE(FlagOn(*record, 5350)) << int{key} << ": a root feature";
+        // Slot 5 of every story chalice: 994500000, code 45.
+        EXPECT_EQ(Word(*record, 20 + 5 * 8), 994'500'000u) << int{key};
+        EXPECT_EQ(Word(*record, 24 + 5 * 8), 45u) << int{key};
+    }
+    EXPECT_TRUE(FlagOn(*StandardAltarRecord(30), 5385));
+    EXPECT_FALSE(FlagOn(*StandardAltarRecord(10), 5385));
+}
+
+// The altars that hold a story dungeon from the old server get the chalice's own features, the
+// rest of the record (its dungeon, its layers' state) kept: the next load into it gives the boss's
+// chalice.
+TEST(BloodborneAltar, AnOldStoryDungeonGetsItsChalicesFeatures) {
+    const AltarRecord old = FromHex(CapturedPthumeru);
+    const AltarRepair repair = RepairAltarRecord(old);
+    ASSERT_EQ(repair.action, AltarRepair::Action::Features);
+    EXPECT_EQ(repair.record, WithPthumeruFeatures(old));
+    EXPECT_EQ(repair.chalice, std::nullopt);
+    EXPECT_EQ(RepairAltarRecord(repair.record).action, AltarRepair::Action::None);
+    // A root dungeon of the same key (the layout before #310) keeps its features.
+    AltarRecord root = old;
+    root[2] = 0;
+    EXPECT_EQ(RepairAltarRecord(root).action, AltarRepair::Action::None);
+    // A stored dungeon's (no standard ChannelId) too.
+    AltarRecord stored = old;
+    stored[7] = 17;
+    EXPECT_EQ(RepairAltarRecord(stored).action, AltarRepair::Action::None);
 }
 
 TEST(BloodborneAltar, AnAltarsFlagsAreItsRecord) {
@@ -277,7 +351,6 @@ TEST(BloodborneAltar, AnotherBrokenRecordIsCleared) {
 }
 
 TEST(BloodborneAltar, GoodRecordsStayAsTheyAre) {
-    EXPECT_EQ(RepairAltarRecord(Pthumeru).action, AltarRepair::Action::None);
     EXPECT_EQ(RepairAltarRecord(EmptyAltarRecord()).action, AltarRepair::Action::None);
     for (const u8 key : {10, 20, 21, 30, 31, 40, 42, 50, 52, 53}) {
         const auto record = StandardAltarRecord(key);

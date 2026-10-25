@@ -89,9 +89,12 @@ bool SharesAltarRecord(const AltarShareFrame& frame);
 // What a loaded save's altar record needs (Kaniel 2026-10-24: repair the altars the merge broke).
 // A broken record of a standard chalice's dungeon is made again whole; any other broken one is
 // cleared (no dungeon, as the other altars), and the chalice it names (its goods, 6100-6599) goes
-// back to the player if not held (the ritual took it).
+// back to the player if not held (the ritual took it). A standard chalice's story dungeon with
+// other feature slots than the chalice's own (the server's before 2026-10-25 gave root features,
+// so its last bosses never gave the next chalice: Kaniel's playtest 2026-10-25) gets the
+// chalice's slots and feature flags, all else kept (Features).
 struct AltarRepair {
-    enum class Action : u8 { None, Rebuild, Clear };
+    enum class Action : u8 { None, Rebuild, Clear, Features };
     Action action = Action::None;
     AltarRecord record{};
     std::optional<u32> chalice; // the goods to give back (Clear)
