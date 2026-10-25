@@ -430,5 +430,17 @@
  "Nobody accepted the duel.": "Ingen antog duellen.",
  "%s ended the duel.": "%s avslutade duellen.",
  "%s is gone: the duel is over.": "%s är borta: duellen är över.",
- "%s left the area: the duel is over.": "%s lämnade området: duellen är över."
+ "%s left the area: the duel is over.": "%s lämnade området: duellen är över.",
+ "Free camera hotkey": "Tangent för fri kamera",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, eller {Square} medan du håller {L3}, lösgör kameran från din jägare: vänster spak eller WASD flyttar den, höger spak eller musen vrider den, {R1} och {L1} åker upp och ner, med {R2} nedtryckt går det fort och med {L2} långsamt. Din jägare står still under tiden; samma tangent tar tillbaka kameran.",
+ "Death mode": "Dödsläge",
+ "Spectate teammates": "Titta på laget",
+ "Go down (revive)": "Gå ner (återuppliva)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Titta: en jägare som faller följer en lagkamrat tills någon använder en lykta eller bossen dör, och vaknar sedan vid sin egen lykta. Alla nere är fortfarande ett nederlag.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Gå ner: en jägare som faller ligger kvar tills en lagkamrat slår upp den igen, eller ger upp med {Circle}.",
+ "Spectating %s": "Du tittar på %s",
+ "No teammate stands here": "Ingen lagkamrat står här",
+ "Next teammate": "Nästa lagkamrat",
+ "hold to wake at your lamp": "håll för att vakna vid din lykta",
+ "or F7: back to your hunter": "eller F7: tillbaka till din jägare"
 }

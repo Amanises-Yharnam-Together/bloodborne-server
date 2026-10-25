@@ -35,11 +35,22 @@ int bbcoop_autoplay_pad(uint32_t *buttons, uint8_t sticks[4]);
  * read from the pad (the give-up hold, attacks that revive a downed member) and, while the player
  * is down, lets go of all but Options and the camera stick. */
 void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2);
+/* Kaniel 2026-10-25: the free camera (an opt-in setting, bbport.ini free_camera): the overlay says
+ * every frame whether the setting allows it, its F7 toggles it, and the pad reader hands it the
+ * pad after party death's (Square with L3 held toggles it; while it flies the game gets nothing). */
+void bbcoop_set_free_camera(int allowed);
+void bbcoop_free_camera_toggle(void);
+int bbcoop_free_camera_on(void);
+void bbcoop_free_camera_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2);
+/* The mouse's motion (counts) while a co-op camera drives the view (spectating, the free camera):
+ * 1 when it took it (the game's mouse camera turns nothing then). */
+int bbcoop_camera_mouse(float dx, float dy);
 
 /* Party death's panel, for the overlay: the other party members playing it (online id, state,
  * HP, revive progress while down; `here` on this player's map), whom an attack would revive now
  * (an index into members, or -1) and this player's own down. */
-enum { BBCOOP_VITAL_OFF, BBCOOP_VITAL_UP, BBCOOP_VITAL_DOWN, BBCOOP_VITAL_DEAD };
+enum { BBCOOP_VITAL_OFF, BBCOOP_VITAL_UP, BBCOOP_VITAL_DOWN, BBCOOP_VITAL_DEAD,
+       BBCOOP_VITAL_SPECTATE /* Kaniel 2026-10-25: out of the fight, watching its teammates */ };
 enum { BBCOOP_PANEL_MEMBERS = 4 };
 typedef struct bbcoop_panel_member {
     char name[20]; /* "" when unknown */
@@ -59,6 +70,10 @@ typedef struct bbcoop_panel {
     int native_list; /* the game's HUD shows the party list (the party HUD's CoopParty tags) */
     int native_prompt; /* the game's HUD shows the prompt (CoopPrompt): the overlay draws its glyph only */
     int native_supplies; /* the game's HUD shows the vials and bullets (CoopSupply): the overlay draws none */
+    /* Kaniel 2026-10-25: while this player spectates (vital BBCOOP_VITAL_SPECTATE), the teammate
+     * it watches (UTF-8; "" a Hunter of unknown name), `watching` 0 while nobody stands to watch. */
+    int watching;
+    char watching_name[40];
 } bbcoop_panel;
 /* Fills `panel`; 0 when there is nothing to draw (party death off, no party session, nobody else
  * on the vitals board and this player not down). */
@@ -303,7 +318,10 @@ typedef struct bbcoop_lobby {
     /* Kaniel 2026-10-25: the host rules, the team's (its leader's launcher's); before a team,
      * this player's own launcher's. */
     int rule_rot, rule_travel, rule_vote, rule_scale;
+    /* Kaniel 2026-10-25: the team's death mode, the leader's pick (BBCOOP_DEATH_*). */
+    int death_mode;
 } bbcoop_lobby;
+enum { BBCOOP_DEATH_DOWN = 0, BBCOOP_DEATH_SPECTATE = 1 };
 /* Fills `lobby`; 0 when the team lobby is off. */
 int bbcoop_lobby_view(bbcoop_lobby *lobby);
 /* Kaniel 2026-10-25, the Rot host rule: this player's rot for the party HUD, each penalty's kind
@@ -346,7 +364,8 @@ enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,
        BBCOOP_TEAM_FORGET_WORLD = 11 /* the leader forgets a world (`id`) */,
        BBCOOP_TEAM_JOIN_CODE = 12 /* join the team of a typed code (`id`) */,
        BBCOOP_TEAM_NEW_CODE = 13 /* the leader: a fresh code, the old one joins no more */,
-       BBCOOP_TEAM_INVITE_NAME = 14 /* invite the player of a typed name (`id`) */ };
+       BBCOOP_TEAM_INVITE_NAME = 14 /* invite the player of a typed name (`id`) */,
+       BBCOOP_TEAM_DEATH_MODE = 18 /* the leader picks the team's death mode (`id`: "0" or "1") */ };
 void bbcoop_lobby_request(int action, const char *id);
 /* The title holds a save's load for the team: the team screen is up (bbport_overlay.cpp). */
 int bbcoop_team_screen(void);

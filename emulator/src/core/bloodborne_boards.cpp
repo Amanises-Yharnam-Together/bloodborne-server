@@ -1045,6 +1045,7 @@ void RunServerBoards(std::stop_token stop) {
                 mine = vitals_mine;
                 mine.cutscene = own_cutscene.load();
                 mine.vials = own_vials.load();
+                mine.lamp_uses = lamp_uses.load();
                 mine.bullets = own_bullets.load();
                 hits = vitals_hits;
             }

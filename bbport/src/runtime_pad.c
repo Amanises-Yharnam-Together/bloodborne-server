@@ -699,6 +699,7 @@ static void mouse_turn(float dx, float dy, float *pitch, float *yaw) {
 }
 static void mouse_direct_turn(float dx, float dy) {
     if (!kbm.mouse_camera) return; /* switched off in the menu after the hook was installed */
+    if (bbcoop_camera_mouse(dx,dy*(kbm.invert_y ? -1.0f : 1.0f))) return; /* a co-op camera drives the view */
     float pitch, yaw;
     mouse_turn(dx,dy,&pitch,&yaw);
     runtime_camhook_turn(pitch,yaw);
@@ -990,6 +991,8 @@ static void sample(PadData *d) {
     /* Party death: a downed player only keeps the menu and the camera. */
     uint8_t sticks[4]={d->left_x,d->left_y,d->right_x,d->right_y};
     bbcoop_party_death_pad(&d->buttons,sticks,&d->l2,&d->r2);
+    /* Kaniel 2026-10-25: the free camera (Square with L3 held toggles it): the pad flies it. */
+    bbcoop_free_camera_pad(&d->buttons,sticks,&d->l2,&d->r2);
     for (int i=0;i<4;++i) *axes[i]=sticks[i];
     if (hold_after_capture) {
         if (d->buttons) d->buttons=0;

@@ -430,5 +430,17 @@
  "Nobody accepted the duel.": "Kimse düelloyu kabul etmedi.",
  "%s ended the duel.": "%s düelloyu bitirdi.",
  "%s is gone: the duel is over.": "%s ayrıldı: düello bitti.",
- "%s left the area: the duel is over.": "%s bölgeden ayrıldı: düello bitti."
+ "%s left the area: the duel is over.": "%s bölgeden ayrıldı: düello bitti.",
+ "Free camera hotkey": "Serbest kamera tuşu",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7 ya da {L3} basılıyken {Square}, kamerayı avcınızdan ayırır: sol çubuk ya da WASD onu hareket ettirir, sağ çubuk ya da fare döndürür, {R1} ve {L1} yukarı ve aşağı götürür, {R2} basılıyken hızlı, {L2} ile yavaş gider. Bu sırada avcınız yerinde durur; aynı tuş kamerayı geri getirir.",
+ "Death mode": "Ölüm modu",
+ "Spectate teammates": "Takımı izle",
+ "Go down (revive)": "Yere düş (canlandır)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "İzle: düşen avcı, biri bir fener kullanana ya da boss ölene kadar bir takım arkadaşını izler, sonra kendi fenerinde uyanır. Herkes düşerse yine yenilgidir.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Yere düş: düşen avcı, bir takım arkadaşı vurarak onu kaldırana kadar yerde kalır ya da {Circle} ile pes eder.",
+ "Spectating %s": "İzlenen: %s",
+ "No teammate stands here": "Burada ayakta takım arkadaşı yok",
+ "Next teammate": "Sonraki takım arkadaşı",
+ "hold to wake at your lamp": "fenerinizde uyanmak için basılı tutun",
+ "or F7: back to your hunter": "ya da F7: avcınıza dönün"
 }

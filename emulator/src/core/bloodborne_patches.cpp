@@ -1509,6 +1509,27 @@ void InstallSilentKeyItems(u64 base, u64 image_size) {
     coop_features.On("silent key items");
 }
 
+// Kaniel 2026-10-25: the co-op cameras (spectating teammates, the free camera; see
+// CoopCameraStep), in the port only.
+void InstallCoopCamera(u64 base, u64 image_size) {
+#ifdef BLOODBORNE_NATIVE_PORT
+    if (!CoopSitesMatch(base, image_size, "co-op camera",
+                        "spectating and the free camera keep the game's camera")) {
+        return;
+    }
+    static constexpr std::array<u8, 7> Bytes{0x49, 0x8B, 0x85, 0x28, 0x01, 0x00, 0x00};
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + CoopCameraHookOffset), Bytes, 0,
+                         GuestCodeHook{CoopCameraStep})) {
+        coop_features.Skipped("co-op camera", "the hook did not go in");
+        return;
+    }
+    coop_features.On("co-op camera");
+#else
+    (void)base;
+    (void)image_size;
+#endif
+}
+
 void InstallNoMultiplayerBanners(u64 base, u64 image_size) {
     if (!party_controller || !CoopSitesMatch(base, image_size, "no multiplayer banners",
                                              "join and leave banners show")) {
@@ -1801,6 +1822,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallPartyDeath(base, image_size);
     InstallOwnHitCount(base, image_size);
     InstallTrading(base, image_size);
+    InstallCoopCamera(base, image_size);
     StartSaveBackups();
     StartCoopTrace();
     InstallNativePacketTrace(base, image_size);

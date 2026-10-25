@@ -313,6 +313,11 @@ bool party_death_hook_installed{};
 std::atomic<u64> party_death_data{};
 std::atomic<bool> party_death_armed{};
 std::atomic<bool> party_death_down{};
+// Kaniel 2026-10-25: the local player spectates its teammates (the team's death mode; down above
+// is set too: the hook keeps it alive): the pad reader gives the game nothing, counts L1 / R1 for
+// the party tick (the teammate watched) and turns the spectator's camera with the right stick.
+std::atomic<bool> party_spectating{};
+std::atomic<int> spectate_steps{};
 // Lethal hits the hook kept from killing the armed player: each change puts it down.
 std::atomic<u32> party_death_catches{};
 // The local player fell into the void (a lethal check while FallsIntoTheVoid, or a real death in
@@ -1327,10 +1332,9 @@ void GetUp(PartyDeathRun& run, u64 data, s64 now_ms) {
 
 // A real death from the down (a wipe, giving up, shadNet gone): the game's own kill, then the
 // party death respawn (see MoveToRespawnPoint), which reloads the map if `reset`.
-void DieFromDown(PartyDeathRun& run, u64 player, u64 data, bool reset, std::string_view why) {
-    EndDown(run, data);
-    run.downed.Died();
-    DiesWithReset(reset);
+// The game's own kill of the local player (its death and respawn as any), else its HP to 0.
+// Whether the game's kill ran.
+bool KillLocalPlayer(u64 player, u64 data) {
     static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
     const bool killed =
         IsCharacter(player, "DieFromDown kill") &&
@@ -1344,6 +1348,14 @@ void DieFromDown(PartyDeathRun& run, u64 player, u64 data, bool reset, std::stri
     } else {
         WriteValue(data, 0xF8, s32{0});
     }
+    return killed;
+}
+
+void DieFromDown(PartyDeathRun& run, u64 player, u64 data, bool reset, std::string_view why) {
+    EndDown(run, data);
+    run.downed.Died();
+    DiesWithReset(reset);
+    const bool killed = KillLocalPlayer(player, data);
     LOG_INFO(Debug, "Bloodborne party death: {} ends down {}; dies (reset={}, game kill={})", why,
              run.downed.DownId(), reset, killed);
 }
@@ -1360,6 +1372,7 @@ struct DeathTick {
     bool armed = false;
     bool alive = false;
 };
+void StartSpectating(PartyDeathRun& run, const DeathTick& tick);
 
 // Without party death the vitals board still says who stands on which map: a host back from a trip
 // asks a member that was still joining for its data only once it stands here (FinishWaitingJoins;
@@ -1399,7 +1412,12 @@ void TickStanding(PartyDeathRun& run, const DeathTick& tick) {
     const bool caught = catches != run.seen_catches;
     run.seen_catches = catches;
     if (caught && tick.alive) {
-        GoDown(run, tick.data, tick.now);
+        // Kaniel 2026-10-25: the team's death mode (its leader's pick, down by default).
+        if (Coop::TeamDeathModeNow() == DeathMode::Spectate) {
+            StartSpectating(run, tick);
+        } else {
+            GoDown(run, tick.data, tick.now);
+        }
         return;
     }
     if (!tick.alive) {
@@ -1522,6 +1540,272 @@ void TickDown(PartyDeathRun& run, const DeathTick& tick) {
     }
 }
 
+// Kaniel 2026-10-25: spectating, its body lies unseen, unheard and unhurt where it fell (Hide and
+// Silence as a downed one's, the downed no-damage flags) and faded out (character +0x20C, as a
+// fall into the void fades it): this screen shows the teammate watched, the others' show nothing
+// of it (HideSpectatorCopies). The game may undo any of it.
+void KeepSpectating(PartyDeathRun& run, u64 player, u64 data) {
+    const u8 flags = ReadValue<u8>(data, 0x200);
+    if ((flags & DownedNoDamageFlags) != DownedNoDamageFlags) {
+        run.flags_added |= DownedNoDamageFlags & static_cast<u8>(~flags);
+        WriteValue(data, 0x200, static_cast<u8>(flags | DownedNoDamageFlags));
+    }
+    if (ReadValue<s32>(data, 0xF8) < 1) {
+        WriteValue(data, 0xF8, s32{1});
+    }
+    SetPlayerFlag(PlayerHideFlagOffset, 1);
+    SetPlayerFlag(PlayerSilenceFlagOffset, 1);
+    if (HasMemoryAccess(player + CharacterFadeOffset, sizeof(float), MemoryProt::CpuWrite) &&
+        ReadValue<float>(player, CharacterFadeOffset) != 0.0f) {
+        WriteValue(player, CharacterFadeOffset, 0.0f);
+    }
+}
+
+// A member's character in this world (its handle): the other player nearest where it posted,
+// within PresenceMetres; 0 for none.
+u32 MemberCharacterHandle(std::span<const MemberVitals> board, std::string_view member,
+                          std::span<const OtherPlayer> players, float within = PresenceMetres) {
+    const auto entry = std::ranges::find(board, member, &MemberVitals::member);
+    if (entry == board.end()) {
+        return 0;
+    }
+    u32 handle = 0;
+    float best = within;
+    for (const OtherPlayer& other : players) {
+        if (!other.at) {
+            continue;
+        }
+        const float distance =
+            std::hypot((*other.at)[0] - entry->at[0], (*other.at)[1] - entry->at[1],
+                       (*other.at)[2] - entry->at[2]);
+        if (distance <= best) {
+            best = distance;
+            handle = ReadValue<u32>(other.character, 0x08);
+        }
+    }
+    return handle;
+}
+
+// The teammate watched after L1 / R1's `step` (SpectateTargets, NextSpectateTarget), and the
+// camera over its shoulder.
+void WatchTeammate(PartyDeathRun& run, const DeathTick& tick, int step) {
+    const std::vector<std::string> targets =
+        SpectateTargets(tick.board, tick.view.member, tick.map);
+    const std::optional<std::string> next = NextSpectateTarget(targets, run.watched, step);
+    const u32 handle = next ? MemberCharacterHandle(tick.board, *next, OtherPlayers()) : 0;
+    if (next != run.watched) {
+        LOG_INFO(Debug, "Bloodborne spectate: watching {} ({} of {} teammates standing here)",
+                 next ? Coop::CharacterNameOf(*next) : std::string{"nobody"},
+                 next ? std::ranges::find(targets, *next) - targets.begin() + 1 : 0,
+                 targets.size());
+    }
+    if (next != run.watched || handle != run.watched_handle) {
+        run.watched = next;
+        run.watched_handle = handle;
+        Coop::SetSpectateCamera(handle, next ? Coop::CharacterNameOf(*next) : std::string{});
+    }
+}
+
+void StartSpectating(PartyDeathRun& run, const DeathTick& tick) {
+    run.downed.Spectate();
+    run.give_up.Restart((party_pad_buttons.load() & PadCircle) != 0);
+    party_death_down.store(true); // the hook keeps it alive; no hit's push or reaction
+    spectate_steps.store(0);
+    party_spectating.store(true);
+    run.flags_added = 0;
+    run.hide_before = ReadValue<u8>(image_base + PlayerHideFlagOffset, 0);
+    run.silence_before = ReadValue<u8>(image_base + PlayerSilenceFlagOffset, 0);
+    const float fade = ReadValue<float>(tick.player, CharacterFadeOffset);
+    run.fade_before = fade > 0.0f ? fade : 1.0f;
+    run.watched.reset();
+    run.watched_handle = 0;
+    run.alone_since.reset();
+    run.down_out_of_session_since.reset();
+    run.boss_watch.Restart();
+    run.boss_read_at = 0;
+    run.down_since = tick.now;
+    KeepSpectating(run, tick.player, tick.data);
+    WatchTeammate(run, tick, 0);
+    LOG_INFO(Debug,
+             "Bloodborne spectate: out of the fight on map {:#x} (the team's death mode): unseen "
+             "where it fell, watching its teammates",
+             tick.map);
+}
+
+void EndSpectating(PartyDeathRun& run, u64 player, u64 data) {
+    party_spectating.store(false);
+    party_death_down.store(false);
+    WriteValue(data, 0x200, static_cast<u8>(ReadValue<u8>(data, 0x200) & ~run.flags_added));
+    run.flags_added = 0;
+    SetPlayerFlag(PlayerHideFlagOffset, run.hide_before);
+    SetPlayerFlag(PlayerSilenceFlagOffset, run.silence_before);
+    if (HasMemoryAccess(player + CharacterFadeOffset, sizeof(float), MemoryProt::CpuWrite)) {
+        WriteValue(player, CharacterFadeOffset, run.fade_before);
+    }
+    run.watched.reset();
+    run.watched_handle = 0;
+    Coop::SetSpectateCamera(0, {});
+}
+
+// Kaniel 2026-10-25: a spectator wakes at its own last lamp (the one it last rested at, GlobalState
+// +0x1528, not the host's), with its full HP and without a reload: moved there while the lamp is
+// in a loaded block, else by the lamp's trip (ChooseDeathRespawn, as a death's respawn).
+void WakeAtOwnLamp(PartyDeathRun& run, const DeathTick& tick, SpectateEnd why) {
+    EndSpectating(run, tick.player, tick.data);
+    const u8 flags = ReadValue<u8>(tick.data, 0x200);
+    run.grace_flags = DownedNoDamageFlags & static_cast<u8>(~flags);
+    WriteValue(tick.data, 0x200, static_cast<u8>(flags | DownedNoDamageFlags));
+    run.grace_until = tick.now + ReviveGraceMs;
+    const s32 hp = std::max(ReadValue<s32>(tick.data, 0xFC), 1);
+    WriteValue(tick.data, 0xF8, hp);
+    run.downed.GetUp(tick.now);
+    const u64 global = GetGlobalState();
+    const s32 point = global >= 0x10000 ? ReadValue<s32>(global, 0x1528) : -1;
+    const u64 blocks = ReadValue<u64>(image_base + LoadedBlocksPointerOffset, 0);
+    alignas(16) std::array<float, 4> position{};
+    alignas(16) std::array<float, 4> rotation{};
+    using Resolve = bool PS4_SYSV_ABI (*)(u64 blocks, float* position, float* rotation, s32 point);
+    const bool in_loaded_block = point > 0 && blocks >= 0x10000 &&
+                                 reinterpret_cast<Resolve>(image_base + ResolveRespawnPointOffset)(
+                                     blocks, position.data(), rotation.data(), point);
+    std::string_view how = "staying put";
+    switch (ChooseDeathRespawn(point, in_loaded_block, false, false, false)) {
+    case DeathRespawn::StayPut:
+        break;
+    case DeathRespawn::Travel:
+        guest_trip_point = point;
+        guest_lamp_trip_at = std::chrono::steady_clock::now() + std::chrono::milliseconds{200};
+        how = "its trip";
+        break;
+    case DeathRespawn::MoveToPoint:
+        how = PlaceLocalPlayer(position, rotation, "spectator wakes") ? "moved there" : "not moved";
+        break;
+    }
+    LOG_INFO(Debug,
+             "Bloodborne spectate: {} wakes this player at its own lamp {} ({}) with {} HP, no "
+             "reload",
+             SpectateEndName(why), point, how, hp);
+}
+
+// Spectating: killed anyway (a fall into the void, an event's kill), the party's wipe, or woken
+// at its own lamp (a teammate's lamp, the boss down, giving up, nobody left).
+void TickSpectating(PartyDeathRun& run, const DeathTick& tick, bool lamp_used) {
+    if (!tick.alive) {
+        EndSpectating(run, tick.player, tick.data);
+        run.downed.Died();
+        const bool reset = DiesWithReset(tick.in_session && DeathResetsMap(false, tick.armed));
+        LOG_INFO(Debug, "Bloodborne spectate: killed while spectating (reset={})", reset);
+        return;
+    }
+    KeepSpectating(run, tick.player, tick.data);
+    WatchTeammate(run, tick, spectate_steps.exchange(0));
+    SpectateCheck check;
+    const auto wipe = tick.view.Fresh() ? WipeFor(tick.view.board, tick.view.member) : std::nullopt;
+    check.wiped = wipe && *wipe != run.handled_wipe;
+    check.gave_up = run.give_up.Tick((party_pad_buttons.load() & PadCircle) != 0, tick.now);
+    check.teammate_used_a_lamp = lamp_used;
+    // The bosses' defeat flags, a second apart (the flag store is read, not every frame).
+    if (tick.now - run.boss_read_at >= 1'000) {
+        run.boss_read_at = tick.now;
+        std::vector<bool> dead;
+        for (const EncounterInsight& boss : EncounterInsights()) {
+            dead.push_back(EventFlagOn(boss.kill_event));
+        }
+        check.boss_died = run.boss_watch.Tick(dead);
+    }
+    if (tick.view.Fresh()) {
+        SpectateCheckOthers(check, tick.board, tick.view.member, tick.map);
+        if (check.someone_up || check.someone_down || check.someone_dead) {
+            run.alone_since.reset();
+        } else if (!run.alone_since) {
+            run.alone_since = tick.now;
+        }
+        check.alone_ms = run.alone_since ? tick.now - *run.alone_since : 0;
+    }
+    if (DownHasThePartyAround(tick.in_session, SessionMembers()) &&
+        tick.view.age_ms < BoardLostMs) {
+        run.down_out_of_session_since.reset();
+    } else if (!run.down_out_of_session_since) {
+        run.down_out_of_session_since = tick.now;
+    }
+    check.party_lost = run.down_out_of_session_since &&
+                       tick.now - *run.down_out_of_session_since >= DownSessionLostMs;
+    const SpectateEnd end = EndOfSpectate(check);
+    if (end == SpectateEnd::None) {
+        return;
+    }
+    if (end == SpectateEnd::Wipe) {
+        if (wipe) {
+            run.handled_wipe = *wipe;
+        }
+        EndSpectating(run, tick.player, tick.data);
+        run.downed.Died();
+        DiesWithReset(true);
+        const bool killed = KillLocalPlayer(tick.player, tick.data);
+        LOG_INFO(Debug,
+                 "Bloodborne spectate: the party's wipe ends spectating; dies (reset=true, "
+                 "game kill={})",
+                 killed);
+        return;
+    }
+    WakeAtOwnLamp(run, tick, end);
+}
+
+// Kaniel 2026-10-25: the other members spectating on this map lie unseen in this world too: their
+// characters here (the other player nearest where each posted, within DownedBodyPicker::Reach)
+// faded out while they spectate, and faded back in once they do not. Their handles, for the
+// enemies to forget.
+std::vector<u32> HideSpectatorCopies(const DeathTick& tick) {
+    static std::unordered_map<u64, float> faded; // character -> its fade before
+    const bool someone_spectates = std::ranges::any_of(tick.board, [&](const MemberVitals& member) {
+        return member.member != tick.view.member && member.vital == Vital::Spectate;
+    });
+    if (faded.empty() && !someone_spectates) {
+        return {}; // nothing to hide or show again (every party tick: no world walk)
+    }
+    const std::vector<OtherPlayer> players = OtherPlayers();
+    std::unordered_map<u64, float> now;
+    std::vector<u32> handles;
+    for (const MemberVitals& member : tick.board) {
+        if (!tick.in_session || member.member == tick.view.member ||
+            member.vital != Vital::Spectate || member.map != tick.map) {
+            continue;
+        }
+        const u32 handle =
+            MemberCharacterHandle(tick.board, member.member, players, DownedBodyPicker::Reach);
+        const auto other = std::ranges::find_if(players, [&](const OtherPlayer& player) {
+            return handle != 0 && ReadValue<u32>(player.character, 0x08) == handle;
+        });
+        if (other == players.end() || !HasMemoryAccess(other->character + CharacterFadeOffset,
+                                                       sizeof(float), MemoryProt::CpuWrite)) {
+            continue;
+        }
+        const auto before = faded.find(other->character);
+        const float fade = ReadValue<float>(other->character, CharacterFadeOffset);
+        now[other->character] = before != faded.end() ? before->second : fade > 0.0f ? fade : 1.0f;
+        if (before == faded.end()) {
+            LOG_INFO(Debug, "Bloodborne spectate: {} spectates: its character {:#x} here is unseen",
+                     Coop::CharacterNameOf(member.member), handle);
+        }
+        if (fade != 0.0f) {
+            WriteValue(other->character, CharacterFadeOffset, 0.0f);
+        }
+        handles.push_back(handle);
+    }
+    for (const auto& [character, fade] : faded) {
+        const bool present = std::ranges::any_of(
+            players, [&](const OtherPlayer& player) { return player.character == character; });
+        if (!now.contains(character) && present &&
+            HasMemoryAccess(character + CharacterFadeOffset, sizeof(float), MemoryProt::CpuWrite)) {
+            WriteValue(character, CharacterFadeOffset, fade);
+            LOG_INFO(Debug, "Bloodborne spectate: player {:#x} is back in the fight: shown again",
+                     ReadValue<u32>(character, 0x08));
+        }
+    }
+    faded = std::move(now);
+    return handles;
+}
+
 // Enemies forget the downed players here (this one and the others), every tick while any is down:
 // an enemy that sees a downed guest again (Hide is the local player's only) would take it as a
 // target again.
@@ -1530,8 +1814,13 @@ void ForgetTargetsOnDowned(PartyDeathRun& run, const DeathTick& tick) {
         tick.in_session ? DownedBodies(run.downed_bodies, tick.board, tick.view.member, tick.map,
                                        OtherPlayers())
                         : std::vector<DownedBody>{};
-    const std::vector<u32> downed_handles =
-        DownedPlayerHandles(tick.player, run.downed.Current() == Vital::Down, others_down);
+    std::vector<u32> downed_handles = DownedPlayerHandles(
+        tick.player, run.downed.Current() == Vital::Down || run.downed.Current() == Vital::Spectate,
+        others_down);
+    // Kaniel 2026-10-25: and the members spectating here.
+    for (const u32 handle : HideSpectatorCopies(tick)) {
+        downed_handles.push_back(handle);
+    }
     if (const u32 forgotten = ForgetDownedTargets(downed_handles); forgotten > 0) {
         if (run.targets_forgotten == 0) {
             LOG_INFO(Debug,
@@ -1576,7 +1865,12 @@ void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
     panel.vital = tick.in_session ? vital : Vital::Off;
     panel.landed = run.downed.DamageLanded();
     panel.needed = run.downed.DamageNeeded();
-    panel.give_up = vital == Vital::Down ? run.give_up.Progress(tick.now) : 0.0f;
+    panel.give_up =
+        vital == Vital::Down || vital == Vital::Spectate ? run.give_up.Progress(tick.now) : 0.0f;
+    // Kaniel 2026-10-25: the teammate a spectator watches.
+    panel.watching = vital == Vital::Spectate && run.watched
+                         ? std::optional{Coop::CharacterNameOf(*run.watched)}
+                         : std::nullopt;
     // Kaniel 2026-10-20: this player's own bloodstain (the map shows it out of a party too).
     panel.own_stain = own_stain.value_or(Bloodstain{});
     panel.map = tick.map;
@@ -1631,7 +1925,12 @@ void TickPartyDeath() {
     tick.armed = tick.in_session && !tick.view.member.empty() &&
                  SomeoneElseStands(tick.board, tick.view.member, tick.map);
     party_death_armed.store(tick.armed);
-    party_death_data.store(tick.in_session || run.downed.Current() == Vital::Down ? tick.data : 0);
+    party_death_data.store(tick.in_session || run.downed.Current() == Vital::Down ||
+                                   run.downed.Current() == Vital::Spectate
+                               ? tick.data
+                               : 0);
+    // Kaniel 2026-10-25: a teammate's lamp wakes a spectator; counted from every tick's board.
+    const bool lamp_used = tick.view.Fresh() && run.lamp_watch.Tick(tick.board, tick.view.member);
     ReadLocalAliveState(tick.player, tick.alive);
     if (const u32 uses = lamp_uses.load(); uses != run.seen_lamp_uses) {
         run.seen_lamp_uses = uses;
@@ -1656,6 +1955,9 @@ void TickPartyDeath() {
         break;
     case Vital::Down:
         TickDown(run, tick);
+        break;
+    case Vital::Spectate:
+        TickSpectating(run, tick, lamp_used);
         break;
     case Vital::Dead:
         if (tick.alive) {
@@ -2212,7 +2514,19 @@ void FilterPartyDeathPad(std::uint32_t& buttons, std::array<std::uint8_t, 4>& st
         party_down_dropped.store(0, std::memory_order_relaxed);
         return;
     }
-    const PadInput kept = DownedPad({.buttons = buttons, .sticks = sticks, .l2 = l2, .r2 = r2});
+    const PadInput pad{.buttons = buttons, .sticks = sticks, .l2 = l2, .r2 = r2};
+    PadInput kept;
+    if (party_spectating.load(std::memory_order_relaxed)) {
+        // Kaniel 2026-10-25: a spectator's pad drives only its camera (SpectatorPadOf).
+        const SpectatorPad spectator = SpectatorPadOf(pad, before);
+        if (spectator.step != 0) {
+            spectate_steps.fetch_add(spectator.step, std::memory_order_relaxed);
+        }
+        Coop::CoopCameraTurn(spectator.turn_x, spectator.turn_y);
+        kept = spectator.game;
+    } else {
+        kept = DownedPad(pad);
+    }
     // Each button a down takes, once (the rig checks Options and the rest do nothing).
     const u32 dropped = buttons & ~kept.buttons;
     if ((dropped & ~party_down_dropped.fetch_or(dropped, std::memory_order_relaxed)) != 0) {
@@ -2314,7 +2628,7 @@ bool ReadCompass(CompassView& view) {
 bool ReadPartyPanel(PartyPanel& panel) {
     std::scoped_lock lock{panel_mutex};
     panel = panel_now;
-    return !panel.members.empty() || panel.vital == Vital::Down;
+    return !panel.members.empty() || panel.vital == Vital::Down || panel.vital == Vital::Spectate;
 }
 
 namespace Coop {

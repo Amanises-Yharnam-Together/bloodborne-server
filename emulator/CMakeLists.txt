@@ -982,6 +982,9 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_duel.cpp
              src/core/bloodborne_duel.h
              src/core/bloodborne_duel_game.cpp
+             src/core/bloodborne_spectate.cpp
+             src/core/bloodborne_spectate.h
+             src/core/bloodborne_camera.cpp
              src/core/bloodborne_map.cpp
              src/core/bloodborne_map.h
              src/core/bloodborne_map_screen.cpp

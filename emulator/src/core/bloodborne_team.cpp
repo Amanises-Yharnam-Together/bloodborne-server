@@ -225,6 +225,9 @@ bbcoop::TeamRequest TeamMenuRequest(bbcoop::TeamRequest::Action action, const st
         break;
     case Action::NEW_CODE:
         break;
+    case Action::DEATH_MODE:
+        request.set_death_mode(id == "1" ? 1 : 0); // Kaniel 2026-10-25: "1" spectate, "0" down
+        break;
     default:
         request.set_member(id);
         break;
@@ -257,6 +260,12 @@ std::string TeamWorldName(const bbcoop::TeamWorldInfo& world) {
         return world.name();
     }
     return world.character().empty() ? "A world" : world.character() + "'s world";
+}
+
+DeathMode TeamDeathMode(const bbcoop::LobbyState& lobby) {
+    return lobby.has_team() && lobby.team().death_mode() == static_cast<u32>(DeathMode::Spectate)
+               ? DeathMode::Spectate
+               : DeathMode::GoDown;
 }
 
 std::string TitleLoadCharacterName(bool fresh, std::string_view slot_name) {

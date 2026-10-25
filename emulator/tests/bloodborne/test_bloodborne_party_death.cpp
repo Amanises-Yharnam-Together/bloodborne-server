@@ -1527,3 +1527,58 @@ TEST(BloodbornePartyDeath, APartyDeathClearsTheBossBars) {
     }
     EXPECT_TRUE(ClearBossGauges(gauges).empty()) << "no bar up";
 }
+
+// Kaniel 2026-10-25: a member spectating its teammates is a vital of its own on the board, neither
+// standing (nobody's lethal hit is a down for it) nor down (nobody strikes it up).
+TEST(BloodborneSpectate, ASpectatorIsItsOwnVital) {
+    EXPECT_EQ(VitalName(Vital::Spectate), "spectate");
+    EXPECT_EQ(ParseVital("spectate"), Vital::Spectate);
+    const std::vector<MemberVitals> board{Member(Kaniel, CentralYharnam, Vital::Up),
+                                          Member(Ada, CentralYharnam, Vital::Spectate)};
+    EXPECT_FALSE(SomeoneElseStands(board, Kaniel, CentralYharnam));
+    EXPECT_FALSE(SomeoneElseStandsAnywhere(board, Kaniel));
+    EXPECT_EQ(ReviveTarget(board, Kaniel, CentralYharnam, {}), std::nullopt);
+    // Its line goes to the server and back as any.
+    const auto board_text = ParseVitalsBoard("416461 18010000 spectate 1 1000 0 0 0 1 2 3 0\n");
+    ASSERT_TRUE(board_text.has_value());
+    EXPECT_EQ(board_text->members[0].vital, Vital::Spectate);
+}
+
+// Its teammates see it out of the fight: the headstone in the list, nowhere on the compass, and the
+// prompt says nothing for it (its own screen says what to do).
+TEST(BloodborneSpectate, TheOthersSeeASpectatorOutOfTheFight) {
+    const std::vector<MemberVitals> board{
+        Member(Kaniel, CentralYharnam, Vital::Up),
+        Member(Ada, CentralYharnam, Vital::Spectate, 0, LampPosition{1, 2, 3})};
+    const PartyPanel panel = BuildPartyPanel(board, Kaniel, CentralYharnam, LampPosition{});
+    ASSERT_EQ(panel.members.size(), 1u);
+    EXPECT_EQ(panel.members[0].vital, Vital::Spectate);
+    EXPECT_EQ(panel.members[0].at, std::nullopt);
+    const auto entries = PartyListEntries(panel);
+    EXPECT_EQ(entries[0].icon, PartyListIconFallen);
+    EXPECT_EQ(entries[0].hp, 0);
+    PartyPanel own;
+    own.vital = Vital::Spectate;
+    EXPECT_EQ(PartyPromptFor(own), PartyPrompt{});
+}
+
+// A spectator counts no down (its next down in another mode is still its first) and wakes up.
+TEST(BloodborneSpectate, SpectatingCountsNoDown) {
+    DownedState state{7};
+    state.Spectate();
+    EXPECT_EQ(state.Current(), Vital::Spectate);
+    state.GetUp(1'000);
+    EXPECT_EQ(state.Current(), Vital::Up);
+    EXPECT_EQ(state.GoDown(2'000, 1000), 7u);
+    EXPECT_EQ(state.DamageNeeded(), ReviveDamageNeeded(1, 1000));
+}
+
+// The direct line carries no lamp count: the board's stays (a spectator wakes on its rise).
+TEST(BloodborneSpectate, ADirectLineKeepsTheBoardsLampCount) {
+    VitalsBoard board;
+    board.members.push_back(Member(Ada, CentralYharnam, Vital::Up));
+    board.members[0].lamp_uses = 6;
+    const DirectVitals direct{.self = Member(Ada, CentralYharnam, Vital::Up)};
+    const VitalsBoard merged = MergeDirectVitals(board, std::span{&direct, 1});
+    EXPECT_EQ(merged.members[0].lamp_uses, 6u);
+}

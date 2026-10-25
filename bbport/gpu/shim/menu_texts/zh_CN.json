@@ -430,5 +430,17 @@
  "Nobody accepted the duel.": "没有人接受决斗。",
  "%s ended the duel.": "%s 结束了决斗。",
  "%s is gone: the duel is over.": "%s 已离开：决斗结束。",
- "%s left the area: the duel is over.": "%s 离开了此区域：决斗结束。"
+ "%s left the area: the duel is over.": "%s 离开了此区域：决斗结束。",
+ "Free camera hotkey": "自由镜头按键",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "按F7，或按住{L3}时按{Square}，镜头便离开你的猎人：左摇杆或WASD移动，右摇杆或鼠标转向，{R1}和{L1}上升下降，按住{R2}加速，按住{L2}减速。这段时间猎人会原地不动；按同一个键让镜头回来。",
+ "Death mode": "死亡方式",
+ "Spectate teammates": "观战队友",
+ "Go down (revive)": "倒地（救起）",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "观战：倒下的猎人会看着队友，直到有人使用灯或头目死亡，然后在自己的灯醒来。所有人倒下仍算全灭。",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "倒地：倒下的猎人会一直倒地，直到队友以攻击将他救起，或按{Circle}放弃。",
+ "Spectating %s": "观战中：%s",
+ "No teammate stands here": "这里没有站着的队友",
+ "Next teammate": "下一位队友",
+ "hold to wake at your lamp": "按住即在自己的灯醒来",
+ "or F7: back to your hunter": "或F7：回到你的猎人"
 }

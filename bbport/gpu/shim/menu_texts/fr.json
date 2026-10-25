@@ -430,5 +430,17 @@
  "Nobody accepted the duel.": "Personne n'a accepté le duel.",
  "%s ended the duel.": "%s a mis fin au duel.",
  "%s is gone: the duel is over.": "%s est parti : le duel est terminé.",
- "%s left the area: the duel is over.": "%s a quitté la zone : le duel est terminé."
+ "%s left the area: the duel is over.": "%s a quitté la zone : le duel est terminé.",
+ "Free camera hotkey": "Touche de caméra libre",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, ou {Square} en maintenant {L3}, détache la caméra de votre chasseur : le stick gauche ou WASD la déplace, le stick droit ou la souris la tourne, {R1} et {L1} montent et descendent, {R2} maintenu va vite et {L2} lentement. Votre chasseur reste immobile pendant ce temps ; la même touche ramène la caméra.",
+ "Death mode": "Mode de mort",
+ "Spectate teammates": "Observer l'équipe",
+ "Go down (revive)": "À terre (relevé)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Observer : un chasseur qui tombe suit un coéquipier jusqu'à ce que l'un d'eux utilise une lanterne ou que le boss meure, puis se réveille à sa propre lanterne. Tout le monde à terre reste une défaite.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "À terre : un chasseur qui tombe reste à terre jusqu'à ce qu'un coéquipier le relève en le frappant, ou abandonne avec {Circle}.",
+ "Spectating %s": "Vous observez %s",
+ "No teammate stands here": "Aucun coéquipier debout ici",
+ "Next teammate": "Coéquipier suivant",
+ "hold to wake at your lamp": "maintenez pour vous réveiller à votre lanterne",
+ "or F7: back to your hunter": "ou F7 : retour à votre chasseur"
 }

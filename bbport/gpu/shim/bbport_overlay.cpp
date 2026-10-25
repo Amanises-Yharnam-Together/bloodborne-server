@@ -2204,6 +2204,15 @@ void ControlsTab() {
         BbSettings::SetLine("mouse_invert_y", std::string(invert ? "0" : "1"));
         dirty = true;
     }
+    // Kaniel 2026-10-25: the free camera, opt-in.
+    Toggle("free_camera", T("Free camera hotkey", "Клавиша свободной камеры"), BbSettings::Get().free_camera,
+           T("F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or "
+             "WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} "
+             "held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the "
+             "camera back.",
+             "F7 или {Square} с зажатым {L3} отделяет камеру от охотника: левый стик или WASD двигают её, "
+             "правый стик или мышь поворачивают, {R1} и {L1} — вверх и вниз, с зажатым {R2} быстрее, с "
+             "{L2} медленнее. Охотник тем временем стоит; та же клавиша возвращает камеру."));
 
     // A press that came for the input waiting for one, or the wait running out.
     if (capture.input >= 0 && capture.done) {
@@ -3106,6 +3115,51 @@ bool CanPickWorld() {
     return lobby.signed_in && !lobby.menu && (lobby.in_team ? lobby.leader && !lobby.started : true);
 }
 
+/// Kaniel 2026-10-25: how the team's deaths play out, one for the whole team: its leader picks it
+/// (at the title and in the game), the others see it. A caption over the mode, as the world's
+/// button; in no team the default (down for a revive) shows, greyed.
+void DeathModeButton(ImDrawList* draw, ImVec2 at, ImVec2 size) {
+    const bool pick = lobby.signed_in && lobby.in_team && lobby.leader;
+    const bool spectate = lobby.in_team && lobby.death_mode == BBCOOP_DEATH_SPECTATE;
+    const ImVec2 end(at.x + size.x, at.y + size.y);
+    bool lit = false;
+    if (pick) {
+        const int index = focus.items;
+        if (Button(draw, "deaths", "", at, size)) {
+            bbcoop_lobby_request(BBCOOP_TEAM_DEATH_MODE, spectate ? "0" : "1");
+        }
+        lit = focus.focus == index;
+    } else if (!MenuArt::Nine(draw, MenuArt::Row, at, end, 12.0f, S(9.0f), 0.5f)) {
+        draw->AddRect(at, end, Gold(0.15f), S(2.0f), 0, S(1.2f));
+    }
+    const float fit = size.x - S(24.0f);
+    ImGui::PushFont(MenuArt::Font(), 16.0f);
+    const std::string caption = Fit(T("Death mode", "Режим смерти"), fit);
+    ImVec2 cs = ImGui::CalcTextSize(caption.c_str());
+    draw->AddText(ImVec2(at.x + (size.x - cs.x) * 0.5f, at.y + S(6.0f)), Gold(pick ? 0.85f : 0.6f), caption.c_str());
+    ImGui::PopFont();
+    ImGui::PushFont(MenuArt::Font(), 21.0f);
+    const std::string mode =
+        Fit(spectate ? T("Spectate teammates", "Наблюдать за союзниками") : T("Go down (revive)", "Падать (поднимают)"),
+            fit);
+    cs = ImGui::CalcTextSize(mode.c_str());
+    draw->AddText(ImVec2(at.x + (size.x - cs.x) * 0.5f, at.y + S(26.0f)), lit ? Bright() : Plain(pick ? 1.0f : 0.8f),
+                  mode.c_str());
+    ImGui::PopFont();
+}
+
+/// What the death mode means, under the buttons while its button has the focus.
+const char* DeathModeHint() {
+    return lobby.in_team && lobby.death_mode == BBCOOP_DEATH_SPECTATE
+               ? T("Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then "
+                   "wakes at their own lamp. Everyone down is still a wipe.",
+                   "Наблюдение: павший охотник смотрит за союзником, пока кто-то не воспользуется фонарём или "
+                   "босс не падёт, и затем очнётся у своего фонаря. Если пали все — это всё ещё поражение.")
+               : T("Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up "
+                   "with {Circle}.",
+                   "Падение: павший охотник лежит, пока союзник не поднимет его ударами, или сдаётся {Circle}.");
+}
+
 void OpenWorldPicker() {
     picker.open = true;
     picker.row = lobby.world >= 0 && lobby.world < lobby.world_count ? lobby.world + 1 : 0;
@@ -3560,8 +3614,8 @@ void Screen() {
     const float bw = S(260.0f), bh = S(54.0f);
     // Kaniel 2026-10-19: high enough for the line under them and the key guide over the ornament.
     const float by = win.y + size.y - S(180.0f);
-    // Kaniel 2026-10-25: over the game a fourth, the team's duel.
-    const int buttons = lobby.menu ? 4 : 3;
+    // Kaniel 2026-10-25: over the game a fourth, the team's duel; the death mode the last.
+    const int buttons = lobby.menu ? 5 : 4;
     float bx = win.x + (size.x - (buttons * bw + (buttons - 1) * gap)) * 0.5f;
     // The leader hosts the hunt: it leaves only once it is alone in it (its game leaving would
     // end the others' session).
@@ -3631,8 +3685,17 @@ void Screen() {
         if (Button(draw, "close", T("Close", "Закрыть"), ImVec2(bx, by), ImVec2(bw, bh))) {
             bbcoop_team_menu(0);
         }
+        bx += bw + gap;
         ImGui::PopFont();
-        MenuHint(draw, win, size, by + bh + S(20.0f), leader_hosts);
+        DeathModeButton(draw, ImVec2(bx, by), ImVec2(bw, bh));
+        if (focus.id == "deaths") {
+            ImGui::PushFont(MenuArt::Font(), 18.0f);
+            WrappedText(draw, ImVec2(win.x + S(80.0f), by + bh + S(16.0f)), size.x - S(160.0f), Plain(0.8f),
+                        DeathModeHint());
+            ImGui::PopFont();
+        } else {
+            MenuHint(draw, win, size, by + bh + S(20.0f), leader_hosts);
+        }
         if (focus.items > 0) {
             focus.focus = ((focus.focus + focus.move) % focus.items + focus.items) % focus.items;
             focus.id = focus.ids[static_cast<size_t>(focus.focus)];
@@ -3705,6 +3768,8 @@ void Screen() {
         draw->AddText(ImVec2(bx + (bw - cs.x) * 0.5f, by + S(26.0f)), lit ? Bright() : Plain(pick ? 1.0f : 0.8f),
                       name.c_str());
         ImGui::PopFont();
+        bx += bw + gap;
+        DeathModeButton(draw, ImVec2(bx, by), ImVec2(bw, bh));
     }
 
     // The server's last refusal, the hint and the controls.
@@ -3718,9 +3783,15 @@ void Screen() {
                                        : T("Your character plays its own world alone.",
                                            "Ваш персонаж играет в своём мире один.");
     const char* line = lobby.notice[0] ? lobby.notice : hint;
-    ts = ImGui::CalcTextSize(line);
-    draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(20.0f)),
-                  lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
+    if (!lobby.notice[0] && focus.id == "deaths") {
+        // Kaniel 2026-10-25: what the death mode means while its button has the focus.
+        WrappedText(draw, ImVec2(win.x + S(80.0f), by + bh + S(16.0f)), size.x - S(160.0f), Plain(0.8f),
+                    DeathModeHint());
+    } else {
+        ts = ImGui::CalcTextSize(line);
+        draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(20.0f)),
+                      lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
+    }
     ImGui::PopFont();
     {
         // Kaniel 2026-10-25: the host rules (the leader's launcher's Co-op settings), shown to all.
@@ -4098,7 +4169,7 @@ int RevivePercent(u32 landed, u32 needed) {
 }
 
 // The pad inputs party death names (runtime_pad.c's order).
-constexpr int InputCircle = 1, InputR1 = 5, InputR2 = 7;
+constexpr int InputCircle = 1, InputSquare = 2, InputL1 = 4, InputR1 = 5, InputR2 = 7, InputL3 = 8;
 
 using Ui::Keys::IconSet;
 
@@ -4244,7 +4315,7 @@ void MemberList(ImDrawList* draw, float pulse) {
     for (int i = 0; i < panel.member_count; ++i) {
         const bbcoop_panel_member& member = panel.members[i];
         const bool down = member.vital == BBCOOP_VITAL_DOWN;
-        const bool dead = member.vital == BBCOOP_VITAL_DEAD;
+        const bool dead = member.vital == BBCOOP_VITAL_DEAD || member.vital == BBCOOP_VITAL_SPECTATE;
         const float a = member.here ? 1.0f : 0.55f;
         const ImU32 clear = Rgba(0.0f, 0.0f, 0.0f, 0.0f);
         // A shade fading out to the right behind the row: red while down. No edge lines.
@@ -4435,6 +4506,67 @@ void OwnDown(ImDrawList* draw, float pulse) {
     GiveUpBar(draw, mid, centre.y);
 }
 
+/// Words and button glyphs in a row centred on `mid` (each part a glyph when `input` >= 0).
+struct GlyphPart {
+    const char* words = nullptr;
+    int input = -1;
+};
+void GlyphLine(ImDrawList* draw, ImFont* font, float size, float mid, float y, ImU32 color,
+               std::initializer_list<GlyphPart> parts) {
+    const float gap = size * 0.35f, glyph_h = size * 1.25f;
+    ImDrawList scratch(ImGui::GetDrawListSharedData());
+    scratch.AddDrawCmd();
+    float total = 0.0f;
+    for (const GlyphPart& part : parts) {
+        total += (part.input >= 0
+                      ? ButtonGlyph(&scratch, part.input, ImVec2(-10000.0f, -10000.0f), glyph_h, 0.0f)
+                      : font->CalcTextSizeA(size, FLT_MAX, 0.0f, part.words).x) +
+                 gap;
+    }
+    float x = mid - (total - gap) * 0.5f;
+    for (const GlyphPart& part : parts) {
+        if (part.input >= 0) {
+            x += ButtonGlyph(draw, part.input, ImVec2(x, y + size * 0.55f), glyph_h, Alpha(color)) + gap;
+        } else {
+            Text(draw, font, size, ImVec2(x, y), color, part.words);
+            x += font->CalcTextSizeA(size, FLT_MAX, 0.0f, part.words).x + gap;
+        }
+    }
+}
+
+/// Kaniel 2026-10-25: this player spectates its teammates (the team's death mode): high in the
+/// middle, whom it watches and what its buttons do, in the game's letters; the hold's bar under it.
+void OwnSpectate(ImDrawList* draw) {
+    using Ui::S;
+    using Ui::T;
+    const float mid = game.x + game.w * 0.5f, y = game.y + game.h * 0.07f;
+    const ImU32 band = Rgba(0.0f, 0.0f, 0.0f, 0.55f), clear = Rgba(0.0f, 0.0f, 0.0f, 0.0f);
+    const float w = S(560.0f);
+    draw->AddRectFilledMultiColor(ImVec2(mid - w * 0.5f, y - S(8.0f)), ImVec2(mid, y + S(70.0f)), clear, band,
+                                  band, clear);
+    draw->AddRectFilledMultiColor(ImVec2(mid, y - S(8.0f)), ImVec2(mid + w * 0.5f, y + S(70.0f)), band, clear,
+                                  clear, band);
+    char line[96];
+    if (panel.watching) {
+        std::snprintf(line, sizeof(line), T("Spectating %s", "Наблюдение: %s"),
+                      panel.watching_name[0] != '\0' ? panel.watching_name : T("Hunter", "Охотник"));
+    } else {
+        std::snprintf(line, sizeof(line), "%s", T("No teammate stands here", "Здесь не стоит ни один союзник"));
+    }
+    Text(draw, serif_font, S(24.0f), ImVec2(mid, y), Bone(), line, 0.5f);
+    GlyphLine(draw, sans_font, S(15.0f), mid, y + S(36.0f), Bone(0.85f),
+              {{nullptr, InputL1}, {"/"}, {nullptr, InputR1}, {T("Next teammate", "Следующий союзник")},
+               {"   "}, {nullptr, InputCircle},
+               {T("hold to wake at your lamp", "удерживайте, чтобы очнуться у своего фонаря")}});
+    // The hold's bar, as the downed player's give-up.
+    const float bw = S(180.0f), bh = S(4.0f), by = y + S(62.0f);
+    const ImVec2 b0(mid - bw * 0.5f, by), b1(mid + bw * 0.5f, by + bh);
+    draw->AddRectFilled(b0, b1, Rgba(0.0f, 0.0f, 0.0f, 0.6f));
+    if (panel.give_up > 0.0f) {
+        draw->AddRectFilled(b0, ImVec2(b0.x + bw * std::clamp(panel.give_up, 0.0f, 1.0f), b1.y), Bone(0.9f));
+    }
+}
+
 /// The game's HUD shows the prompt (CoopPrompt): only its button, the player's own, where the game's
 /// prompt has its button.
 void PromptGlyph(ImDrawList* draw) {
@@ -4583,7 +4715,9 @@ void Draw() {
     } else if (!panel.native_supplies) { // else the HUD's own vial and bullet show them
         Supplies(draw);
     }
-    if (panel.vital == BBCOOP_VITAL_DOWN) {
+    if (panel.vital == BBCOOP_VITAL_SPECTATE) {
+        OwnSpectate(draw);
+    } else if (panel.vital == BBCOOP_VITAL_DOWN) {
         OwnDown(draw, pulse);
     } else if (panel.revive_target >= 0 && panel.revive_target < panel.member_count &&
                !panel.native_prompt) {
@@ -4595,6 +4729,23 @@ void Draw() {
 }
 
 } // namespace Party
+
+/// Kaniel 2026-10-25: the free camera flies: low in the middle, how to fly it and how to come back.
+namespace FreeCamera {
+bool flying = false; // present thread: as Visible() read it last
+
+void Draw(float x, float y, float w, float h) {
+    using Ui::S;
+    using Ui::T;
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    const float mid = x + w * 0.5f, top = y + h * 0.88f;
+    Party::Text(draw, serif_font, S(20.0f), ImVec2(mid, top), Party::Bone(0.9f), T("Free camera", "Свободная камера"),
+                0.5f);
+    Party::GlyphLine(draw, sans_font, S(14.0f), mid, top + S(30.0f), Party::Bone(0.8f),
+                     {{nullptr, Party::InputL3}, {"+"}, {nullptr, Party::InputSquare},
+                      {T("or F7: back to your hunter", "или F7: назад к охотнику")}});
+}
+} // namespace FreeCamera
 
 /// Kaniel 2026-10-24: team pings (defined after the compass, which draws them too).
 namespace Pings {
@@ -6876,6 +7027,12 @@ bool HandleEvent(const SDL_Event& event) {
             bbcoop_ping_aim();
             return false; // the game may see it too: no default control is on it
         }
+        // Kaniel 2026-10-25: F7 toggles the free camera (its setting allows it, see bbcoop.h).
+        if (down && !event.key.repeat && event.key.key == SDLK_F7 && !is_open && !prompt_active &&
+            BbSettings::Get().free_camera) {
+            bbcoop_free_camera_toggle();
+            return true;
+        }
         // Kaniel 2026-10-17: M opens the map in the world (the screen closes itself on M).
         if (down && !event.key.repeat && event.key.key == SDLK_M && !is_open && !prompt_active &&
             Map::view.in_world) {
@@ -7008,6 +7165,9 @@ bool HandleEvent(const SDL_Event& event) {
 }
 
 bool Visible() {
+    // Kaniel 2026-10-25: the free camera's setting, every frame (switched off: back at once).
+    bbcoop_set_free_camera(BbSettings::Get().free_camera ? 1 : 0);
+    FreeCamera::flying = initialized && bbcoop_free_camera_on() != 0;
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
     const bool pings = initialized && Pings::Read(); // before the compass, which shows them too
     const bool compass = initialized && Compass::Read();
@@ -7038,7 +7198,7 @@ bool Visible() {
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party || compass ||
                            pings || skip_vote || invasion || rot || team_travel || Team::open ||
-                           Joining::open || Map::open || ScriptedKeysWaiting());
+                           Joining::open || Map::open || FreeCamera::flying || ScriptedKeysWaiting());
 }
 
 bool MenuOpen() {
@@ -7201,6 +7361,10 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         Pings::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                        float(game.extent.height)};
         Pings::Draw();
+    }
+    if (FreeCamera::flying && !menu_open && !quit_open && !Team::open && !Joining::open && !Map::open) {
+        FreeCamera::Draw(float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                         float(game.extent.height));
     }
     if (SkipVote::shown && !menu_open && !quit_open && !Team::open && !Joining::open) {
         SkipVote::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),

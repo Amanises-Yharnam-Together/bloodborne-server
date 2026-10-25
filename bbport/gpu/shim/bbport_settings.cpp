@@ -110,6 +110,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.bloodstains = i != 0;
     } else if (key == "team_pings") {
         v.team_pings = i != 0;
+    } else if (key == "free_camera") {
+        v.free_camera = i != 0;
     } else if (key == "ping_key") {
         for (int k = 0; k < PingKeyCount; ++k) {
             if (value == PingKeyNames[k]) {
@@ -654,6 +656,7 @@ void Save() {
     put("compass", flag(v.compass));
     put("bloodstains", flag(v.bloodstains));
     put("team_pings", flag(v.team_pings));
+    put("free_camera", flag(v.free_camera));
     put("ping_key", PingKeyNames[std::clamp(v.ping_key.load(), 0, PingKeyCount - 1)]);
     put("compass_position",
         CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);

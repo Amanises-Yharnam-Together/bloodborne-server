@@ -430,6 +430,55 @@ bool AutoplayWaitVital(const AutoplayStep& step) {
     return party_death_run.downed.Current() == *vital || step.WaitedOut(step.Number(1, 60));
 }
 
+// Kaniel 2026-10-25: death-mode <down|spectate> [<timeout>]: the team leader picks its team's
+// death mode (as its team screen does); done once this game's lobby says so. wait-death-mode
+// <down|spectate> [<timeout>]: until it does (a member's game, the leader's pick).
+std::optional<DeathMode> ParseDeathMode(std::string_view name) {
+    return name == "down"       ? std::optional{DeathMode::GoDown}
+           : name == "spectate" ? std::optional{DeathMode::Spectate}
+                                : std::nullopt;
+}
+
+bool AutoplayDeathMode(const AutoplayStep& step) {
+    const auto mode = ParseDeathMode(step.Arg(0));
+    if (!mode) {
+        step.failure = "no such death mode";
+        return false;
+    }
+    if (Coop::TeamDeathModeNow() == *mode) {
+        return true;
+    }
+    if (step.command.verb == "death-mode" && !step.begun) {
+        Coop::TeamLobbyRequest(bbcoop::TeamRequest::DEATH_MODE,
+                               *mode == DeathMode::Spectate ? "1" : "0");
+    }
+    return step.WaitedOut(step.Number(1, 60));
+}
+
+// Kaniel 2026-10-25: lamp-use: a lamp use counted, as the lamp's travel counts it (the rig's X
+// at a lamp brings no prompt): a spectating teammate wakes on it.
+bool AutoplayLampUse(const AutoplayStep&) {
+    const u32 uses = Coop::lamp_uses.fetch_add(1) + 1;
+    LOG_INFO(Debug, "Bloodborne autoplay: a lamp use counted ({} this run)", uses);
+    return true;
+}
+
+// free-camera <on|off> [<timeout>]: the free camera's hotkey (as F7), until it is on or off.
+bool AutoplayFreeCamera(const AutoplayStep& step) {
+    const bool on = step.Arg(0) == "on";
+    if (!on && step.Arg(0) != "off") {
+        step.failure = "free-camera takes on or off";
+        return false;
+    }
+    if (Coop::FreeCameraOn() == on) {
+        return true;
+    }
+    if (!step.begun) {
+        Coop::ToggleFreeCameraNow(false);
+    }
+    return step.WaitedOut(step.Number(1, 10));
+}
+
 // wait-member-vital <vital> [<timeout>]: until another member's is, on the vitals board.
 bool AutoplayWaitMemberVital(const AutoplayStep& step) {
     const auto vital = ParseVital(step.Arg(0));
@@ -2242,6 +2291,10 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"wait-map", AutoplayWaitMap},
     {"wait-vital", AutoplayWaitVital},
     {"wait-member-vital", AutoplayWaitMemberVital},
+    {"death-mode", AutoplayDeathMode},
+    {"wait-death-mode", AutoplayDeathMode},
+    {"free-camera", AutoplayFreeCamera},
+    {"lamp-use", AutoplayLampUse},
     {"ensure-map", AutoplayEnsureMap},
     {"travel", AutoplayTravel},
     {"hurt", AutoplayHurtOrKill},

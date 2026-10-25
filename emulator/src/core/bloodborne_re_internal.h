@@ -15,6 +15,7 @@
 #include "core/bloodborne_host_rules.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
+#include "core/bloodborne_spectate.h"
 #include "core/bloodborne_team.h"
 #include "core/bloodborne_write_watch.h"
 
@@ -548,6 +549,17 @@ void LogJoinTaskChanges();
 void TickPlayersOnThisMap();
 // Kaniel 2026-10-17: the port's map screen's reads and trips (bloodborne_map_screen.cpp).
 void TickMapScreen();
+// Kaniel 2026-10-25: the co-op cameras (bloodborne_camera.cpp): the frame step's hook after its
+// camera manager's update, installed by InstallCoopCamera. The spectator's camera follows the
+// character with `handle` (0: the game's own camera), `name` the teammate's, for the log; the
+// pad's right stick turns it (CoopCameraTurn). The free camera's toggle (`forced`: the rig's, the
+// setting aside) says whether it is on now.
+constexpr u64 CoopCameraHookOffset = 0x0193BE5A;
+void PS4_SYSV_ABI CoopCameraStep(u64 tag, const GuestRegisterSnapshot* registers);
+void SetSpectateCamera(u32 handle, std::string_view name);
+void CoopCameraTurn(float x, float y);
+bool ToggleFreeCameraNow(bool forced);
+bool FreeCameraOn();
 
 void TickAutoplay();
 // The rig's watch-unseen check (bloodborne_autoplay.cpp), after the co-op tick.
@@ -930,6 +942,8 @@ bool TeamMenuBackPressed();
 // The rig's team-worlds verb asked the team screen to open its world list (once).
 bool TeamWorldListAsked();
 bool TeamPlaying(bool* in_hunt);
+// Kaniel 2026-10-25: the team's death mode as this game's lobby has it (TeamDeathMode).
+DeathMode TeamDeathModeNow();
 void TeamJoinHunt(const std::string& invite_team);
 // The rig's in-game team menu verbs (menu-invite, menu-kick, menu-join, menu-leave).
 bool RunTeamMenuVerb(const AutoplayCommand& command, bool begun, double elapsed,
@@ -1134,6 +1148,16 @@ struct PartyDeathRun {
     s64 down_since = 0;
     // Since when a down has been out of the party session (a few seconds of it end the down).
     std::optional<s64> down_out_of_session_since;
+    // Kaniel 2026-10-25: spectating teammates (DeathMode::Spectate, bloodborne_spectate.h): the
+    // one watched, the teammates' lamps and the bosses' flags that wake this player, since when
+    // nobody else is on its map, and its body's fade from before (it lies unseen meanwhile).
+    std::optional<std::string> watched;
+    u32 watched_handle = 0;
+    LampUseWatch lamp_watch;
+    BossDownWatch boss_watch;
+    s64 boss_read_at = 0;
+    std::optional<s64> alone_since;
+    float fade_before = 1.0f;
 };
 extern PartyDeathRun party_death_run;
 // Co-op work on the game's threads, logged next to the port's Perf lines (see CoopTimeMeter).

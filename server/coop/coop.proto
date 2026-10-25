@@ -191,7 +191,7 @@ message ReviveHit {
 }
 message Vitals {
     uint32 map = 1;
-    uint32 vital = 2; // Vital: 0 off, 1 up, 2 down, 3 dead
+    uint32 vital = 2; // Vital: 0 off, 1 up, 2 down, 3 dead, 4 spectating its teammates
     sint32 hp = 3;
     sint32 max = 4;
     uint32 down = 5;
@@ -216,6 +216,9 @@ message Vitals {
     bool boss = 15;
     // A real death that followed an invader's hit (the victim's game says so).
     bool killed_by_invader = 16;
+    // Kaniel 2026-10-25: the lamps this member used this run (it counts up with each): a
+    // spectating teammate wakes once another's goes up.
+    uint32 lamp_uses = 17;
 }
 message VitalsBoard {
     message Member {
@@ -660,6 +663,9 @@ message TeamRequest {
         // Kaniel 2026-10-25: the player's own rot (`rot`, the Rot rule), kept by the server while
         // its team lives, so a restarted game gets it back.
         ROT = 17;
+        // Kaniel 2026-10-25: the leader picks how its team's deaths play out (`death_mode`,
+        // Team.death_mode), at any time.
+        DEATH_MODE = 18;
     }
     Action action = 1;
     string member = 2;
@@ -672,6 +678,7 @@ message TeamRequest {
     bool allow = 9; // INVADERS
     TeamRules rules = 10;
     repeated uint32 rot = 11; // RotKind values, the oldest first
+    uint32 death_mode = 12; // DEATH_MODE
 }
 
 // Kaniel 2026-10-25: the host rules, the leader's choice for its whole team, all off by default.
@@ -760,6 +767,10 @@ message Team {
     // Invasions (docs/INVASIONS.md): the leader allows invaders (off by default).
     bool allow_invaders = 9;
     TeamRules rules = 10; // Kaniel 2026-10-25: the leader's host rules
+    // Kaniel 2026-10-25: how a member's lethal hit plays out while a teammate stands on its map,
+    // one for the whole team (the leader's pick): 0 it goes down until struck back up (party
+    // death), 1 it spectates its teammates until one uses a lamp or the area's boss dies.
+    uint32 death_mode = 11;
 }
 
 message TeamInvite {

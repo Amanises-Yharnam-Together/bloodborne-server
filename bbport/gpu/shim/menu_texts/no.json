@@ -430,5 +430,17 @@
  "Nobody accepted the duel.": "Ingen godtok duellen.",
  "%s ended the duel.": "%s avsluttet duellen.",
  "%s is gone: the duel is over.": "%s er borte: duellen er over.",
- "%s left the area: the duel is over.": "%s forlot området: duellen er over."
+ "%s left the area: the duel is over.": "%s forlot området: duellen er over.",
+ "Free camera hotkey": "Tast for fritt kamera",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, eller {Square} mens du holder {L3}, løsner kameraet fra jegeren din: venstre spak eller WASD flytter det, høyre spak eller musen snur det, {R1} og {L1} går opp og ned, med {R2} inne går det fort og med {L2} sakte. Jegeren din står stille så lenge; samme tast henter kameraet tilbake.",
+ "Death mode": "Dødsmodus",
+ "Spectate teammates": "Se på laget",
+ "Go down (revive)": "Gå ned (gjenoppliv)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Se på: en jeger som faller, følger en lagkamerat til noen bruker en lykt eller bossen dør, og våkner så ved sin egen lykt. Alle nede er fortsatt et nederlag.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Gå ned: en jeger som faller, blir liggende til en lagkamerat slår vedkommende opp igjen, eller gir opp med {Circle}.",
+ "Spectating %s": "Du ser på %s",
+ "No teammate stands here": "Ingen lagkamerat står her",
+ "Next teammate": "Neste lagkamerat",
+ "hold to wake at your lamp": "hold for å våkne ved lykten din",
+ "or F7: back to your hunter": "eller F7: tilbake til jegeren din"
 }

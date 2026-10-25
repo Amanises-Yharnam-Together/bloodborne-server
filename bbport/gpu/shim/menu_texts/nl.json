@@ -430,5 +430,17 @@
  "Nobody accepted the duel.": "Niemand heeft het duel aangenomen.",
  "%s ended the duel.": "%s heeft het duel beëindigd.",
  "%s is gone: the duel is over.": "%s is weg: het duel is voorbij.",
- "%s left the area: the duel is over.": "%s heeft het gebied verlaten: het duel is voorbij."
+ "%s left the area: the duel is over.": "%s heeft het gebied verlaten: het duel is voorbij.",
+ "Free camera hotkey": "Toets vrije camera",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7, of {Square} terwijl je {L3} ingedrukt houdt, maakt de camera los van je jager: de linker stick of WASD beweegt hem, de rechter stick of de muis draait hem, {R1} en {L1} gaan omhoog en omlaag, met {R2} ingedrukt gaat het snel en met {L2} langzaam. Je jager blijft intussen staan; dezelfde toets brengt de camera terug.",
+ "Death mode": "Doodsmodus",
+ "Spectate teammates": "Team bekijken",
+ "Go down (revive)": "Neergaan (oplappen)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Bekijken: een jager die valt volgt een teamgenoot tot iemand een lantaarn gebruikt of de baas sterft, en ontwaakt dan bij zijn eigen lantaarn. Iedereen neer is nog steeds een nederlaag.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Neergaan: een jager die valt blijft liggen tot een teamgenoot hem met slagen weer overeind helpt, of geeft op met {Circle}.",
+ "Spectating %s": "Je bekijkt %s",
+ "No teammate stands here": "Hier staat geen teamgenoot meer",
+ "Next teammate": "Volgende teamgenoot",
+ "hold to wake at your lamp": "ingedrukt houden om bij je lantaarn te ontwaken",
+ "or F7: back to your hunter": "of F7: terug naar je jager"
 }

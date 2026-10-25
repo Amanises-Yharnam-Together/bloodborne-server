@@ -430,5 +430,17 @@
  "Nobody accepted the duel.": "Nikt nie przyjął pojedynku.",
  "%s ended the duel.": "Pojedynek zakończony przez: %s.",
  "%s is gone: the duel is over.": "%s nie ma już w grze: pojedynek skończony.",
- "%s left the area: the duel is over.": "%s opuszcza obszar: pojedynek skończony."
+ "%s left the area: the duel is over.": "%s opuszcza obszar: pojedynek skończony.",
+ "Free camera hotkey": "Klawisz wolnej kamery",
+ "F7, or {Square} while holding {L3}, takes the camera away from your hunter: the left stick or WASD flies it, the right stick or the mouse turns it, {R1} and {L1} go up and down, {R2} held flies fast and {L2} slow. Your hunter stands still meanwhile; the same key brings the camera back.": "F7 lub {Square} z przytrzymanym {L3} odłącza kamerę od twojego tropiciela: lewa gałka lub WASD ją przesuwają, prawa gałka lub mysz obracają, {R1} i {L1} w górę i w dół, z przytrzymanym {R2} szybciej, z {L2} wolniej. Twój tropiciel w tym czasie stoi; ten sam klawisz przywraca kamerę.",
+ "Death mode": "Tryb śmierci",
+ "Spectate teammates": "Obserwuj drużynę",
+ "Go down (revive)": "Upadek (wskrzeszenie)",
+ "Spectate: a hunter who falls watches a teammate until one uses a lamp or the boss dies, then wakes at their own lamp. Everyone down is still a wipe.": "Obserwacja: tropiciel, który padnie, patrzy na towarzysza, aż ktoś użyje latarni lub boss zginie, a potem budzi się przy własnej latarni. Gdy padną wszyscy, to nadal porażka.",
+ "Go down: a hunter who falls stays down until a teammate strikes them back up, or gives up with {Circle}.": "Upadek: tropiciel, który padnie, leży, dopóki towarzysz nie podniesie go ciosami, albo poddaje się {Circle}.",
+ "Spectating %s": "Obserwujesz: %s",
+ "No teammate stands here": "Nie stoi tu żaden towarzysz",
+ "Next teammate": "Następny towarzysz",
+ "hold to wake at your lamp": "przytrzymaj, by obudzić się przy swojej latarni",
+ "or F7: back to your hunter": "lub F7: powrót do tropiciela"
 }

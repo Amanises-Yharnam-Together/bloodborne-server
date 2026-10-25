@@ -507,7 +507,7 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
             board.members.push_back(
                 MemberVitals{.member = entry.member(),
                              .map = vitals.map(),
-                             .vital = static_cast<Vital>(std::min<u32>(vitals.vital(), 3)),
+                             .vital = static_cast<Vital>(std::min<u32>(vitals.vital(), 4)),
                              .hp = vitals.hp(),
                              .max = vitals.max(),
                              .down = vitals.down(),
@@ -521,7 +521,8 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
                              .level = vitals.level(),
                              .boss = vitals.boss(),
                              .killed_by_invader = vitals.killed_by_invader(),
-                             .hostile = entry.hostile()});
+                             .hostile = entry.hostile(),
+                             .lamp_uses = vitals.lamp_uses()});
         }
         for (const auto& wipe : envelope.vitals_board().wipes()) {
             board.wipes.push_back(
@@ -1214,6 +1215,7 @@ void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> 
     vitals.set_level(mine.level);
     vitals.set_boss(mine.boss);
     vitals.set_killed_by_invader(mine.killed_by_invader);
+    vitals.set_lamp_uses(mine.lamp_uses);
     PutPosition(mine.at, vitals.mutable_at());
     for (const ReviveHitTotal& hit : hits) {
         bbcoop::ReviveHit* out = vitals.add_hits();
@@ -1657,6 +1659,12 @@ bool TeamWorldListAsked() {
 bool TeamMenuBackPressed() {
     std::scoped_lock lock{team_back_mutex};
     return team_menu_back.Pressed(SteadyMilliseconds());
+}
+
+DeathMode TeamDeathModeNow() {
+    std::scoped_lock lock{team_mutex};
+    const std::optional<bbcoop::LobbyState>& lobby = team_gate.Lobby();
+    return lobby ? TeamDeathMode(*lobby) : DeathMode::GoDown;
 }
 
 bool TeamPlaying(bool* in_hunt) {

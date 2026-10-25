@@ -372,7 +372,9 @@ add_executable(shadps4_bloodborne_test
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_pings.cpp
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_host_rules.cpp
     ${CMAKE_SOURCE_DIR}/src/core/bloodborne_duel.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/bloodborne_spectate.cpp
     bloodborne/test_bloodborne_party.cpp
+    bloodborne/test_bloodborne_spectate.cpp
     bloodborne/test_bloodborne_portrait.cpp
     bloodborne/test_bloodborne_altar.cpp
     bloodborne/test_bloodborne_compass.cpp

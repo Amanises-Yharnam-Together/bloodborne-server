@@ -157,6 +157,13 @@ std::optional<std::string> TeamScreenWorldPick(const bbcoop::LobbyState& lobby,
                                                bool fresh);
 // What the screen calls a world.
 std::string TeamWorldName(const bbcoop::TeamWorldInfo& world);
+// Kaniel 2026-10-25 ("that should be an option to configure instead of nightreign deaths, this one
+// should be off by default"): how a member's lethal hit plays out while a teammate stands on its
+// map. One for the whole team (a per-player switch would split one party's deaths): the leader
+// picks it on the team screen and the server sends its pick to every member (Team.death_mode).
+// Down for a revive is the default, and what a game in no team plays.
+enum class DeathMode : u8 { GoDown = 0, Spectate = 1 };
+DeathMode TeamDeathMode(const bbcoop::LobbyState& lobby);
 // Kaniel 2026-10-19: the team screen at the title called everyone Hunter until the save loaded.
 // The name the lobby hears while the title loads a slot: the character name last seen in that
 // slot (`slot_name`, a file's line, kept per slot), none for a new character (`fresh`) or a slot
