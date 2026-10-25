@@ -1472,23 +1472,60 @@ void FrameGenRows(bool on) {
     if (!on) {
         return;
     }
-    static char line[160];
-    const int now = s.frame_gen_now.load();
+    static char line[256];
     const int hz = s.frame_gen_display_hz.load();
     if (const char* problem = s.frame_gen_problem.load()) {
         Note(problem, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
     }
-    if (hz > 0 && now > 0) {
-        std::snprintf(line, sizeof(line), T("Now %dx on a %d Hz display", "Сейчас %dx на экране %d Гц"),
-                      now + 1, hz);
+    // What reaches the display (the presenter's count of shown generated frames), not what the
+    // settings ask for: "on" with nothing generated says why (Kaniel 2026-10-25).
+    if (s.fg_active) {
+        const float game = s.fg_base_fps.load(), shown = s.fg_presented_fps.load();
+        std::snprintf(line, sizeof(line),
+                      T("Generating: game %d FPS, shown %d FPS (%dx)",
+                        "Генерация идёт: игра %d FPS, на экране %d FPS (%dx)"),
+                      int(game + 0.5f), int(shown + 0.5f),
+                      game > 0.0f ? int(shown / game + 0.5f) : 1);
         Note(line, Dim());
-    } else if (hz > 0 && s.fg_base_fps > 0.0f) {
+        return;
+    }
+    const int idle = s.frame_gen_idle.load();
+    if (idle == BbFrameGenPace::IdleNoRoom && hz > 0) {
         std::snprintf(line, sizeof(line),
                       T("Paused: no room on the %d Hz display at this frame rate",
                         "Приостановлено: нет места на экране %d Гц при этой частоте кадров"),
                       hz);
         Note(line, Dim());
+        return;
     }
+    const char* reason = T("starting", "запускается");
+    switch (idle) {
+    case BbFrameGenPace::IdleFailed:
+        reason = T("the provider refused; switch it off and on to retry",
+                   "технология отказала; выключите и включите, чтобы попробовать снова");
+        break;
+    case BbFrameGenPace::IdleNoMemory:
+        reason = T("not enough video memory", "не хватает видеопамяти");
+        break;
+    case BbFrameGenPace::IdleNoScene:
+        reason = T("no game scene (menu or loading screen)", "нет игровой сцены (меню или загрузка)");
+        break;
+    case BbFrameGenPace::IdleSceneLarger:
+        reason = T("the scene is rendered larger than the window", "сцена отрисовывается больше окна");
+        break;
+    case BbFrameGenPace::IdlePresentBehind:
+        reason = T("paused, presenting does not keep up", "пауза, вывод кадров не успевает");
+        break;
+    case BbFrameGenPace::IdleLate:
+        reason = T("generated frames are replaced before the display shows them",
+                   "сгенерированные кадры заменяются раньше, чем экран их покажет");
+        break;
+    default:
+        break;
+    }
+    std::snprintf(line, sizeof(line), T("On, but not generating: %s", "Включено, но не генерирует: %s"),
+                  reason);
+    Note(line, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
 }
 
 /// A whole-number setting from lo to hi, one step a press; `game` is shown as the game's own.
@@ -3527,6 +3564,16 @@ void Screen() {
     // The leader hosts the hunt: it leaves only once it is alone in it (its game leaving would
     // end the others' session).
     const bool leader_hosts = lobby.leader && lobby.in_hunt && lobby.member_count > 1;
+    // Invasions (docs/INVASIONS.md): the leader allows invaders into the team's world, over the
+    // buttons (the server keeps them out unless its operator turned invasions on).
+    if (lobby.in_team && lobby.leader) {
+        const char* invaders = lobby.allow_invaders ? T("Invaders: allowed", "Захватчики: разрешены")
+                                                    : T("Invaders: off", "Захватчики: запрещены");
+        if (Button(draw, "invaders", invaders, ImVec2(win.x + (size.x - bw) * 0.5f, by - bh - S(14.0f)),
+                   ImVec2(bw, bh), lobby.signed_in != 0)) {
+            bbcoop_team_allow_invaders(lobby.allow_invaders ? 0 : 1);
+        }
+    }
     if (!lobby.in_team) {
         if (Button(draw, "create", T("Create a team", "Создать команду"), ImVec2(bx, by), ImVec2(bw, bh),
                    lobby.signed_in != 0)) {
@@ -3545,10 +3592,23 @@ void Screen() {
             focus.focus = focus.items;
             focus.id = lobby.playing && lobby.in_team && !lobby.in_hunt ? "hunt" : "close";
         }
-        const char* hunt = lobby.in_hunt ? T("In the hunt", "На охоте") : T("Join the hunt", "Вступить в охоту");
-        if (Button(draw, "hunt", hunt, ImVec2(bx, by), ImVec2(bw, bh),
-                   lobby.playing && lobby.in_team && !lobby.in_hunt, true)) {
-            bbcoop_team_join_hunt("");
+        // Invasions: a player in no team invades another team's world from here instead (a red
+        // phantom), and leaves the search or the invasion the same way.
+        bbcoop_invasion invasion{};
+        const bool invading = bbcoop_invasion_view(&invasion) != 0 && invasion.role == BBCOOP_INVASION_INVADER &&
+                              invasion.phase != BBCOOP_INVASION_ENDED;
+        if (!lobby.in_team && lobby.playing) {
+            const char* invade =
+                invading ? T("Leave the invasion", "Покинуть вторжение") : T("Invade a hunt", "Вторгнуться в охоту");
+            if (Button(draw, "invade", invade, ImVec2(bx, by), ImVec2(bw, bh), lobby.signed_in != 0)) {
+                bbcoop_invade(invading ? 0 : 1);
+            }
+        } else {
+            const char* hunt = lobby.in_hunt ? T("In the hunt", "На охоте") : T("Join the hunt", "Вступить в охоту");
+            if (Button(draw, "hunt", hunt, ImVec2(bx, by), ImVec2(bw, bh),
+                       lobby.playing && lobby.in_team && !lobby.in_hunt, true)) {
+                bbcoop_team_join_hunt("");
+            }
         }
         bx += bw + gap;
         if (Button(draw, "close", T("Close", "Закрыть"), ImVec2(bx, by), ImVec2(bw, bh))) {
@@ -4882,6 +4942,74 @@ void Draw() {
 }
 
 } // namespace SkipVote
+
+/// Invasions (docs/INVASIONS.md): "An invader approaches" with its countdown to the invaded team,
+/// the search and the trip to the invader, and how it ended, high in the picture in the party's
+/// blood red.
+namespace Invasion {
+
+bbcoop_invasion view{}; // present thread: as Visible() read it last
+bool shown = false;
+BbPartyLayout::Rect game{};
+
+bool Read() {
+    shown = bbcoop_invasion_view(&view) != 0;
+    return shown;
+}
+
+/// How it ended, as the side that reads it sees it.
+const char* EndLine() {
+    using Ui::T;
+    switch (view.reason) {
+    case BBCOOP_INVASION_INVADER_DIED:
+        return view.role == BBCOOP_INVASION_TARGET ? T("Invader defeated", "Захватчик повержен")
+                                                   : T("You were defeated", "Вы повержены");
+    case BBCOOP_INVASION_TARGET_KILLED:
+    case BBCOOP_INVASION_PARTY_WIPED:
+        return view.role == BBCOOP_INVASION_TARGET ? T("The invader prevailed", "Захватчик победил")
+                                                   : T("Your prey has fallen", "Ваша добыча пала");
+    case BBCOOP_INVASION_NOT_FOUND:
+        return T("No world to invade was found", "Мир для вторжения не найден");
+    case BBCOOP_INVASION_REFUSED:
+        return T("The server refused the invasion", "Сервер отказал во вторжении");
+    default:
+        return T("The invasion is over", "Вторжение окончено");
+    }
+}
+
+void Draw() {
+    using Ui::S;
+    using Ui::T;
+    char line[160];
+    const bool target = view.role == BBCOOP_INVASION_TARGET;
+    switch (view.phase) {
+    case BBCOOP_INVASION_SEARCHING:
+        std::snprintf(line, sizeof line, "%s", T("Looking for a world to invade", "Поиск мира для вторжения"));
+        break;
+    case BBCOOP_INVASION_APPROACHING:
+        std::snprintf(line, sizeof line,
+                      target ? T("An invader approaches: %d", "Приближается захватчик: %d")
+                             : T("Invading in %d", "Вторжение через %d"),
+                      view.seconds);
+        break;
+    case BBCOOP_INVASION_ACTIVE:
+        std::snprintf(line, sizeof line,
+                      target ? T("Invaded by %s", "Вторжение: %s") : T("Invading the world of %s", "Вторжение в мир: %s"),
+                      view.name);
+        break;
+    case BBCOOP_INVASION_RETURNING:
+        std::snprintf(line, sizeof line, "%s", T("Returning home", "Возвращение домой"));
+        break;
+    default:
+        std::snprintf(line, sizeof line, "%s", EndLine());
+        break;
+    }
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    Party::Text(draw, sans_font, S(24.0f), ImVec2(game.x + game.w * 0.5f, game.y + game.h * 0.16f),
+                Party::Blood(0.95f), line, 0.5f);
+}
+
+} // namespace Invasion
 
 /// Kaniel 2026-10-17: the map screen (an Elden Ring style map). The area's picture
 /// (BbMapCharts, drawn from the game's map files) on the menus' wall, framed in the game's card
@@ -6647,6 +6775,7 @@ bool Visible() {
     const bool pings = initialized && Pings::Read(); // before the compass, which shows them too
     const bool compass = initialized && Compass::Read();
     const bool skip_vote = initialized && SkipVote::Read();
+    const bool invasion = initialized && Invasion::Read();
     const bool was_team = Team::open;
     Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
     Joining::open = initialized && bbcoop_team_load_view(&Joining::load) != 0;
@@ -6669,7 +6798,8 @@ bool Visible() {
         Team::focus.fresh = true;
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party || compass ||
-                           pings || skip_vote || Team::open || Joining::open || Map::open || ScriptedKeysWaiting());
+                           pings || skip_vote || invasion || Team::open || Joining::open ||
+                           Map::open || ScriptedKeysWaiting());
 }
 
 bool MenuOpen() {
@@ -6832,6 +6962,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         SkipVote::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                           float(game.extent.height)};
         SkipVote::Draw();
+    }
+    if (Invasion::shown && !menu_open && !quit_open && !Joining::open && !Map::open) {
+        Invasion::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                          float(game.extent.height)};
+        Invasion::Draw();
     }
     if (Team::open && !menu_open) {
         Team::Screen();

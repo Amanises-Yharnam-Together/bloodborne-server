@@ -65,6 +65,17 @@ struct ShardConfig {
     }
 };
 
+// Invasions (docs/INVASIONS.md): a solo player invades a team's world that allows it. Off unless
+// the operator turns it on (a hosted server or one at home alike).
+struct InvasionConfig {
+    bool enabled = false; // Invasions
+    // InvasionKind / InvasionSign: what the invader's game joins the target's session with
+    // (GameMan +0x16F0 / +0x16F4). Placeholders until the retail Sinister Resonant Bell capture
+    // (docs/INVASIONS.md, phase 0) says the real values.
+    quint32 kind = 0xFFFFFFFF;
+    quint32 sign = 4;
+};
+
 class ConfigManager {
 public:
     bool Load(const QString& path = "shadnet.cfg");
@@ -130,6 +141,10 @@ public:
     ShardConfig GetShard() const {
         QReadLocker lk(&m_lock);
         return m_shard;
+    }
+    InvasionConfig GetInvasions() const {
+        QReadLocker lk(&m_lock);
+        return m_invasions;
     }
     HostedConfig GetHosted() const {
         QReadLocker lk(&m_lock);
@@ -217,6 +232,7 @@ private:
     BackendConfig m_backend;
     HostedConfig m_hosted;
     ShardConfig m_shard;
+    InvasionConfig m_invasions;
     bool m_httpLinkedOnly = false;
     QString m_statsPort = "31320";
     QString m_statsPath = "stats";

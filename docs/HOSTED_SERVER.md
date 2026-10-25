@@ -81,6 +81,10 @@ Settings: `Hosted`, `HostedBuild`, `HostedBanList`, `HostedLinksPerAddress`,
 `HostedPartyWorlds`, `HostedStats`, `HostedReports`, `HostedAdminSocket`, `HostedRetireDays`,
 `HttpLinkedOnly`.
 
+Invasions (a solo player invading a team world whose leader allows it) are off unless
+`Invasions=true`, hosted or at home; the server side, its settings and what the games still need:
+[INVASIONS.md](INVASIONS.md).
+
 The games need no change for any of this but the link's handshake below (the emulator already says
 its id in hex as its names; check the port does too).
 
@@ -219,6 +223,12 @@ session connections, SQLite-only SQL). Backups: `server/hosting/backup.sh` (jour
 world.pb, `sqlite3 .backup`, restic to S3/B2/Storage Box), with a restore drill in
 `server/hosting/README.md`.
 
+## Deploying it
+
+`docs/DEPLOY.md`: the production image (`server/hosting/Dockerfile`), the Helm chart for N shards a
+region (`deploy/helm/yharnam`), Terraform for a region on Hetzner Cloud (`deploy/terraform`), the
+link key's and backups' handling, upgrades (a maintenance window), costs, and what was tested.
+
 ## Before a public launch
 
 Server only: nothing left; each item is a row in the tables above.
@@ -226,7 +236,9 @@ Server only: nothing left; each item is a row in the tables above.
 Game and launcher:
 - Put the public server's key in `KNOWN_SERVER_KEYS` (`bbport_coop.py`) before release: without it
   the first link to it is trusted on first use.
-- ~~Encryption.~~ Done for the link (version 4, Noise NK); the HTTP ports want a TLS proxy. Not
+- ~~Encryption.~~ Done for the link (version 4, Noise NK); the HTTP ports want a TLS proxy (the
+  chart has one, but the games speak plain HTTP and the HTTP check reads the connection's address:
+  docs/DEPLOY.md, "TLS for the HTTP ports"). Not
   yet run in a real game: the emulator side compiles only on the PC (this cloud box can't fetch
   its dependencies).
 - ~~A fresh id when the server refuses one (virtual address collision).~~ Done: the launcher makes

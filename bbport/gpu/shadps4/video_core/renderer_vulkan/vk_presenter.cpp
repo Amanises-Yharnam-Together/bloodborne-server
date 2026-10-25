@@ -1034,8 +1034,6 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     if (!count && !FrameGeneration::Requested()) {
         frame_generation.OnSwitchedOff();
         fg_limiter.Reset();
-        auto& settings = BbSettings::Get();
-        settings.frame_gen_now.store(0, std::memory_order_relaxed);
         PresentFrame(frame, is_reusing_frame, is_game_frame);
         return;
     }
@@ -1051,6 +1049,14 @@ void Presenter::PresentGenerated(Frame* frame,
     using namespace std::chrono;
     static auto last_refresh = steady_clock::time_point{};
     static u32 hz = 0;
+    // The generated frames are placed from the moment the GPU has finished them (they come
+    // ready with the game frame, the same submission). Placed from the moment the frame was
+    // queued instead, a GPU busy for more than the spacing had both ready at once, and Mailbox
+    // replaced the generated one before the display showed it: frame generation "on" with
+    // nothing to see, at the GPU's cost (Kaniel 2026-10-25).
+    if (count) {
+        WaitRendered(frame);
+    }
     const auto start = steady_clock::now();
     if (start - last_refresh > seconds(2)) {
         last_refresh = start;
@@ -1076,6 +1082,8 @@ void Presenter::PresentGenerated(Frame* frame,
         std::scoped_lock lock{free_mutex};
         return free_queue.empty();
     };
+    // When each image went out, to tell which generated ones the display had time to show.
+    std::array<steady_clock::time_point, FrameGeneration::MaxGenerated> sent{};
     u32 shown = 0;
     for (; shown < count; ++shown) {
         if (shown > 0) {
@@ -1087,7 +1095,7 @@ void Presenter::PresentGenerated(Frame* frame,
             }
         }
         PresentFrame(generated[shown], true, false);
-        frame_generation.OnImagePresented(true);
+        sent[shown] = steady_clock::now();
     }
     if (count) {
         generated_done.fetch_add(1, std::memory_order_release);
@@ -1096,7 +1104,14 @@ void Presenter::PresentGenerated(Frame* frame,
         SleepUntil(start + step * shown);
     }
     PresentFrame(frame, false, true);
-    frame_generation.OnImagePresented(false);
+    const auto game_sent = steady_clock::now();
+    u32 seen = 0;
+    for (u32 i = 0; i < shown; ++i) {
+        const auto next = i + 1 < shown ? sent[i + 1] : game_sent;
+        seen += BbFrameGenPace::GeneratedShown(duration<double, std::milli>(next - sent[i]).count(),
+                                               hz, fifo);
+    }
+    frame_generation.OnPresented(shown, seen);
 
     // How many the display has room for from the next frames on (fit to display; always with
     // V-Sync, where each image more waits for the display).
@@ -1105,9 +1120,7 @@ void Presenter::PresentGenerated(Frame* frame,
     const double now_s = duration<double>(start.time_since_epoch()).count();
     const bool fit = settings.frame_gen_fit_display.load(std::memory_order_relaxed) || fifo;
     const u32 limit = fg_limiter.OnGameFrame(now_s, hz, fit, interval_ms, present_ms);
-    frame_generation.SetDisplayLimit(limit);
-    settings.frame_gen_now.store(int(std::min(limit, FrameGeneration::WantedCount())),
-                                 std::memory_order_relaxed);
+    frame_generation.SetDisplayLimit(limit, fg_limiter.Paused(now_s));
     settings.frame_gen_display_hz.store(int(hz), std::memory_order_relaxed);
 }
 

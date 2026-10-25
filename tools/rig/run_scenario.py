@@ -653,9 +653,10 @@ LANE_STAGGER = 45
 
 
 def run_in_lanes(names: list[str], lanes: int | list[int], runner, stagger: float = LANE_STAGGER,
-                 sleep=time.sleep) -> dict[str, bool]:
+                 sleep=time.sleep, usable=lambda lane: True) -> dict[str, bool]:
     """Runs `names` across the lanes (a list, or a count: 0..lanes-1), each lane one run at a
-    time and taking the next name as it finishes (the longest first, as given).
+    time and taking the next name as it finishes (the longest first, as given). A lane that
+    is no longer `usable` (blocked by a game its last run left stuck) takes no more.
     runner(lane, name) -> passed."""
     lane_list = list(range(lanes)) if isinstance(lanes, int) else list(lanes)
     pending = list(names)
@@ -665,6 +666,10 @@ def run_in_lanes(names: list[str], lanes: int | list[int], runner, stagger: floa
     def lane_worker(lane: int):
         sleep(lane_list.index(lane) * stagger)
         while True:
+            if not usable(lane):
+                print(f"lane {lane}: blocked by a game its last run left, it takes no more runs",
+                      flush=True)
+                return
             with lock:
                 if not pending:
                     return
@@ -706,7 +711,13 @@ def run_lanes(names: list[str], lanes: list[int], batch: pathlib.Path) -> dict[s
         print(f"lane {lane}: {name} {'passed' if code == 0 else 'FAILED'}", flush=True)
         return code == 0
 
-    return run_in_lanes(names, lanes, runner)
+    return run_in_lanes(names, lanes, runner,
+                        usable=lambda lane: not lane_blocked(lane))
+
+
+def lane_blocked(lane: int) -> list[int]:
+    """The games blocking `lane` (lanes.py; a lane run's stop_lane_strays marks them)."""
+    return lanes.blocked_by(RIG, lane)
 
 
 def prune_runs(runs: pathlib.Path, kept: int):
