@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The build fingerprint (coop/build_fingerprint.h) the games and shadNet
 // compare at the link's hello: its text, the differences and the refusal the
-// player reads.
+// player reads, and the warning of what links.
 #include <iostream>
 #include <string>
 
@@ -95,31 +95,33 @@ int Text() {
 int Differences() {
   const BuildFingerprint game = Game();
   BuildFingerprint other = Game();
-  CHECK(CheckedDifferences(game, other).empty());
+  CHECK(DifferencesOf(game, other, BuildCheck::Warn).empty());
   CHECK(DescribeDifferences(game, other).empty());
   other.Set("harder", "3,1.5,3");
   other.Set("fps", "90 unlocked");
-  const auto differences = CheckedDifferences(game, other);
+  const auto differences = DifferencesOf(game, other, BuildCheck::Warn);
   CHECK(differences.size() == 1 && differences[0].key == "harder" &&
         differences[0].mine == "off" && differences[0].theirs == "3,1.5,3");
-  // Only the fields that change the game are checked; the frame rate is
-  // only said.
+  CHECK(DifferencesOf(game, other, BuildCheck::Refuse).empty());
+  // The frame rate is only said.
   const std::string said = DescribeDifferences(game, other);
   CHECK(said == "harder-enemies setting off, theirs HP x3 damage x1.5 poise "
                 "x3; not checked: frame rate 60, theirs 90 unlocked");
   // An unknown value (a file that could not be read) holds nothing.
   other = Game();
   other.Set("eboot", "");
-  CHECK(CheckedDifferences(game, other).empty());
-  // The server knows its release only.
+  CHECK(DifferencesOf(game, other, BuildCheck::Warn).empty());
+  // Only another release refuses.
   other = Game();
   other.Set("harder", "3,1.5,3");
   other.Set("version", "1.1.9");
-  CHECK(CheckedDifferences(game, other, true).size() == 1);
+  const auto refusing = DifferencesOf(game, other, BuildCheck::Refuse);
+  CHECK(refusing.size() == 1 && refusing[0].key == "version");
   std::cout << "build fingerprint differences: ok\n";
   return 0;
 }
 
+// Kaniel 2026-10-25: only another Seamless Co-op release refuses a game.
 int Refusals() {
   const BuildFingerprint server = Server();
   BuildFingerprint here = Game();
@@ -149,42 +151,38 @@ int Refusals() {
   refusal = BuildRefusalOf(EncodeBuildFingerprint(game), nullptr, &here);
   CHECK(refusal.text == "another build: your game is version 1.1.9, the games "
                         "here run 1.2.0: update in the launcher");
+  CHECK(refusal.notice == "Co-op refused: your game is version 1.1.9, the "
+                          "games here run 1.2.0: update in the launcher");
 
-  // The same release on another build: the revision.
+  // The same release speaking another co-op protocol cannot play either.
   game = Game();
-  game.Set("revision", "77e35074aaaabbbbccccddddeeeeffff00001111");
+  game.Set("protocol", "8");
   refusal = BuildRefusalOf(EncodeBuildFingerprint(game), &server, &here);
-  CHECK(refusal.text == "another build: your game is build 77e35074, the "
-                        "server and the games here run 08e56cd8: use the "
-                        "same release");
+  CHECK(refusal.text == "another build: your game speaks co-op protocol 8, "
+                        "the server and the games here speak 9: update in "
+                        "the launcher");
+  CHECK(refusal.notice == "Co-op refused: your co-op protocol is 8, the "
+                          "server speaks 9: update in the launcher");
 
-  // A setting that changes the game: against the games here, with both
-  // values.
-  game = Game();
-  game.Set("harder", "3,1.5,3");
-  refusal = BuildRefusalOf(EncodeBuildFingerprint(game), &server, &here);
-  CHECK(refusal.text ==
-        "another build: your harder-enemies setting is HP x3 damage x1.5 poise "
-        "x3, the games here use off: change it in the launcher's co-op "
-        "settings");
-  CHECK(refusal.notice.size() <= RefusalNoticeMax);
-  CHECK(refusal.notice.starts_with("Co-op refused: your harder enemies"));
-  // The server holds no setting: alone on it, the game is welcome.
-  CHECK(BuildRefusalOf(EncodeBuildFingerprint(game), &server, nullptr)
-            .text.empty());
-
-  // Game files: which ones, and every field in order.
-  game = Game();
-  game.Set("eboot", "aaaaaaaaaaaaaaaa");
-  game.Set("events", "bbbbbbbbbbbbbbbb");
-  game.Set("cheats", "no death");
-  refusal = BuildRefusalOf(EncodeBuildFingerprint(game), &server, &here);
-  CHECK(refusal.text ==
-        "another build: your game files differ from the games here (eboot, "
-        "map events): repair the game files; your cheats and tweaks are no "
-        "death, the games here use none: use the same ones in the launcher");
-  CHECK(refusal.notice == "Co-op refused: your game files differ (eboot, map "
-                          "events): repair the game files (+1 more)");
+  // Everything else links: another build of the release, other game files,
+  // settings, cheats and mods.
+  const std::pair<const char *, const char *> linking[] = {
+      {"revision", "77e35074aaaabbbbccccddddeeeeffff00001111"},
+      {"eboot", "aaaaaaaaaaaaaaaa"},
+      {"events", "bbbbbbbbbbbbbbbb"},
+      {"harder", "3,1.5,3"},
+      {"cheats", "no death"},
+      {"rules", "lamp rests on, revive hits real"},
+      {"fps", "90"},
+      {"mods", "off"},
+      {"patches", "none"},
+      {"pbin", "cccccccccccc"}};
+  for (const auto &[key, value] : linking) {
+    game = Game();
+    game.Set(key, value);
+    CHECK(BuildRefusalOf(EncodeBuildFingerprint(game), &server, &here)
+              .text.empty());
+  }
 
   // A hello in the text before the fingerprint: an older release, said
   // plainly.
@@ -198,33 +196,122 @@ int Refusals() {
   return 0;
 }
 
+// What differs but links: the player is told their installation differs
+// (the team screen's line), the log says every field with both values.
+int Warnings() {
+  const BuildFingerprint here = Game();
+  BuildFingerprint game = Game();
+  CHECK(BuildWarningOf(EncodeBuildFingerprint(game), {here}).text.empty());
+  game.Set("harder", "3,1.5,3");
+  // Nobody here to differ from (the server holds no settings).
+  CHECK(BuildWarningOf(EncodeBuildFingerprint(game), {}).text.empty());
+  auto warning = BuildWarningOf(EncodeBuildFingerprint(game), {here});
+  CHECK(warning.text == "your installation differs from the games here: "
+                        "harder-enemies setting HP x3 damage x1.5 poise x3, "
+                        "theirs off");
+  CHECK(warning.notice == "Your installation differs from the others (harder "
+                          "enemies): co-op may misbehave");
+
+  // The game files together, then each other field, in order.
+  game = Game();
+  game.Set("eboot", "aaaaaaaaaaaa");
+  game.Set("events", "bbbbbbbbbbbb");
+  game.Set("cheats", "no death");
+  warning = BuildWarningOf(EncodeBuildFingerprint(game), {here});
+  CHECK(warning.text == "your installation differs from the games here: "
+                        "eboot aaaaaaaaaaaa, theirs 1f2e3d4c5b6a7980; map "
+                        "events bbbbbbbbbbbb, theirs 0123456789abcdef; cheats "
+                        "and tweaks no death, theirs none");
+  CHECK(warning.notice == "Your installation differs from the others (game "
+                          "files, cheats): co-op may misbehave");
+
+  // Another build of the release, and the mods.
+  game = Game();
+  game.Set("revision", "77e35074aaaa");
+  BuildFingerprint modded = Game();
+  modded.Set("mods", "on");
+  game.Set("mods", "off");
+  warning = BuildWarningOf(EncodeBuildFingerprint(game), {modded});
+  CHECK(warning.notice == "Your installation differs from the others (build, "
+                          "mods): co-op may misbehave");
+  CHECK(warning.text.starts_with(
+      "your installation differs from the games here: build 77e35074, theirs "
+      "08e56cd8; mods off, theirs on"));
+
+  // The frame rate only looks different: no warning.
+  game = Game();
+  game.Set("fps", "90 unlocked");
+  CHECK(BuildWarningOf(EncodeBuildFingerprint(game), {here}).text.empty());
+  // Another release is refused, not warned of; an unknown value holds nothing.
+  game = Game();
+  game.Set("version", "1.1.9");
+  game.Set("eboot", "");
+  CHECK(BuildWarningOf(EncodeBuildFingerprint(game), {here}).text.empty());
+  CHECK(BuildWarningOf("92829ac4 events 1f protocol 9", {here}).text.empty());
+
+  // Each game here counts: one with harder enemies among plain ones.
+  BuildFingerprint hard = Game();
+  hard.Set("harder", "3,1.5,3");
+  warning = BuildWarningOf(EncodeBuildFingerprint(Game()), {here, hard});
+  CHECK(warning.notice == "Your installation differs from the others (harder "
+                          "enemies): co-op may misbehave");
+  CHECK(warning.text == "your installation differs from the games here: "
+                        "harder-enemies setting off, theirs HP x3 damage x1.5 "
+                        "poise x3");
+
+  // Many differences: the line keeps the first names.
+  game = Game();
+  game.Set("revision", "77e35074aaaa");
+  game.Set("eboot", "aaaaaaaaaaaa");
+  game.Set("harder", "2,1,1");
+  game.Set("cheats", "no death");
+  game.Set("rules", "lamp rests on, revive hits presses");
+  game.Set("patches", "none");
+  BuildFingerprint with_mods = Game();
+  with_mods.Set("mods", "on");
+  game.Set("mods", "off");
+  warning = BuildWarningOf(EncodeBuildFingerprint(game), {with_mods});
+  CHECK(warning.notice == "Your installation differs from the others (build, "
+                          "game files, +5 more): co-op may misbehave");
+  CHECK(warning.notice.size() <= RefusalNoticeMax);
+  std::cout << "build warnings: ok\n";
+  return 0;
+}
+
 // The team screen shows the notice on one line of RefusalNoticeMax
 // characters, whatever the values.
 int NoticesFit() {
   const BuildFingerprint server = Server();
-  const BuildFingerprint here = Game();
+  BuildFingerprint here = Game();
+  here.Set("mods", "on");
+  here.Set("pbin", "dddddddddddd");
   const std::string long_value(120, 'x');
   for (const auto &field : BuildFields) {
-    if (!field.checked) {
+    if (field.check == BuildCheck::Log) {
       continue;
     }
     for (const bool server_too : {false, true}) {
       BuildFingerprint game = Game();
-      game.Set(field.key, long_value);
+      // (A field only some hellos carry gives way to the others when long.)
+      game.Set(field.key, field.kept ? long_value : "zz");
       game.Set("rules", "lamp rests on, revive hits presses, guest as host");
       game.Set("cheats", "no death, stealth, silent, rally no decay");
-      const auto refusal = BuildRefusalOf(
-          EncodeBuildFingerprint(game), server_too ? &server : nullptr, &here);
-      CHECK(!refusal.text.empty());
-      CHECK(refusal.notice.size() <= RefusalNoticeMax);
-      CHECK(refusal.notice.starts_with("Co-op refused: "));
+      const std::string text = EncodeBuildFingerprint(game);
+      const auto refusal =
+          BuildRefusalOf(text, server_too ? &server : nullptr, &here);
+      const auto warning = BuildWarningOf(text, {here});
+      if (field.check == BuildCheck::Refuse) {
+        CHECK(!refusal.text.empty());
+        CHECK(refusal.notice.size() <= RefusalNoticeMax);
+        CHECK(refusal.notice.starts_with("Co-op refused: "));
+      } else {
+        CHECK(refusal.text.empty());
+        CHECK(!warning.text.empty());
+        CHECK(warning.notice.size() <= RefusalNoticeMax);
+        CHECK(warning.notice.starts_with("Your installation differs"));
+      }
     }
   }
-  BuildFingerprint game = Game();
-  game.Set("harder", "2,1.25,4");
-  const auto refusal =
-      BuildRefusalOf(EncodeBuildFingerprint(game), &server, &here);
-  CHECK(refusal.notice.size() <= RefusalNoticeMax);
   std::cout << "build notices fit: ok\n";
   return 0;
 }
@@ -245,7 +332,7 @@ int ReleaseVersion() {
   CHECK(server.Get("version") == "dev" && server.Get("revision").empty() &&
         server.Get("protocol") == std::to_string(CoopFrameProtocol));
   // An unknown revision holds nothing against a game.
-  CHECK(CheckedDifferences(Game(), server, true).size() == 1);
+  CHECK(DifferencesOf(Game(), server, BuildCheck::Refuse).size() == 1);
   std::cout << "release version: ok\n";
   return 0;
 }
@@ -253,7 +340,7 @@ int ReleaseVersion() {
 } // namespace
 
 int main() {
-  if (Text() != 0 || Differences() != 0 || Refusals() != 0 ||
+  if (Text() != 0 || Differences() != 0 || Refusals() != 0 || Warnings() != 0 ||
       NoticesFit() != 0 || ReleaseVersion() != 0) {
     return 1;
   }

@@ -40,6 +40,9 @@ u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me,
 // Phase 7: what the team screen says when the server refused this game's link (another build),
 // from the server's reason; empty when it did not.
 std::string LinkRefusalNotice(std::string_view refusal);
+// The team screen's notice: the lobby's own (`lobby_notice`) first, else the first line of the
+// server's warning that this game's installation differs (`link_warning`, Kaniel 2026-10-25).
+std::string TeamScreenNotice(std::string_view lobby_notice, std::string_view link_warning);
 
 // The members the team loading screen shows (member, name), the leader first: this game and those
 // coming (ready, not offline); not one gone or staying at the title (Kaniel 2026-10-15).

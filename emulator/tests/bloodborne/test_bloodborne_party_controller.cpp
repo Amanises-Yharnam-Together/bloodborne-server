@@ -3035,7 +3035,7 @@ TEST(BloodborneBuildCheck, TheFingerprintSaysTheBuildAndTheRules) {
 }
 
 // The peers' hellos carry the fingerprint: another game's differences are logged by field (the
-// server refuses the game; this is for the logs of the games already in).
+// server warns the game of them; this is for the logs of the games already in).
 TEST(BloodborneBuildCheck, APeerOnOtherSettingsIsLoggedByField) {
     BloodborneCoop::BuildFingerprint build;
     build.Set("version", "1.2.0");

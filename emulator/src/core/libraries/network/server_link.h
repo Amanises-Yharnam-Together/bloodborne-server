@@ -23,8 +23,8 @@ void ConfigureServerLink(u32 server_addr_nbo, u16 server_port_nbo, std::string o
                          std::string secret = {}, std::string_view server_key = {});
 // Which game this is, for the hello: shadNet refuses a game on another build.
 void SetServerLinkBuild(std::string build);
-// The link's events ("welcome", "refused", "quiet", "back", "member-quiet", "member-back",
-// "member-gone", "rtt") for the co-op trace.
+// The link's events ("welcome", "refused", "differs", "quiet", "back", "member-quiet",
+// "member-back", "member-gone", "rtt") for the co-op trace.
 using ServerLinkObserver = void (*)(std::string_view event, std::string_view detail);
 void SetServerLinkObserver(ServerLinkObserver observer);
 // Our messages with shadNet itself (the link's Coop kind, phase 3): one stream frame's body each
@@ -44,7 +44,10 @@ bool ConnectsPeersWithoutHandshake();
 // The rig's dropped connection (autoplay cut-link, phase 7): nothing goes out or comes in on this
 // game's UDP socket for `ms`, as when its Wi-Fi drops.
 void CutServerLinkForTest(u32 ms);
-// Why the server refused this game's hello (another build), empty while it did not.
+// Why the server refused this game's hello (another release), empty while it did not.
 std::string ServerLinkRefusal();
+// What the server's welcome warned of (another installation than the others': the team screen's
+// line, then every field), empty when nothing differs.
+std::string ServerLinkWarning();
 
 } // namespace Libraries::Net

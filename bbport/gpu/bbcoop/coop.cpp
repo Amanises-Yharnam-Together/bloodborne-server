@@ -518,7 +518,7 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
     if (!Coop::TeamModeOn()) {
         return 0;
     }
-    // Refused (another build): the screen says why instead of "reaching", also over a lobby the
+    // Refused (another release): the screen says why instead of "reaching", also over a lobby the
     // game's sign-in got before its build was known (the build check on join refuses the hello
     // that names it; nothing of that lobby works then).
     const std::string refusal = Libraries::Net::ServerLinkRefusal();
@@ -536,7 +536,10 @@ extern "C" int bbcoop_lobby_view(bbcoop_lobby* lobby) {
     bool in_hunt = false;
     lobby->playing = Coop::TeamPlaying(&in_hunt) ? 1 : 0;
     lobby->in_hunt = in_hunt ? 1 : 0;
-    CopyName(lobby->notice, sizeof(lobby->notice), state->notice());
+    // Another installation than the others' links; the screen says so (Kaniel 2026-10-25).
+    CopyName(lobby->notice, sizeof(lobby->notice),
+             Core::Bloodborne::TeamScreenNotice(state->notice(),
+                                                Libraries::Net::ServerLinkWarning()));
     {
         // Kaniel 2026-10-25: the host rules the hunt plays by.
         const Core::Bloodborne::HostRules rules = Coop::ActiveHostRules();

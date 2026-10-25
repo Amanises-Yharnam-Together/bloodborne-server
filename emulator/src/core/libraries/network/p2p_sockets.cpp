@@ -562,6 +562,11 @@ public:
         return link_refusal;
     }
 
+    std::string LinkWarning() {
+        std::lock_guard lock(link_mutex);
+        return link_warning;
+    }
+
     void SetLinkObserver(ServerLinkObserver observer) {
         link_observer.store(observer);
     }
@@ -942,6 +947,7 @@ private:
             link_welcomed = false;
             link_hello_ms.reset();
             link_refusal.clear();
+            link_warning.clear();
             link_auth = {};
             link_auth.Pin(redirect.key);
             link_ticket = redirect.ticket;
@@ -1009,6 +1015,9 @@ private:
                 first = !link_welcomed;
                 link_welcomed = true;
                 link_refusal.clear();
+                // Another installation than the others' (Kaniel 2026-10-25): linked, and told.
+                repeated = link_warning == welcome.text;
+                link_warning = welcome.text;
             } else {
                 repeated = link_refusal == welcome.text;
                 link_refusal = welcome.text;
@@ -1025,7 +1034,16 @@ private:
                 htonl(Link::VirtualAddressOf(online_id).ipv4));
             if (first) {
                 LOG_INFO(Lib_Net, "Server link: the server took this game's hello");
-                TellLinkObserver("welcome", "");
+                TellLinkObserver("welcome", welcome.text);
+            }
+            if (!welcome.text.empty() && !repeated) {
+                // The team screen's line, then every field that differs.
+                std::string text = welcome.text;
+                for (size_t at = 0; (at = text.find('\n', at)) != std::string::npos;) {
+                    text.replace(at, 1, " | ");
+                }
+                LOG_WARNING(Lib_Net, "Server link: this game's installation differs: {}", text);
+                TellLinkObserver("differs", welcome.text);
             }
         } else if (!repeated) {
             // One line: the build check's refusal is the screen's line, then the whole reason.
@@ -1182,6 +1200,7 @@ private:
     std::string link_build;
     bool link_welcomed{false};
     std::string link_refusal;
+    std::string link_warning; // the welcome's: another installation than the others'
     std::optional<s64> link_hello_ms;
     LinkAuth::Client link_auth;  // link version 4: the key, the cookie, the handshake, the session
     std::vector<u8> link_ticket; // a region's: from the Redirect that sent the game to this shard
@@ -1761,6 +1780,10 @@ void CutServerLinkForTest(u32 ms) {
 
 std::string ServerLinkRefusal() {
     return ServerLinkSwitchOn() ? P2PTransport::Instance().LinkRefusal() : std::string{};
+}
+
+std::string ServerLinkWarning() {
+    return ServerLinkSwitchOn() ? P2PTransport::Instance().LinkWarning() : std::string{};
 }
 
 u16 GetP2PConfiguredPort() {

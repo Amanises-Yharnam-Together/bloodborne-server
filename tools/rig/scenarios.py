@@ -4652,12 +4652,15 @@ SCENARIOS["paarl-after-wipe"] = {
     "timeout": 900,
 }
 
-# Build check on join (Kaniel 2026-10-24): everyone, the server included, runs one build. A game
-# whose settings change the game (harder enemies here) tries to link beside one without them: the
-# server refuses it, naming the setting with both values, on its team screen and in its log; it
-# plays alone. Games on the same settings link (build-check-same).
+# Build check on join (Kaniel 2026-10-24, 10-25): only another Seamless Co-op release is refused
+# (build-check-version: the guest says another BB_RELEASE_VERSION; the server names both versions
+# on its team screen and in its log, and it plays alone). A game whose settings change the game
+# (harder enemies here) links beside one without them and plays in its team; its team screen and
+# log say its installation differs (build-check-harder). Games on the same settings link with no
+# warning (build-check-same).
 HARDER = {"SHADPS4_BLOODBORNE_HARDER_ENEMIES": "3,1.5,3"}
 LINKED = r"Server link: the server took this game's hello"
+DIFFERS = r"installation differs"
 # Kaniel 2026-10-25: team duels, from the team screen's Duel (no bell). The host proposes, the guest
 # answers its box yes; after the countdown the host strikes the guest (its HP put at 1 first), whose
 # lethal hit puts it out of the duel: no party death (no down, no wipe, no map reset, no lamp), the
@@ -4706,26 +4709,51 @@ SCENARIOS["duel"] = {
 }
 
 
-SCENARIOS["build-check-harder"] = {
-    "about": "the guest has harder enemies (HP x3 damage x1.5 poise x3), the host the normal "
-             "game: the server refuses the guest's link, saying both settings",
-    "role_settings": {"guest": HARDER},
+SCENARIOS["build-check-version"] = {
+    "about": "the guest says another Seamless Co-op release (BB_RELEASE_VERSION 0.0.1, the host "
+             "dev): the server refuses the guest's link, saying both versions",
+    "role_settings": {"guest": {"BB_RELEASE_VERSION": "0.0.1"}},
     "start_after": {"guest": ["host", LINKED]},
     "roles": {
         "host": ["team-alone", START, "wait 5", "sync bc-refused", "done"],
         "guest": ["team-screen", "title-wait 10", "title-shot refused", "team-alone", START,
                   "wait 5", "sync bc-refused", "done"],
     },
-    "syncs": {"bc-refused": {"chapter": "build-check-harder", "roles": ["host", "guest"]}},
+    "syncs": {"bc-refused": {"chapter": "build-check-version", "roles": ["host", "guest"]}},
+    "expect": {
+        "host": [LINKED, r"Co-op: build fingerprint bb-build 1;version=dev;"],
+        "guest": [r"Co-op: build fingerprint bb-build 1;version=0\.0\.1;",
+                  r"the server refused this game: Co-op refused: your game is version 0\.0\.1, "
+                  r"the games here run dev: update in the launcher \| another build: your game "
+                  r"is version 0\.0\.1, the games here run dev: update in the launcher"],
+    },
+    # (The guest's sign-in hello says no build yet and is welcomed: its build hello is refused.)
+    "forbid": {"host": [r"refused this game", DIFFERS], "guest": [DIFFERS]},
+    "timeout": 300,
+}
+SCENARIOS["build-check-harder"] = {
+    "about": "the guest has harder enemies (HP x3 damage x1.5 poise x3), the host the normal "
+             "game: the guest links and plays in the host's team, warned that its installation "
+             "differs (its team screen and log)",
+    "role_settings": {"guest": HARDER},
+    "start_after": {"guest": ["host", LINKED]},
+    "roles": {
+        "host": ["team-create", "team-invite rig_guest", "team-wait 2", "team-start", START,
+                 "wait-session 2 300", "wait 5", "expect-session 2"],
+        "guest": ["team-screen", "title-wait 10", "title-shot warned", "title-wait 3",
+                  "team-accept", "team-ready", START, "wait-session 2 300", "wait 5",
+                  "expect-session 2"],
+    },
     "expect": {
         "host": [LINKED, r"Co-op: build fingerprint bb-build 1;.*;harder=off;"],
-        "guest": [r"Co-op: build fingerprint bb-build 1;.*;harder=3,1\.5,3;",
-                  r"the server refused this game: Co-op refused: your harder enemies are HP x3 "
-                  r"damage x1\.5 poise x3, the others use off \| another build: your "
-                  r"harder-enemies setting is HP x3 damage x1\.5 poise x3, the games here use "
-                  r"off: change it in the launcher's co-op settings"],
+        "guest": [LINKED, r"Co-op: build fingerprint bb-build 1;.*;harder=3,1\.5,3;",
+                  r"Server link: this game's installation differs: Your installation differs "
+                  r"from the others \(harder enemies\): co-op may misbehave \| your "
+                  r"installation differs from the games here: harder-enemies setting HP x3 "
+                  r"damage x1\.5 poise x3, theirs off"],
     },
-    "forbid": {"host": [r"refused this game"]},
+    "forbid": {"host": [r"refused this game", DIFFERS, *SESSION_HOLDS],
+               "guest": [r"refused this game", *SESSION_HOLDS]},
     "timeout": 300,
 }
 SCENARIOS["build-check-same"] = {
@@ -4738,7 +4766,8 @@ SCENARIOS["build-check-same"] = {
     },
     "expect": {role: [LINKED, r"Co-op: build fingerprint bb-build 1;.*;harder=3,1\.5,3;"]
                for role in ("host", "guest")},
-    "forbid": {role: [r"refused this game", *SESSION_HOLDS] for role in ("host", "guest")},
+    "forbid": {role: [r"refused this game", DIFFERS, *SESSION_HOLDS]
+               for role in ("host", "guest")},
     "timeout": 300,
 }
 

@@ -70,6 +70,8 @@ const QByteArray Build =
     "events=1f;harder=off;fps=60;";
 const QByteArray OtherBuild = "bb-build 1;version=1.2.0;revision=13ddd14d;"
                               "protocol=9;events=1f;harder=off;fps=60;";
+const QByteArray OlderBuild = "bb-build 1;version=1.1.9;revision=13ddd14d;"
+                              "protocol=9;events=1f;harder=off;fps=60;";
 
 const Endpoint Kaniel{0x7F000001, 40001};
 const Endpoint Ada{0x7F000001, 40002};
@@ -345,20 +347,21 @@ int HelloAndBuilds() {
                        16);
   CHECK(SentTo(result, Eileen).isEmpty() && hub->Members() == 2);
 
-  // One build for everyone: the 0x60 record carries a raw vtable pointer.
-  result = hub.Receive(Eileen, HelloFrom("Eileen", OtherBuild), 20);
+  // One release for everyone (Kaniel 2026-10-25: only another Seamless
+  // Co-op version is refused).
+  result = hub.Receive(Eileen, HelloFrom("Eileen", OlderBuild), 20);
   const auto refused = DecodeWelcome(SentTo(result, Eileen).value(0));
   CHECK(refused && !refused->accepted);
   // The team screen's line first, then the whole reason (as logged).
   CHECK(refused->text ==
-        "Co-op refused: your game is build 13ddd14d, the games here run "
-        "92829ac4: use the same release\n"
-        "another build: your game is build 13ddd14d, the games here run "
-        "92829ac4: use the same release");
+        "Co-op refused: your game is version 1.1.9, the games here run 1.2.0: "
+        "update in the launcher\n"
+        "another build: your game is version 1.1.9, the games here run "
+        "1.2.0: update in the launcher");
   CHECK(hub->Members() == 2);
   CHECK(result.log.join('\n').contains(
-      "refused Eileen (192.168.1.5:40003): another build: your game is build "
-      "13ddd14d"));
+      "refused Eileen (192.168.1.5:40003): another build: your game is "
+      "version 1.1.9"));
 
   // Another link version cannot read a sealed answer, and a plain one would
   // go to any source: it hears nothing (version 3's games, the last before
@@ -383,7 +386,7 @@ int HelloAndBuilds() {
   result = fresh.Receive(Ada, HelloFrom("Ada"), 46);
   CHECK(DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
   CHECK(fresh->Build() == Build);
-  result = fresh.Receive(Kaniel, HelloFrom("Kaniel", OtherBuild), 47);
+  result = fresh.Receive(Kaniel, HelloFrom("Kaniel", OlderBuild), 47);
   CHECK(!DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
   result = fresh.Receive(Kaniel, HelloFrom("Kaniel"), 48);
   CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
@@ -402,37 +405,53 @@ int HelloAndBuilds() {
   return 0;
 }
 
-// Build check on join: each field that differs, against the games here and
-// the server's own build.
+// Build check on join: another release is refused, against the games here
+// and the server's own build; any other difference links with a warning.
 int BuildChecks() {
-  // A setting that changes the game, against the games here.
+  // A setting that changes the game, against the games here: linked, and
+  // the welcome says the installation differs (the team screen's line first,
+  // then every field).
   Net hub;
-  hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
+  auto result = hub.Receive(Kaniel, HelloFrom("Kaniel"), 0);
+  CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->text.isEmpty());
   QByteArray harder = Build;
   harder.replace("harder=off", "harder=3,1.5,3");
-  auto result = hub.Receive(Ada, HelloFrom("Ada", harder), 10);
-  auto refused = DecodeWelcome(SentTo(result, Ada).value(0));
-  CHECK(refused && !refused->accepted);
-  CHECK(refused->text.endsWith(
-      "\nanother build: your harder-enemies setting is HP x3 damage x1.5 "
-      "poise x3, the games here use off: change it in the launcher's co-op "
-      "settings"));
-  CHECK(refused->text.startsWith(
-      "Co-op refused: your harder enemies are HP x3 damage x1.5 poise x3"));
-  CHECK(hub->Members() == 1);
-
-  // What is only logged (the frame rate) does not refuse; the server says it.
+  result = hub.Receive(Ada, HelloFrom("Ada", harder), 10);
+  auto welcome = DecodeWelcome(SentTo(result, Ada).value(0));
+  CHECK(welcome && welcome->accepted);
+  CHECK(welcome->text ==
+        "Your installation differs from the others (harder enemies): co-op "
+        "may misbehave\n"
+        "your installation differs from the games here: harder-enemies "
+        "setting HP x3 damage x1.5 poise x3, theirs off");
+  CHECK(hub->Members() == 2);
+  CHECK(result.log.join('\n').contains(
+      "Ada (127.0.0.1:40002) runs other settings than the games here "
+      "(harder-enemies setting HP x3 damage x1.5 poise x3, theirs off)"));
+  // What is only logged (the frame rate) is no warning; the server says it.
   QByteArray faster = Build;
   faster.replace("fps=60", "fps=90 unlocked");
-  result = hub.Receive(Ada, HelloFrom("Ada", faster), 20);
-  CHECK(DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
+  result = hub.Receive(Ada, HelloFrom("Ada", faster), 15);
+  welcome = DecodeWelcome(SentTo(result, Ada).value(0));
+  CHECK(welcome && welcome->accepted && welcome->text.isEmpty());
   CHECK(result.log.join('\n').contains(
       "Ada (127.0.0.1:40002) runs other settings than the games here (not "
       "checked: frame rate 90 unlocked, theirs 60)"));
 
+  // Another build of the same release links too, against each game here.
+  QByteArray other_harder = OtherBuild;
+  other_harder.replace("harder=off", "harder=2,1,1");
+  result = hub.Receive(Eileen, HelloFrom("Eileen", other_harder), 20);
+  welcome = DecodeWelcome(SentTo(result, Eileen).value(0));
+  CHECK(welcome && welcome->accepted &&
+        welcome->text.startsWith("Your installation differs from the others "
+                                 "(build, harder enemies): co-op may "
+                                 "misbehave\n"));
+  CHECK(hub->Members() == 3);
+
   // A hello in the text before the fingerprint: an older release.
   result = hub.Receive(Eileen, HelloFrom("Eileen", ContractBuild), 30);
-  refused = DecodeWelcome(SentTo(result, Eileen).value(0));
+  auto refused = DecodeWelcome(SentTo(result, Eileen).value(0));
   CHECK(refused && !refused->accepted);
   CHECK(refused->text.startsWith("Co-op refused: your game is another "
                                  "release: update in the launcher\n"));
@@ -455,14 +474,20 @@ int BuildChecks() {
   CHECK(server->Members() == 0);
   result = server.Receive(Kaniel, HelloFrom("Kaniel"), 10);
   CHECK(DecodeWelcome(SentTo(result, Kaniel).value(0))->accepted);
-  // The server does not know a game's settings or files.
+  // The server does not know a game's settings or files: the games here
+  // warn of them.
   result = server.Receive(Ada, HelloFrom("Ada", harder), 20);
-  CHECK(!DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
+  welcome = DecodeWelcome(SentTo(result, Ada).value(0));
+  CHECK(welcome && welcome->accepted && !welcome->text.isEmpty());
   Net alone;
   alone->SetServerBuild(
       "bb-build 1;version=1.2.0;revision=92829ac4;protocol=9;");
   result = alone.Receive(Ada, HelloFrom("Ada", harder), 30);
-  CHECK(DecodeWelcome(SentTo(result, Ada).value(0))->accepted);
+  welcome = DecodeWelcome(SentTo(result, Ada).value(0));
+  CHECK(welcome && welcome->accepted && welcome->text.isEmpty());
+  // Another build of the server's release links.
+  result = alone.Receive(Eileen, HelloFrom("Eileen", OtherBuild), 31);
+  CHECK(DecodeWelcome(SentTo(result, Eileen).value(0))->accepted);
   // A server that does not check its own (a rig's, built apart): the games
   // here only.
   Net apart;
@@ -627,7 +652,7 @@ int Liveness() {
   CHECK(hub->Members() == 1);
   hub.Tick(200000);
   CHECK(hub->Members() == 0 && hub->Build().isEmpty());
-  result = hub.Receive(Eileen, HelloFrom("Eileen", OtherBuild), 200001);
+  result = hub.Receive(Eileen, HelloFrom("Eileen", OlderBuild), 200001);
   CHECK(DecodeWelcome(SentTo(result, Eileen).value(0))->accepted);
 
   // The counters every 10 s.

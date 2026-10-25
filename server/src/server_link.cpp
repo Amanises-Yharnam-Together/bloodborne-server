@@ -698,7 +698,8 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
     }
     QByteArray refusal;
     QByteArray refusal_logged; // when the game's text says more than its log needs
-    QString checked_aside;     // settings that differ but are only logged
+    QString checked_aside;     // what differs from the games here but links
+    QByteArray warning;        // the welcome's: the player's installation differs
     if (!required_build.isEmpty() && !required_build.startsWith("bb-build ")) {
         // Hosted: a HostedBuild that is no build fingerprint is the whole text every game must
         // say.
@@ -707,22 +708,25 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
                       hello->build + ", the server needs " + required_build + ")";
         }
     } else if (!hello->build.isEmpty()) {
-        // Build check on join: the games linked here (a game saying hello again is not one; all
-        // of them run one build, so the first says it) and the server's own release (Hosted: a
-        // HostedBuild fingerprint in its place). Phase 11: a game signs in before its co-op code
-        // says the build; none said holds nothing, either way.
-        std::optional<BloodborneCoop::BuildFingerprint> here;
+        // Build check on join: the games linked here (a game saying hello again is not one) and
+        // the server's own release (Hosted: a HostedBuild fingerprint in its place). Phase 11: a
+        // game signs in before its co-op code says the build; none said holds nothing, either
+        // way. Only another release is refused (Kaniel 2026-10-25): all of the games here run
+        // one, so the first says it. Another installation of it links, and its welcome says so.
+        std::vector<BloodborneCoop::BuildFingerprint> builds;
         for (const Link& link : std::as_const(members)) {
             if (!(link.endpoint == from) && !link.build.isEmpty()) {
-                here = BloodborneCoop::ParseBuildFingerprint(link.build.toStdString());
-                break;
+                if (auto build = BloodborneCoop::ParseBuildFingerprint(link.build.toStdString())) {
+                    builds.push_back(std::move(*build));
+                }
             }
         }
+        const BloodborneCoop::BuildFingerprint* here = builds.empty() ? nullptr : &builds.front();
         const QByteArray& own = required_build.isEmpty() ? server_build : required_build;
         const auto server =
             own.isEmpty() ? std::nullopt : BloodborneCoop::ParseBuildFingerprint(own.toStdString());
-        const auto build = BloodborneCoop::BuildRefusalOf(
-            hello->build.toStdString(), server ? &*server : nullptr, here ? &*here : nullptr);
+        const auto build = BloodborneCoop::BuildRefusalOf(hello->build.toStdString(),
+                                                          server ? &*server : nullptr, here);
         if (!build.text.empty()) {
             // The team screen's line first, then the whole reason (the link's text holds 255
             // bytes: the log has all of it).
@@ -734,6 +738,12 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
             if (const std::string other = BloodborneCoop::DescribeDifferences(*game, *here);
                 !other.empty()) {
                 checked_aside = QString::fromStdString(other);
+            }
+            // As a refusal: the team screen's line first, then every field.
+            if (const auto differs =
+                    BloodborneCoop::BuildWarningOf(hello->build.toStdString(), builds);
+                !differs.text.empty()) {
+                warning = QByteArray::fromStdString(differs.notice + "\n" + differs.text);
             }
         }
     }
@@ -844,7 +854,7 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
     // counters stay. A new one (the game's next link) gets a new handshake's.
     if (!link.session || link.welcome.isEmpty() ||
         !LinkAuth::SameBytes(link.hello_key, responder->GameKey())) {
-        auto answered = AnswerOf(*responder, Encode(Welcome{true, {}}));
+        auto answered = AnswerOf(*responder, Encode(Welcome{true, warning.left(0xFF)}));
         link.session.emplace(std::move(answered.session));
         link.hello_key = responder->GameKey();
         link.welcome = ToQt(answered.datagram);
