@@ -300,18 +300,24 @@ class CoopSettingsTests(unittest.TestCase):
         self.assertEqual(self.app.side.visible(), ['home', 'coop', 'settings'])
         cover = self.app.coop_cover
         self.assertTrue(cover.winfo_ismapped(), 'over the window at the first start')
-        self.assertEqual(self.app.coop_done.state, 'disabled')
+        self.assertEqual(self.app.coop_next.state, 'disabled')
         self.app.close_coop()
         self.settle()
         self.assertTrue(cover.winfo_ismapped(), 'Done does nothing while settings are missing')
         self.app.coop_vars['game'].set(str(self.game))
         self.app.coop_vars['host_ip'].set('26.1.2.3')
         self.settle()
-        self.assertEqual(self.app.coop_done.state, 'disabled', 'the enemies are chosen, not taken by default')
+        self.app.coop_next.invoke()
+        self.settle()
+        self.assertEqual(self.app.coop_step, 1)
+        self.assertEqual(self.app.coop_next.state, 'disabled', 'the enemies are chosen, not taken by default')
         self.assertIn('the enemies', self.app.coop_missing.cget('text'))
         self.app.coop_enemies.current(0)
         self.app.coop_enemies.event_generate('<<ComboboxSelected>>')
         self.settle()
+        self.app.coop_next.invoke()
+        self.settle()
+        self.assertTrue(self.app.coop_done.canvas.winfo_ismapped(), 'Done on the last step')
         self.assertEqual(self.app.coop_done.state, 'normal')
         self.app.coop_done.invoke()
         self.settle()
@@ -429,17 +435,48 @@ class CoopSettingsTests(unittest.TestCase):
             self.settle(1.0)
         open_ports.assert_not_called()
 
-    def test_host_ip_and_enemies_share_a_row(self):
-        """Kaniel 2026-10-21: the How to connect button pushed Host IP above Enemies; it sits below them now."""
-        def walk(widget):
-            yield widget
-            for child in widget.winfo_children():
-                yield from walk(child)
-        name = str(self.app.coop_vars['host_ip'])
-        entry = next(w for w in walk(self.app.coop_card) if w.winfo_class() == 'TEntry'
-                     and str(w.cget('textvariable')) == name)
-        self.assertEqual(entry.winfo_rooty(), self.app.coop_enemies.winfo_rooty())
-        self.assertAlmostEqual(entry.winfo_height(), self.app.coop_enemies.winfo_height(), delta=self.app.px(4))
+    def test_the_setup_is_three_steps(self):
+        """Kaniel 2026-10-25: steps instead of switches: the game and the host's IP, then how the enemies get
+        harder (Auto or Fixed, and Rot), then how the team travels; a step opens only once the ones before it
+        lack nothing, and the help buttons stay on the first."""
+        app = self.app
+        self.assertEqual(app.coop_step, 0)
+        self.assertTrue(app.coop_steps[0].winfo_ismapped())
+        self.assertFalse(app.coop_back.canvas.winfo_ismapped(), 'no Back on the first step')
+        app.coop_go(1)
+        self.settle()
+        self.assertEqual(app.coop_step, 0, 'no game folder or IP yet')
+        app.coop_vars['game'].set(str(self.game))
+        app.coop_vars['host_ip'].set('26.1.2.3')
+        self.settle()
+        app.coop_next.invoke()
+        self.settle()
+        self.assertEqual(app.coop_step, 1)
+        self.assertTrue(app.coop_steps[1].winfo_ismapped() and not app.coop_steps[0].winfo_ismapped())
+        self.assertEqual(app.coop_enemy_mode.get(), 'fixed', 'Auto is a host rule, off by default')
+        app.coop_go(2)
+        self.settle()
+        self.assertEqual(app.coop_step, 1, 'the enemies are still to be chosen')
+        app.coop_enemy_mode.set('auto')
+        self.settle(0.5)
+        self.assertEqual(app.coop['rule_scale'], '1', 'Auto is the scaling rule')
+        self.assertEqual(str(app.coop_enemies.cget('state')), 'disabled', 'Auto takes its own levels')
+        self.assertEqual(app.coop_next.state, 'normal', 'Auto needs no level')
+        app.coop_next.invoke()
+        self.settle()
+        self.assertEqual(app.coop_step, 2)
+        self.assertEqual(app.coop_travel_mode.get(), 'seamless', 'travelling together is off by default')
+        app.coop_travel_mode.set('together')
+        app.coop_vars['rule_vote'].set('1')
+        self.settle(0.5)
+        self.assertEqual(bbport_coop.host_rules_value(app.coop), 'travel,vote,scale')
+        app.coop_back.invoke()
+        app.coop_back.invoke()
+        self.settle()
+        self.assertEqual(app.coop_step, 0)
+        app.open_coop()
+        self.settle()
+        self.assertEqual(app.coop_step, 0, 'opens at the first step')
 
     def test_the_upnp_button_asks_the_router_and_shows_the_answer(self):
         """Kaniel 2026-10-21 asked for a UPnP button in the help; Stop server closes what it opened."""
@@ -471,6 +508,11 @@ class CoopSettingsTests(unittest.TestCase):
 
     def test_custom_enemies_take_the_players_own_multipliers(self):
         """Kaniel 2026-10-21: the presets were too specific; Custom shows HP, damage and poise fields."""
+        self.app.coop_vars['game'].set(str(self.game))
+        self.app.coop_vars['host_ip'].set('26.1.2.3')
+        self.settle()
+        self.app.coop_go(1)
+        self.settle()
         box = self.app.coop_enemies
         custom = [v for v, _t in launcher.HARDER_CHOICES].index('custom')
         self.assertFalse(self.app.coop_custom.winfo_ismapped())
