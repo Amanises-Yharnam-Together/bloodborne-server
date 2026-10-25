@@ -31,6 +31,24 @@ void* GetRip(void* ctx) {
 #endif
 }
 
+ResumeRegs GetResumeRegs(void* ctx) {
+#if defined(_WIN32)
+    auto* c = ((EXCEPTION_POINTERS*)ctx)->ContextRecord;
+    return {(u64*)&c->Rip, (u64*)&c->Rdi, (u64*)&c->R10};
+#elif defined(__APPLE__) && defined(ARCH_X86_64)
+    auto& ss = ((ucontext_t*)ctx)->uc_mcontext->__ss;
+    return {(u64*)&ss.__rip, (u64*)&ss.__rdi, (u64*)&ss.__r10};
+#elif defined(__FreeBSD__) && defined(ARCH_X86_64)
+    auto& mc = ((ucontext_t*)ctx)->uc_mcontext;
+    return {(u64*)&mc.mc_rip, (u64*)&mc.mc_rdi, (u64*)&mc.mc_r10};
+#elif defined(ARCH_X86_64)
+    auto& g = ((ucontext_t*)ctx)->uc_mcontext.gregs;
+    return {(u64*)&g[REG_RIP], (u64*)&g[REG_RDI], (u64*)&g[REG_R10]};
+#else
+    return {};
+#endif
+}
+
 bool IsWriteError(void* ctx) {
 #if defined(_WIN32)
     return ((EXCEPTION_POINTERS*)ctx)->ExceptionRecord->ExceptionInformation[0] == 1;

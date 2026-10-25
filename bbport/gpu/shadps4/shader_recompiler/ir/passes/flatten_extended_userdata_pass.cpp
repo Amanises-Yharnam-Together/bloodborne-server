@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <mutex>
 #include <unordered_map>
 #include <boost/container/flat_map.hpp>
@@ -23,6 +24,7 @@
 #include "shader_recompiler/ir/reg.h"
 #include "shader_recompiler/ir/srt_gvn_table.h"
 #include "shader_recompiler/ir/value.h"
+#include "bbport_srt_fault.h"
 #include "bbport_toggles.h"
 
 #ifdef ARCH_X86_64
@@ -111,65 +113,24 @@ static bool SrtWalkerSignalHandler(void* context, void* fault_address) {
         return false;
     }
 
-    // bbport: draw-preparation workers run the same walker concurrently. A thread that faulted
-    // on the instruction before another one patched it finds the patch here and retries; decoding
-    // it as the original MOV would trip the ASSERT below (exit 23).
-    static std::mutex patch_mutex;
-    std::scoped_lock patch_lock{patch_mutex};
-    const u8* bytes = reinterpret_cast<const u8*>(code);
-    if ((bytes[0] == 0x48 && bytes[1] == 0x31 && bytes[2] == 0xFF) ||
-        (bytes[0] == 0x45 && bytes[1] == 0x31 && bytes[2] == 0xD2)) {
-        return true;
+    // bbport: the GPU thread's walk read through a null or unmapped pointer (the game's table for
+    // this draw is not there). That walk reads zeros, as the game's GPU would for that one draw;
+    // the code stays as it is. Patching the load to zero for good (upstream) left every later draw
+    // of the shader without its textures: Forbidden Woods lost all of them on v1.2.2 until the
+    // game was restarted (tests/test_srt_fault.cpp).
+    const auto regs = Common::GetResumeRegs(context);
+    if (!BbSrtFault::Resume(*regs.rip, *regs.rdi, *regs.r10)) {
+        return false; // not a walker load: the crash report
     }
 
-    // Patch instruction to zero register
-    ZydisDecodedInstruction instruction;
-    ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-    ZyanStatus status = Common::Decoder::Instance()->decodeInstruction(instruction, operands,
-                                                                       const_cast<void*>(code), 15);
-
-    ASSERT(ZYAN_SUCCESS(status) && instruction.mnemonic == ZYDIS_MNEMONIC_MOV &&
-           operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER &&
-           operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY);
-
-    size_t len = instruction.length;
-    const size_t patch_size = 3;
-    u8* code_patch = const_cast<u8*>(reinterpret_cast<const u8*>(code));
-    u8 patch[patch_size];
-
-    // We can only encounter rdi or r10d as the first operand in a
-    // fault memory access for SRT walker.
-    switch (operands[0].reg.value) {
-    case ZYDIS_REGISTER_RDI:
-        // mov rdi, [rdi + (off_dw << 2)] -> xor rdi, rdi
-        patch[0] = 0x48;
-        patch[1] = 0x31;
-        patch[2] = 0xFF;
-        break;
-    case ZYDIS_REGISTER_R10D:
-        // mov r10d, [rdi + (off_dw << 2)] -> xor r10d, r10d
-        patch[0] = 0x45;
-        patch[1] = 0x31;
-        patch[2] = 0xD2;
-        break;
-    default:
-        UNREACHABLE_MSG("Unsupported register for SRT walker patch");
-        return false;
+    static std::atomic<u64> faults{0};
+    const u64 n = faults.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 8 || (n & (n - 1)) == 0) {
+        LOG_WARNING(Render_Recompiler,
+                    "SRT walker at {} read through a bad pointer ({}): zeros for this draw "
+                    "({} so far)",
+                    code, fault_address, n);
     }
-
-    // bbport: other threads may be running this code. Written from the end, every state in
-    // between is a load into the same register or a register move into it: nops over the
-    // displacement, then the ModRM byte (mov reg, reg), the REX prefix, the xor opcode last
-    // (Supermedo's bbport 479f2f51).
-    for (size_t i = len; i-- > patch_size;) {
-        __atomic_store_n(&code_patch[i], u8{0x90}, __ATOMIC_RELEASE);
-    }
-    for (const size_t i : {size_t{2}, size_t{0}, size_t{1}}) {
-        __atomic_store_n(&code_patch[i], patch[i], __ATOMIC_RELEASE);
-    }
-
-    LOG_WARNING(Render_Recompiler, "Patched SRT walker at {}, fault address {}", code,
-                fault_address);
 
     return true;
 }
