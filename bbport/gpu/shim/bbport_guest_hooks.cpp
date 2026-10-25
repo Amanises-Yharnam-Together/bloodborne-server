@@ -129,25 +129,37 @@ u8* stub_page = nullptr;
 std::size_t stub_used = 0;
 constexpr std::size_t StubPageSize = 16384;
 
-/// A page within +-2 GiB of the image (below its base: the image grows upwards).
-u8* MapStubPage() {
-    for (u64 k = 1; k <= 64; ++k) {
-        const u64 hint = ImageBase - k * (16ull << 20);
+/// The stub page at `hint`, or null when that place is taken.
+u8* MapStubPageAt(u64 hint) {
 #ifdef _WIN32
-        // Plain memory: the guest range's placeholder reservation (runtime_memory.c) starts above
-        // the image.
-        void* p = VirtualAlloc(reinterpret_cast<void*>(hint), StubPageSize, MEM_RESERVE | MEM_COMMIT,
-                               PAGE_EXECUTE_READWRITE);
-        if (p) {
-            return static_cast<u8*>(p);
-        }
+    // Plain memory: the guest range's placeholder reservation (runtime_memory.c) starts above
+    // the image.
+    void* p = VirtualAlloc(reinterpret_cast<void*>(hint), StubPageSize, MEM_RESERVE | MEM_COMMIT,
+                           PAGE_EXECUTE_READWRITE);
+    return static_cast<u8*>(p);
 #else
-        void* p = mmap(reinterpret_cast<void*>(hint), StubPageSize, PROT_READ | PROT_WRITE | PROT_EXEC,
-                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-        if (p != MAP_FAILED) {
-            return static_cast<u8*>(p);
-        }
+    void* p = mmap(reinterpret_cast<void*>(hint), StubPageSize, PROT_READ | PROT_WRITE | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    return p != MAP_FAILED ? static_cast<u8*>(p) : nullptr;
 #endif
+}
+
+/// A page the hooked code reaches with a rel32 jump: below the image first, then above its end.
+/// The gigabyte below the image can be taken by others: on a player's PC (2026-10-25, NVIDIA,
+/// DLSS frame generation) every place there was, and no hook went in (the output kept 16:9).
+u8* MapStubPage() {
+    constexpr u64 Step = 1ull << 20;
+    constexpr u64 Reach = 0x70000000;       // the farthest site (~0x2ac0000) stays within 2 GiB
+    constexpr u64 AboveImage = 0x10000000; // past the image and its linked libraries (~0x5800000)
+    for (u64 d = 16ull << 20; d <= Reach; d += Step) {
+        if (u8* p = MapStubPageAt(ImageBase - d)) {
+            return p;
+        }
+    }
+    for (u64 d = AboveImage; d <= Reach; d += Step) {
+        if (u8* p = MapStubPageAt(ImageBase + d)) {
+            return p;
+        }
     }
     return nullptr;
 }
@@ -1331,6 +1343,9 @@ void Install(RangeCallback on_gpu_range_allocated) {
         std::printf("Guest hooks: render job slot fix %s\n", job_slots ? "on" : "not installed");
         std::printf("Guest hooks: blur-kernel sample count clamp %s\n",
                     kernel_clamp ? "on" : "not installed");
+    } else if (!(traps_env && traps_env[0] == '1')) {
+        std::printf("Guest hooks: no memory within reach of the game's code for detours: no crash "
+                    "fixes, and the output keeps 16:9\n");
     }
     if (!memory_hooks) {
         return;

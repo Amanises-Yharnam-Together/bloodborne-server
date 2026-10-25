@@ -153,6 +153,7 @@ extern "C" int runtime_memory_is_mapped(uintptr_t, uint64_t) {
 
 int main(int argc, char** argv) {
     const bool traps = argc > 1 && std::strcmp(argv[1], "traps") == 0;
+    const bool crowded = argc > 1 && std::strcmp(argv[1], "crowded") == 0;
     if (traps) {
 #ifdef _WIN32
         _putenv_s("BB_GUEST_HOOK_TRAPS", "1");
@@ -171,6 +172,21 @@ int main(int argc, char** argv) {
     }
 #endif
     assert(image == reinterpret_cast<void*>(ImageBase));
+    // "crowded": something else (on a player's PC, 2026-10-25: NVIDIA's driver with DLSS frame
+    // generation) holds the gigabyte below the image, where the detour stubs used to go only.
+    if (crowded) {
+        constexpr u64 Crowd = (1ull << 30) + (16ull << 20);
+#ifdef _WIN32
+        void* below = VirtualAlloc(reinterpret_cast<void*>(ImageBase - Crowd), Crowd, MEM_RESERVE, PAGE_NOACCESS);
+#else
+        void* below = mmap(reinterpret_cast<void*>(ImageBase - Crowd), Crowd, PROT_NONE,
+                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+        if (below == MAP_FAILED) {
+            below = nullptr;
+        }
+#endif
+        assert(below == reinterpret_cast<void*>(ImageBase - Crowd));
+    }
 
     static u64 next[2] = {0, 0x5000 + 0x3000};
     static u64 node[4] = {0, 0x5000, 0, reinterpret_cast<u64>(next)};
