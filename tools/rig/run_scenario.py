@@ -510,6 +510,16 @@ def stop_lane_games():
     LAUNCHED.clear()
 
 
+def block_occupied_lanes():
+    """Blocks the free lanes whose folders a game still plays in (lanes.block_occupied), before
+    this run takes any."""
+    if ENGINE.name != "port":
+        return
+    for lane, pids in lanes.block_occupied(RIG, RIG / "port", games_listing()).items():
+        print(f"lane {lane}: blocked, games of an ended run still play in it "
+              f"({', '.join(map(str, pids))})")
+
+
 def stop_lane_strays(roles: list[str]):
     """The lane's games that outlived its run (a hung game the window close and taskkill /T
     missed): stopped by their command line (the lane's role folders), never another lane's. A
@@ -1941,6 +1951,7 @@ def act(args: argparse.Namespace) -> int:
         chosen[args.scenarios[0]] = compile_suite(suite, only=args.chapter)
     owner = args.owner or lanes.default_owner()
     if args.lanes:
+        block_occupied_lanes()
         taken = lanes.claim_free_waiting(RIG, args.lanes, owner)
         if not taken:
             print("Every lane is held or blocked (--lanes-status): not starting the rig.")
@@ -1958,6 +1969,8 @@ def act(args: argparse.Namespace) -> int:
         return 0 if all(results.values()) else 1
     # One lane: taken here unless the --lanes run that started this one holds it.
     claimed_by_parent = os.environ.get(LANE_HELD) == str(LANE)
+    if not claimed_by_parent:
+        block_occupied_lanes()
     if not claimed_by_parent and not lanes.claim_when_free(RIG, LANE, owner):
         held = lanes.read_claim(RIG, LANE)
         print(f"Lane {LANE} is " + (f"held by {held['owner']} since {held['since']}"
