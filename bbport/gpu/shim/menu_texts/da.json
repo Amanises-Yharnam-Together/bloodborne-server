@@ -422,7 +422,6 @@
  "Ping": "Markér",
  "Duel": "Duel",
  "End the duel": "Afslut duellen",
- "The duel begins in %d": "Duellen begynder om %d",
  "Defeated: the duel goes on without you": "Besejret: duellen fortsætter uden dig",
  "%s challenges you to a duel. Accept?": "%s udfordrer dig til duel. Accepter?",
  "A duel is already under way.": "Der er allerede en duel i gang.",
@@ -464,5 +463,9 @@
  "Travel with the team?": "Rejse med holdet?",
  "With the team": "Med holdet",
  "Yes": "Ja",
- "none": "ingen"
+ "none": "ingen",
+ "The duel begins": "Duellen begynder",
+ "Fight": "Kæmp",
+ "Co-op menu": "Co-op-menu",
+ "Your team, invites and duels": "Dit hold, invitationer og dueller"
 }

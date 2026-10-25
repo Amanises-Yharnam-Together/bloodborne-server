@@ -144,24 +144,62 @@ TEST(BloodborneDuel, FreeForAllFoes) {
 }
 
 // The end gives back the HP from the start and the vials and bullets used; picked-up ones stay.
-TEST(BloodborneDuel, GivesBackWhatTheDuelTook) {
-    EXPECT_EQ(DuelGiveBackOf({.hp = 500, .vials = 20, .bullets = 15},
-                             {.hp = 1, .vials = 17, .bullets = 9}, 600),
-              (DuelGiveBack{.hp = 500, .vials = 3, .bullets = 6}));
-    EXPECT_EQ(DuelGiveBackOf({.hp = 500, .vials = 20, .bullets = 15},
-                             {.hp = 500, .vials = 22, .bullets = 15}, 600),
-              (DuelGiveBack{}))
-        << "nothing used: nothing to give";
-    EXPECT_EQ(DuelGiveBackOf({.hp = 700, .vials = 0, .bullets = 0},
-                             {.hp = 100, .vials = 0, .bullets = 0}, 600)
-                  .hp,
-              std::optional<s32>{600})
-        << "never past the max";
-    EXPECT_EQ(DuelGiveBackOf({.hp = 0, .vials = 0, .bullets = 0},
-                             {.hp = 100, .vials = 0, .bullets = 0}, 600)
-                  .hp,
-              std::optional<s32>{1})
-        << "never dead";
+TEST(BloodborneDuel, GivesBackTheHpFromTheStart) {
+    EXPECT_EQ(DuelHpBack(500, 1, 600), std::optional<s32>{500});
+    EXPECT_EQ(DuelHpBack(500, 500, 600), std::nullopt) << "nothing lost: nothing to set";
+    EXPECT_EQ(DuelHpBack(700, 100, 600), std::optional<s32>{600}) << "never past the max";
+    EXPECT_EQ(DuelHpBack(0, 100, 600), std::optional<s32>{1}) << "never dead";
+}
+
+// Kaniel 2026-10-25: every consumable the duel used comes back (vials, bullets, knives, Molotovs,
+// pebbles ...), to the count it had as the duel started. What was picked up meanwhile stays: the
+// end never takes an item away.
+TEST(BloodborneDuel, GivesBackEveryConsumableUsed) {
+    const std::vector<HeldGoods> before{{1000, 20}, {900, 15}, {1240, 10}, {1200, 3}};
+    const std::vector<HeldGoods> now{{1000, 17}, {900, 9}, {1240, 4}, {1230, 5}};
+    EXPECT_EQ(DuelGoodsGiveBack(before, now),
+              (std::vector<HeldGoods>{{1000, 3}, {900, 6}, {1240, 6}, {1200, 3}}))
+        << "the Molotovs all thrown (none left) come back too; the pebbles picked up stay";
+    EXPECT_TRUE(DuelGoodsGiveBack(before, before).empty());
+    const std::vector<HeldGoods> more{{1000, 25}, {900, 15}, {1240, 10}, {1200, 3}};
+    EXPECT_TRUE(DuelGoodsGiveBack(before, more).empty()) << "picked up more: nothing taken";
+}
+
+// Kaniel 2026-10-25: the countdown counts 3, 2, 1 with a bar filling to the fight, then says the
+// fight starts for a moment: from when the server's countdown came (its time left) and when its
+// fight came.
+TEST(BloodborneDuel, CountsDownToTheFight) {
+    const auto at = [](s64 now, std::optional<s64> fight = std::nullopt) {
+        return DuelCountdownAt(10'000, fight, now);
+    };
+    EXPECT_EQ(at(7'000), (DuelCountdownShown{.shown = true, .number = 3, .fill = 0.0f}));
+    EXPECT_EQ(at(8'500).number, 2);
+    EXPECT_FLOAT_EQ(at(8'500).fill, 0.5f);
+    EXPECT_EQ(at(9'900).number, 1);
+    EXPECT_TRUE(at(10'000).fight)
+        << "the time is up: the fight, though the server's may come later";
+    EXPECT_FLOAT_EQ(at(10'000).fill, 1.0f);
+    EXPECT_TRUE(at(10'000 + DuelFightShownMs - 1).fight);
+    EXPECT_FALSE(at(10'000 + DuelFightShownMs).shown);
+    EXPECT_TRUE(at(11'000, 10'500).fight) << "shown from when the server's fight came";
+    EXPECT_FALSE(at(10'500 + DuelFightShownMs, 10'500).shown);
+    EXPECT_FALSE(DuelCountdownAt(std::nullopt, std::nullopt, 5'000).shown);
+}
+
+// The follower keeps when the countdown ends and when the fight came, on this game's clock.
+TEST(BloodborneDuel, KeepsTheCountdownsTimes) {
+    DuelFollower follower;
+    auto countdown =
+        StateOf(5, bbcoop::DuelState::COUNTDOWN, {{"ada", 1, 1, false}, {"bob", 2, 1, false}});
+    countdown.set_left_ms(2'800);
+    follower.Take(countdown, "bob", 1'000);
+    EXPECT_EQ(follower.CountdownUntil(), std::optional<s64>{3'800});
+    EXPECT_FALSE(follower.FightSince());
+    follower.Take(
+        StateOf(5, bbcoop::DuelState::FIGHTING, {{"ada", 1, 1, false}, {"bob", 2, 1, false}}),
+        "bob", 3'900);
+    EXPECT_EQ(follower.FightSince(), std::optional<s64>{3'900});
+    EXPECT_EQ(follower.CountdownUntil(), std::optional<s64>{3'800});
 }
 
 // Which bodies are foes': all of them when only foes are here; else each body is its nearest

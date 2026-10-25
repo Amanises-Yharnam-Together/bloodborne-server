@@ -422,7 +422,6 @@
  "Ping": "İşaretle",
  "Duel": "Düello",
  "End the duel": "Düelloyu bitir",
- "The duel begins in %d": "Düello %d içinde başlıyor",
  "Defeated: the duel goes on without you": "Yenildin: düello sensiz sürüyor",
  "%s challenges you to a duel. Accept?": "%s seni düelloya davet ediyor. Kabul et?",
  "A duel is already under way.": "Zaten bir düello sürüyor.",
@@ -464,5 +463,9 @@
  "Travel with the team?": "Takımla birlikte gidilsin mi?",
  "With the team": "Takımla",
  "Yes": "Evet",
- "none": "yok"
+ "none": "yok",
+ "The duel begins": "Düello başlıyor",
+ "Fight": "Dövüş",
+ "Co-op menu": "Ortak oyun menüsü",
+ "Your team, invites and duels": "Takımın, davetler ve düellolar"
 }

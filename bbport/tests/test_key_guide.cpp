@@ -60,6 +60,20 @@ void SecondLineWhenItDoesNot() {
     Inside(entries, layout, 700.0f);
 }
 
+// Kaniel 2026-10-25: the co-op hint on the left (how to open the co-op menu, where duels are)
+// shows a while once the player is in its team's hunt, then fades out.
+bool CoopHintShowsThenFades() {
+    const bool ok = CoopHintAlpha(-1.0) == 0.0f && CoopHintAlpha(0.0) == 1.0f &&
+                    CoopHintAlpha(CoopHintShownS - 0.01) == 1.0f &&
+                    std::fabs(CoopHintAlpha(CoopHintShownS + CoopHintFadeS * 0.5) - 0.5f) < 1e-4f &&
+                    CoopHintAlpha(CoopHintShownS + CoopHintFadeS) == 0.0f &&
+                    CoopHintAlpha(600.0) == 0.0f;
+    if (!ok) {
+        std::puts("Key guide: FAIL (the co-op hint's fade)");
+    }
+    return ok;
+}
+
 void AnEntryWiderThanTheRoomStaysAtTheLeft() {
     const std::vector<Entry> entries{{26, 900}};
     const Layout layout = Arrange(entries, IconGap, EntryGap, 500.0f);
@@ -74,6 +88,9 @@ int main() {
     SecondLineWhenItDoesNot();
     AnEntryWiderThanTheRoomStaysAtTheLeft();
     assert(Arrange({}, IconGap, EntryGap, 100.0f).places.empty());
+    if (!CoopHintShowsThenFades()) {
+        return 1;
+    }
     std::puts("Key guide: PASS (one centred line, smaller, a second line, inside the panel)");
     return 0;
 }

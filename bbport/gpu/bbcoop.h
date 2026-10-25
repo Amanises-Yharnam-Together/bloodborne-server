@@ -443,6 +443,10 @@ typedef struct bbcoop_duel {
     int may_cancel;     /* this player is in the duel under way */
     float seconds_left; /* the question's or the countdown's */
     int fighters;       /* duelists still standing */
+    /* Kaniel 2026-10-25: the countdown as shown: up, its number (3, 2, 1), the bar's fill (0 to 1)
+     * and the fight's start once it is over. */
+    int countdown_shown, countdown_number, countdown_fight;
+    float countdown_fill;
 } bbcoop_duel;
 void bbcoop_duel_view(bbcoop_duel *duel);
 void bbcoop_duel_propose(void);

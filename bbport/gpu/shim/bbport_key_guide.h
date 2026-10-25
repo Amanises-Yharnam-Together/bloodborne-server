@@ -86,4 +86,15 @@ inline Layout Arrange(std::span<const Entry> entries, float icon_gap, float entr
     return layout;
 }
 
+/// Kaniel 2026-10-25: the co-op hint on the left of the screen (how to open the co-op menu, and that
+/// duels are in it): fully shown for CoopHintShownS once the player is in its team's hunt, then
+/// fading out over CoopHintFadeS. Its alpha `seconds` after it came.
+inline constexpr double CoopHintShownS = 20.0, CoopHintFadeS = 2.0;
+inline float CoopHintAlpha(double seconds) {
+    if (seconds < 0.0 || seconds >= CoopHintShownS + CoopHintFadeS) {
+        return 0.0f;
+    }
+    return seconds < CoopHintShownS ? 1.0f : float(1.0 - (seconds - CoopHintShownS) / CoopHintFadeS);
+}
+
 } // namespace BbKeyGuide

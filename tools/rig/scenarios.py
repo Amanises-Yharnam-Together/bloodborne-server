@@ -4667,6 +4667,8 @@ DIFFERS = r"installation differs"
 # YOU DIED and ADVERSARY EXPUNGED banners, and the guest's HP given back at the end. A second duel
 # the host cancels: both friendly again at once.
 DUEL_HP_FLOOR = 594  # the rig hunters' max HP: the guest has it all back after the duel
+# Consumables the duel uses (EquipParamGoods): Throwing Knives, Molotov Cocktails; Pebbles picked up.
+DUEL_KNIVES, DUEL_MOLOTOVS, DUEL_PEBBLES = "goods:1240", "goods:1200", "goods:1230"
 # What a party death does, none of it in a duel: a down, a real death, a wipe, a trip or move to a
 # lamp.
 DUEL_NO_DEATH = [r"Bloodborne party death: down \d", r"died for real", r"killed while down",
@@ -4682,11 +4684,18 @@ SCENARIOS["duel"] = {
                  "sync over", "wait 3", "duel-propose", "wait-duel countdown 40",
                  "wait-duel fighting 10", "wait 2", "duel-cancel", "wait-duel none 10",
                  "sync cancelled", "wait 3", "snapshot", "expect-session 2"],
-        "guest": [START, "wait-session 2 300", "wait 5", "note-max-hp", "sync together",
-                  "duel-answer yes 40", "wait-duel countdown 10", "wait-duel fighting 10",
+        "guest": [START, "wait-session 2 300", "shot coop-hint", "wait 5", "note-max-hp",
+                  # Kaniel 2026-10-25: every consumable used in the duel comes back, picked-up
+                  # ones stay (knives and Molotovs taken out stand for thrown ones).
+                  f"trade-stock {DUEL_KNIVES} 10", f"trade-stock {DUEL_MOLOTOVS} 3",
+                  f"trade-stock {DUEL_PEBBLES} 0", "sync together",
+                  "duel-answer yes 40", "wait-duel countdown 10", "wait 1", "shot duel-countdown",
+                  "wait-duel fighting 10", f"trade-stock {DUEL_KNIVES} 4",
+                  f"trade-stock {DUEL_MOLOTOVS} 0", f"trade-give {DUEL_PEBBLES} 5",
                   # Two duelists: the guest out ends it at once (its HP 1 then, as logged).
                   "sync fighting", "hurt self 1", "sync guest-low", "wait-duel none 60",
-                  "sync over",
+                  "sync over", f"expect-held {DUEL_KNIVES} 10 5",
+                  f"expect-held {DUEL_MOLOTOVS} 3 5", f"expect-held {DUEL_PEBBLES} 5 5",
                   f"expect-hp self >= {DUEL_HP_FLOOR}", "duel-answer yes 40",
                   "wait-duel fighting 20", "wait-duel none 20", "sync cancelled", "wait 3",
                   "snapshot", "expect-session 2", "expect-max-hp self == noted"],
@@ -4699,9 +4708,12 @@ SCENARIOS["duel"] = {
                  r"Co-op duel: duel 1 is over: WON, this player's side won",
                  r"Co-op duel: body 0x[0-9a-f]+ takes its team \d+ back",
                  r"Co-op duel: duel 2 is over: CANCELLED"],
-        "guest": [r"Co-op duel: this player is out of duel 1 \(no party death\)",
+        "guest": [r"Co-op duel: countdown 3 ", r"Co-op duel: countdown 2 ",
+                  r"Co-op duel: countdown 1 ", r"Co-op duel: countdown fight",
+                  r"Co-op duel: this player is out of duel 1 \(no party death\)",
                   r"Co-op duel: duel 1 is over: WON, this player lost",
-                  rf"Co-op duel: given back \(the duel ended\): hp 1 -> {DUEL_HP_FLOOR}",
+                  rf"Co-op duel: given back \(the duel ended\): hp 1 -> {DUEL_HP_FLOOR}, goods "
+                  r"\[(?=[^]]*1240 x6)(?=[^]]*1200 x3)",
                   r"Co-op duel: duel 2 is over: CANCELLED"],
     },
     "forbid": {role: SESSION_HOLDS + DUEL_NO_DEATH for role in ("host", "guest")},

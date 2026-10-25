@@ -422,7 +422,6 @@
  "Ping": "Merkitse",
  "Duel": "Kaksintaistelu",
  "End the duel": "Lopeta kaksintaistelu",
- "The duel begins in %d": "Kaksintaistelu alkaa: %d",
  "Defeated: the duel goes on without you": "Hävisit: kaksintaistelu jatkuu ilman sinua",
  "%s challenges you to a duel. Accept?": "%s haastaa sinut kaksintaisteluun. Hyväksytkö?",
  "A duel is already under way.": "Kaksintaistelu on jo käynnissä.",
@@ -464,5 +463,9 @@
  "Travel with the team?": "Matkustetaanko tiimin kanssa?",
  "With the team": "Tiimin kanssa",
  "Yes": "Kyllä",
- "none": "ei mitään"
+ "none": "ei mitään",
+ "The duel begins": "Kaksintaistelu alkaa",
+ "Fight": "Taistele",
+ "Co-op menu": "Yhteistyövalikko",
+ "Your team, invites and duels": "Tiimisi, kutsut ja kaksintaistelut"
 }
