@@ -22,6 +22,8 @@ REQUIRED = (
     # option is disabled on every PC (the 0.2.x local releases).
     "bin/bbport_dlss.dll",
     "bin/nvngx_dlss.dll",
+    # DLSS Frame Generation: the launcher's Frame generation note checks for it too.
+    "bin/nvngx_dlssg.dll",
     "READ ME FIRST.txt",
     "VERSION.txt",
     "tools/party_boss_events.py",

@@ -874,6 +874,24 @@ UPSCALER_REASONS_RU = {
 }
 
 
+DLSS_FILES = ('bbport_dlss.dll', 'nvngx_dlss.dll', 'nvngx_dlssg.dll')  # bin\, next to bb-probe.exe
+
+
+def dlss_files_hint(port_dir=None):
+    """The note under 'Frame generation provider': the exact folder the DLSS files belong in, and whether they
+    are there. It used to say 'next to the game', and players looked in their Bloodborne game folder (v1.2.1)."""
+    bin_dir = Path(port_dir or PORT_DIR) / 'bin'
+    missing = [name for name in DLSS_FILES if not (bin_dir / name).is_file()]
+    if not missing:
+        return _('DLSS uses {} in {} (the setup installs them there; ✓ found). On other GPUs FSR 3.1 is used.',
+                 'DLSS использует {} в {} (их ставит установщик; ✓ найдены). На других видеокартах используется '
+                 'FSR 3.1.').format(', '.join(DLSS_FILES), bin_dir)
+    return _('DLSS needs {} in {}: {} missing. Run the setup again; if they vanish again, your antivirus removed '
+             'them. Until then FSR 3.1 is used.',
+             'Для DLSS нужны {} в {}: нет {}. Запустите установщик ещё раз; если они снова пропадут, их удалил '
+             'антивирус. Пока используется FSR 3.1.').format(', '.join(DLSS_FILES), bin_dir, ', '.join(missing))
+
+
 def reason_text(reason):
     """A reason of the GPU check in the launcher's language (unknown ones stay in English)."""
     return _(reason, UPSCALER_REASONS_RU.get(reason))
@@ -4606,10 +4624,7 @@ class Launcher:
               'Удваивает частоту кадров; добавляет немного задержки ввода. Лучше всего от 60 FPS.')))
         self.row(f, _('Frame generation provider', 'Технология генерации кадров'),
                  self.choice(f, 'frame_gen_provider', 'ini', FRAME_GEN_PROVIDERS),
-                 _('DLSS needs bbport_dlss.dll and nvngx_dlssg.dll next to the game; without them, or on '
-                   'other GPUs, FSR 3.1 is used.',
-                   'Для DLSS нужны bbport_dlss.dll и nvngx_dlssg.dll рядом с игрой; без них или на других '
-                   'видеокартах используется FSR 3.1.'))
+                 dlss_files_hint())
         self.row(f, _('Frame generation multiplier', 'Множитель генерации кадров'),
                  self.choice(f, 'frame_gen_multiplier', 'ini', FRAME_GEN_MULTIPLIERS),
                  _('Frames shown per game frame. FSR 3.1 makes one (2×); DLSS on a GeForce RTX 50 up to three '
