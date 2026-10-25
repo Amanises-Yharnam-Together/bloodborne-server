@@ -2924,10 +2924,11 @@ class Launcher:
                     darkcolor=LINE, troughcolor=FIELD, focuscolor=CARD, font=f['body'])
         s.configure('TCombobox', arrowcolor=MUTED, foreground=TEXT, background=CARD, padding=(8, 6), arrowsize=px(15),
                     selectbackground=FIELD, selectforeground=TEXT, bordercolor=LINE_HI, lightcolor=FIELD, darkcolor=FIELD)
-        s.map('TCombobox', fieldbackground=[('readonly', FIELD)], foreground=[('readonly', TEXT)],
-              selectbackground=[('readonly', FIELD)], selectforeground=[('readonly', TEXT)],
-              background=[('active', LINE), ('pressed', LINE)], arrowcolor=[('active', TEXT), ('pressed', TEXT)],
-              bordercolor=[('focus', MUTED), ('active', MUTED)], lightcolor=[('focus', FIELD)],
+        s.map('TCombobox', fieldbackground=[('readonly', FIELD)], foreground=[('disabled', DIM), ('readonly', TEXT)],
+              selectbackground=[('readonly', FIELD)], selectforeground=[('disabled', DIM), ('readonly', TEXT)],
+              background=[('active', LINE), ('pressed', LINE)],
+              arrowcolor=[('disabled', DIM), ('active', TEXT), ('pressed', TEXT)],
+              bordercolor=[('disabled', LINE), ('focus', MUTED), ('active', MUTED)], lightcolor=[('focus', FIELD)],
               darkcolor=[('focus', FIELD)])
         s.configure('TEntry', foreground=TEXT, insertcolor=TEXT, padding=(8, 6), bordercolor=LINE_HI, lightcolor=FIELD,
                     darkcolor=FIELD, selectbackground=ACCENT, selectforeground=TEXT)
@@ -3861,7 +3862,8 @@ class Launcher:
     def build_coop_popup(self):
         """The co-op settings, over the whole window (Kaniel 2026-10-16): opened from the menu, and by
         itself at the first start; the launcher stays behind it until the game folder and the host's IP
-        are set and Done is pressed."""
+        are set and Done is pressed. Kaniel 2026-10-25: steps instead of one page of switches: the game and
+        the host, then how the enemies get harder, then how the team travels."""
         tk, ttk, px = self.tk, self.ttk, self.px
         self.coop = bbport_coop.load_settings(PORT_DIR)
         self.coop_busy = self.coop_searching = False
@@ -3887,22 +3889,82 @@ class Launcher:
             self.coop_vars[key] = v
             return v
 
-        self.flow(card, _('Set co-op up once: where your game is, who hosts, and how hard the enemies are. '
-                          'Everyone uses this same release; the others see your character\'s name.',
-                          'Настройте кооператив один раз: где игра, кто хост и насколько сильны враги. '
-                          'Все используют один релиз; другие видят имя вашего персонажа.'), 'body', MUTED).grid(
+        self.flow(card, _('Set co-op up once, in three steps. Everyone uses this same release; the others see '
+                          'your character\'s name.',
+                          'Настройте кооператив один раз, в три шага. Все используют один релиз; другие видят '
+                          'имя вашего персонажа.'), 'body', MUTED).grid(
             row=1, column=0, columnspan=2, sticky='we', pady=(px(6), px(4)))
-        cell = self.cell(card, 2, 0, _('Your Bloodborne folder (version 1.09, or with the 1.09 update next to it)',
+        self.coop_step_names = [_('Game and host', 'Игра и хост'), _('Enemies', 'Враги'),
+                                _('Travel', 'Путешествия')]
+        bar = tk.Frame(card, bg=CARD)
+        bar.grid(row=2, column=0, columnspan=2, sticky='we', pady=(px(14), px(2)))
+        self.coop_step_tabs = []
+        for index, name in enumerate(self.coop_step_names):
+            if index:
+                tk.Frame(bar, bg=LINE, height=1, width=px(36)).pack(side='left', padx=px(12))
+            tab = self.label(bar, f'{index + 1}   {spaced(name)}', 'small_bold', DIM)
+            tab.pack(side='left')
+            tab.bind('<Button-1>', lambda _e, index=index: self.coop_go(index))
+            self.coop_step_tabs.append(tab)
+        steps = [tk.Frame(card, bg=CARD) for _name in self.coop_step_names]
+        for step in steps:
+            step.columnconfigure(0, weight=1, uniform='coop', minsize=0)
+            step.columnconfigure(1, weight=1, uniform='coop', minsize=0)
+        self.coop_steps, self.coop_step = steps, 0
+
+        # Step 1: the game and the host.
+        page = steps[0]
+        cell = self.cell(page, 0, 0, _('Your Bloodborne folder (version 1.09, or with the 1.09 update next to it)',
                                        'Папка Bloodborne (версия 1.09 или с обновлением 1.09 рядом)'), span=2)
-        holder = tk.Frame(cell, bg=CARD)
-        holder.pack(fill='x')
-        ttk.Entry(holder, textvariable=var('game'), width=30).pack(side='left', fill='x', expand=True)
-        self.button(holder, _('Browse…', 'Обзор…'), self.coop_browse).pack(side='left', padx=(px(8), 0))
-        self.button(holder, _('Find it for me', 'Найти автоматически'),
+        row = tk.Frame(cell, bg=CARD)
+        row.pack(fill='x')
+        ttk.Entry(row, textvariable=var('game'), width=30).pack(side='left', fill='x', expand=True)
+        self.button(row, _('Browse…', 'Обзор…'), self.coop_browse).pack(side='left', padx=(px(8), 0))
+        self.button(row, _('Find it for me', 'Найти автоматически'),
                     lambda: self.coop_search(None)).pack(side='left', padx=(px(8), 0))
-        self.pkg_button(holder).pack(side='left', padx=(px(8), 0))
+        self.pkg_button(row).pack(side='left', padx=(px(8), 0))
         self.coop_game_line = StatusLine(self, cell)
         self.coop_game_line.frame.pack(fill='x', pady=(px(6), 0))
+        # No Player/Host switch (Kaniel 2026-10-16): the host types their own address and starts the server
+        # with Start server (Kaniel 2026-10-21: PLAY no longer starts it).
+        cell = self.cell(page, 1, 0, _("Host's IP address (VPN or public; the host types their own)",
+                                       'IP хоста (VPN или внешний; хост вводит свой)'), span=2)
+        ttk.Entry(cell, textvariable=var('host_ip')).pack(fill='x')
+        # A public server (docs/HOSTED_SERVER.md) goes in the same field, by its name or address.
+        self.flow(cell, _(bbport_coop.PUBLIC_SERVER_HELP), 'small', MUTED).pack(fill='x', pady=(px(4), 0))
+        # No account name or password (phase 11): the player's id is made once and kept in coop.json,
+        # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
+        row = self.cell(page, 2, 0, '', span=2)
+        # Players were lost at the VPN step (Kaniel 2026-10-21): the steps are one press away.
+        self.button(row, _('How to connect', 'Как подключиться'), self.open_coop_help).pack(side='left')
+        self.button(row, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
+                    self.coop_import_saves).pack(side='left', padx=(px(8), 0))
+        # Kaniel 2026-10-25: one press makes the zip a bug report needs (bbport_support).
+        self.button(row, _('Support bundle', 'Пакет для поддержки'),
+                    self.make_support_bundle).pack(side='left', padx=(px(8), 0))
+        self.button(row, _('Restore saves…', 'Восстановить сохранения…'),
+                    self.open_save_backups).pack(side='left', padx=(px(8), 0))
+
+        # Step 2: how the enemies get harder (the same for every player), and Rot.
+        page = steps[1]
+        self.label(page, _('How do the enemies get harder? The same for every player.',
+                           'Как усиливаются враги? У всех игроков одинаково.'), 'small', MUTED).grid(
+            row=0, column=0, columnspan=2, sticky='w', pady=(px(10), px(4)))
+        scale = self.coop_rule_var('rule_scale')
+        self.coop_enemy_mode = self.coop_mode_var(scale, 'auto', 'fixed')
+        self.coop_option(page, self.coop_enemy_mode, 'auto',
+                         _('Auto: scale with the hunters on the map', 'Авто: по числу охотников на карте'),
+                         _('Normal enemies for a hunter alone, stronger with each teammate on the same map, up to '
+                           'Harder (HP ×3, damage ×1.5, poise ×3) for a full team.',
+                           'Обычные враги для одного охотника, сильнее с каждым союзником на той же карте, до '
+                           '«Сложнее» (HP ×3, урон ×1.5, стойкость ×3) для полной команды.')).grid(
+            row=1, column=0, columnspan=2, sticky='we', pady=(px(6), 0))
+        fixed = self.coop_option(page, self.coop_enemy_mode, 'fixed',
+                                 _('Fixed: one level for the whole hunt', 'Постоянно: один уровень на всю игру'),
+                                 _('The enemies stay as hard as you pick here, however many hunters are around.',
+                                   'Враги такие, как вы выберете, сколько бы охотников ни было рядом.'))
+        fixed.grid(row=2, column=0, columnspan=2, sticky='we', pady=(px(8), 0))
+        enemies = fixed.extra
 
         def combo(cell, key, options):
             values = [v for v, _t in options]
@@ -3913,6 +3975,7 @@ class Launcher:
             def picked(_e):
                 self.coop_picked.add(key)
                 v.set(values[box.current()])
+                self.coop_enemy_mode.set('fixed')
                 self.coop_changed_soon()
             box.bind('<<ComboboxSelected>>', picked)
             box.pack(fill='x')
@@ -3922,16 +3985,6 @@ class Launcher:
                 self.coop_picked.add(key)
             return box
 
-        # No Player/Host switch (Kaniel 2026-10-16): the host types their own address and starts the server
-        # with Start server (Kaniel 2026-10-21: PLAY no longer starts it).
-        cell = self.cell(card, 3, 0, _("Host's IP address (VPN or public; the host types their own)",
-                                       'IP хоста (VPN или внешний; хост вводит свой)'))
-        ttk.Entry(cell, textvariable=var('host_ip')).pack(fill='x')
-        # A public server (docs/HOSTED_SERVER.md) goes in the same field, by its name or address.
-        self.flow(cell, _(bbport_coop.PUBLIC_SERVER_HELP), 'small', MUTED).pack(fill='x', pady=(px(4), 0))
-        # No account name or password (phase 11): the player's id is made once and kept in coop.json,
-        # and the others see the character's name. No party settings: the team is made in the game (the team screen after Continue).
-        enemies = self.cell(card, 3, 1, _('Enemies (the same for every player)', 'Враги (у всех одинаково)'))
         saved = self.coop.get('harder', 'off')
         presets = [v for v, _t in HARDER_CHOICES if v != 'custom']
         custom = saved not in presets and bbport_coop.valid_harder(saved)
@@ -3950,71 +4003,162 @@ class Launcher:
             else:
                 self.coop_custom.pack_forget()
         self.coop_enemies.bind('<<ComboboxSelected>>', enemies_picked, add='+')
-        holder = self.cell(card, 4, 0, '', span=2)
-        # Players were lost at the VPN step (Kaniel 2026-10-21): the steps are one press away. Below the
-        # fields, so Host IP and Enemies stay on one line.
-        self.button(holder, _('How to connect', 'Как подключиться'), self.open_coop_help).pack(side='left')
-        self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
-                    self.coop_import_saves).pack(side='left', padx=(px(8), 0))
-        # Kaniel 2026-10-25: one press makes the zip a bug report needs (bbport_support).
-        self.button(holder, _('Support bundle', 'Пакет для поддержки'),
-                    self.make_support_bundle).pack(side='left', padx=(px(8), 0))
-        self.button(holder, _('Restore saves…', 'Восстановить сохранения…'),
-                    self.open_save_backups).pack(side='left', padx=(px(8), 0))
-        self.build_coop_rules(card)
-        self.note(card, _('Make or join a team in the game: Continue, Load Game or New Game opens the team screen. '
+        tk.Frame(enemies, bg=CARD, height=px(12)).pack(side='bottom')
+
+        def fixed_follows(*_a):
+            # Auto takes its own levels: the box keeps the fixed one for when Fixed is picked again.
+            self.coop_enemies.configure(state='readonly' if self.coop_enemy_mode.get() == 'fixed' else 'disabled')
+        self.coop_enemy_mode.trace_add('write', fixed_follows)
+        fixed_follows()
+        cell = self.cell(page, 3, 0, _('Death cost (optional)', 'Цена смерти (по желанию)'), span=2)
+        cell.grid_configure(pady=(px(18), 0))
+        self.coop_rule_switch(cell, 'rule_rot', _('Rot: each real death adds a penalty (up to 5); a lamp, a level '
+                                                  'up, a boss, your killer or your bloodstain takes it away',
+                                                  'Гниль: каждая настоящая смерть даёт штраф (до 5); лампа, уровень, '
+                                                  'босс, ваш убийца или ваше пятно крови снимают его'))
+        self.note(page, _('Auto and Rot are host rules: yours count when you lead the team.',
+                          'Авто и гниль — правила хоста: действуют ваши, когда вы лидер команды.'), top=14)
+
+        # Step 3: how the team travels.
+        page = steps[2]
+        self.label(page, _('How does the team travel between lamps and headstones?',
+                           'Как команда перемещается между лампами и надгробиями?'), 'small', MUTED).grid(
+            row=0, column=0, columnspan=2, sticky='w', pady=(px(10), px(4)))
+        travel = self.coop_rule_var('rule_travel')
+        self.coop_travel_mode = self.coop_mode_var(travel, 'together', 'seamless')
+        self.coop_option(page, self.coop_travel_mode, 'seamless',
+                         _('Seamless: everyone travels on their own', 'Бесшовно: каждый путешествует сам'),
+                         _('A lamp or headstone takes only you; your teammates stay where they are and you can '
+                           'meet up anywhere.',
+                           'Лампа или надгробие переносят только вас; союзники остаются на месте, и встретиться '
+                           'можно где угодно.')).grid(row=1, column=0, columnspan=2, sticky='we', pady=(px(6), 0))
+        together = self.coop_option(page, self.coop_travel_mode, 'together',
+                                    _('Travel together', 'Путь вместе'),
+                                    _('A lamp or headstone asks to take the whole team with you.',
+                                      'Лампа или надгробие предлагают взять с собой всю команду.'))
+        together.grid(row=2, column=0, columnspan=2, sticky='we', pady=(px(8), 0))
+        vote = self.coop_rule_switch(together.extra, 'rule_vote',
+                                     _('With a vote: the team has 20 s, one No stops the trip',
+                                       'С голосованием: у команды 20 с, одно «нет» отменяет путь'))
+        tk.Frame(together.extra, bg=CARD, height=px(12)).pack(side='bottom')
+
+        def vote_follows(*_a):
+            on = self.coop_travel_mode.get() == 'together'
+            vote.knob.set_enabled(on)
+            vote.caption.configure(fg=TEXT if on else DIM)
+        self.coop_travel_mode.trace_add('write', vote_follows)
+        vote_follows()
+        self.note(page, _('Travel is a host rule: yours counts when you lead the team.',
+                          'Путешествия — правило хоста: действует ваше, когда вы лидер команды.'), top=14)
+        self.note(page, _('Make or join a team in the game: Continue, Load Game or New Game opens the team screen. '
                           'Windows asks once to let co-op through its firewall.',
                           'Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают экран '
-                          'команды. Windows один раз спросит разрешение для брандмауэра.'), top=16)
+                          'команды. Windows один раз спросит разрешение для брандмауэра.'), top=8)
+
+        self.coop_step_row = 3
         done_row = tk.Frame(card, bg=CARD)
-        done_row.grid(row=self.next_row(card), column=0, columnspan=2, sticky='we', pady=(px(22), 0))
+        done_row.grid(row=4, column=0, columnspan=2, sticky='we', pady=(px(22), 0))
+        self.coop_back = self.button(done_row, _('Back', 'Назад'), lambda: self.coop_go(self.coop_step - 1),
+                                     width=px(120))
+        self.coop_next = self.button(done_row, _('Next', 'Далее'), lambda: self.coop_go(self.coop_step + 1),
+                                     'primary', width=px(150))
         self.coop_done = self.button(done_row, _('Done', 'Готово'), self.close_coop, 'primary', width=px(150))
-        self.coop_done.pack(side='right')
         self.coop_missing = self.label(done_row, '', 'small', CAUTION)
-        self.coop_missing.pack(side='right', padx=(0, px(16)))
         self.coop_host = done_row  # coop_changed waits for the card to be built
         self.coop_card = card.frame
         self.coop_help = None
-        self.coop_changed()
+        self.coop_go(0)
         if not self.coop_game_folder():
             self.coop_search(None, quiet=True)
 
-    def build_coop_rules(self, card):
-        """Kaniel 2026-10-25: the host rules, each off by default. The team's leader's are the team's (the game
-        sends them to the server); the others see them on the team screen."""
-        tk, px = self.tk, self.px
-        cell = self.cell(card, self.next_row(card), 0,
-                         _('Host rules (yours count when you lead the team)',
-                           'Правила хоста (действуют, когда вы лидер команды)'), span=2)
-        rows = {}
-        for key, title in (
-                ('rule_rot', _('Rot: each real death adds a penalty (up to 5); a lamp, a level up, a boss, '
-                               'your killer or your bloodstain takes it away',
-                               'Гниль: каждая настоящая смерть даёт штраф (до 5); лампа, уровень, босс, '
-                               'ваш убийца или ваше пятно крови снимают его')),
-                ('rule_travel', _('Travel together: a lamp or headstone asks to take the whole team',
-                                  'Путь вместе: лампа или надгробие предлагают взять всю команду')),
-                ('rule_vote', _('…with a vote: the team has 20 s, one No stops the trip',
-                                '…с голосованием: у команды 20 с, одно «нет» отменяет путь')),
-                ('rule_scale', _('Enemies scale with the hunters on their map: normal alone, Harder for a full team',
-                                 'Враги сильнее с числом охотников на карте: обычные в одиночку, «Сильнее» для '
-                                 'полной команды'))):
-            text = tk.StringVar(value='1' if self.coop.get(key) == '1' else '')
-            text.trace_add('write', lambda *_a: self.coop_changed_soon())
-            self.coop_vars[key] = text
-            on = tk.BooleanVar(value=text.get() == '1')
-            on.trace_add('write', lambda *_a, on=on, text=text: text.set('1' if on.get() else ''))
-            row = self.switch(cell, on, title, px(680))
-            row.pack(anchor='w', pady=(px(4), 0), padx=(px(40), 0) if key == 'rule_vote' else 0)
-            rows[key] = (row, on)
+    def coop_rule_var(self, key):
+        """A host rule's '1' or '' (Kaniel 2026-10-25: each off by default); the team's leader's are the team's
+        (the game sends them to the server) and the others see them on the team screen."""
+        v = self.tk.StringVar(value='1' if self.coop.get(key) == '1' else '')
+        v.trace_add('write', lambda *_a: self.coop_changed_soon())
+        self.coop_vars[key] = v
+        return v
 
-        def vote_follows(*_a):
-            travel = rows['rule_travel'][1].get()
-            row = rows['rule_vote'][0]
-            row.knob.set_enabled(travel)
-            row.caption.configure(fg=TEXT if travel else DIM)
-        rows['rule_travel'][1].trace_add('write', vote_follows)
-        vote_follows()
+    def coop_rule_switch(self, parent, key, title):
+        text = self.coop_rule_var(key)
+        on = self.tk.BooleanVar(value=text.get() == '1')
+        on.trace_add('write', lambda *_a: text.set('1' if on.get() else ''))
+        text.trace_add('write', lambda *_a: on.get() != (text.get() == '1') and on.set(text.get() == '1'))
+        row = self.switch(parent, on, title, self.px(640))
+        row.pack(anchor='w', pady=(self.px(4), 0))
+        return row
+
+    def coop_mode_var(self, rule, on, off):
+        """The choice of a step that turns a host rule on or leaves it off: the two follow each other."""
+        mode = self.tk.StringVar(value=on if rule.get() == '1' else off)
+        mode.trace_add('write', lambda *_a: rule.get() != ('1' if mode.get() == on else '')
+                       and rule.set('1' if mode.get() == on else ''))
+        rule.trace_add('write', lambda *_a: mode.get() != (on if rule.get() == '1' else off)
+                       and mode.set(on if rule.get() == '1' else off))
+        mode.trace_add('write', lambda *_a: self.coop_changed_soon())
+        return mode
+
+    def coop_option(self, parent, mode, value, title, text):
+        """One answer of a step: a framed row with a diamond that fills while it is the chosen one; what
+        goes with that answer goes in its .extra frame."""
+        tk, px = self.tk, self.px
+        frame = tk.Frame(parent, bg=CARD, highlightthickness=1, cursor='hand2')
+        gem = tk.Canvas(frame, width=px(18), height=px(18), bg=CARD, highlightthickness=0, bd=0, cursor='hand2')
+        shape = gem.create_polygon(diamond(px(9), px(9), px(6)), width=1)
+        gem.grid(row=0, column=0, rowspan=2, sticky='n', padx=(px(14), px(10)), pady=(px(13), 0))
+        head = self.label(frame, title, 'body_bold', anchor='w', cursor='hand2')
+        head.grid(row=0, column=1, sticky='we', padx=(0, px(14)), pady=(px(11), 0))
+        words = self.flow(frame, text, 'small', MUTED)
+        words.configure(cursor='hand2')
+        words.grid(row=1, column=1, sticky='we', padx=(0, px(14)), pady=(px(2), px(11)))
+        frame.columnconfigure(1, weight=1)
+        frame.extra = tk.Frame(frame, bg=CARD)
+        frame.extra.grid(row=2, column=1, sticky='we', padx=(0, px(14)))
+        for widget in (frame, gem, head, words):
+            widget.bind('<Button-1>', lambda _e: mode.set(value))
+
+        def paint(*_a):
+            chosen = mode.get() == value
+            frame.configure(highlightbackground=ACCENT_HI if chosen else LINE,
+                            highlightcolor=ACCENT_HI if chosen else LINE)
+            gem.itemconfigure(shape, fill=ACCENT_HI if chosen else CARD, outline=ACCENT_HI if chosen else LINE_HI)
+            head.configure(fg=TEXT if chosen else MUTED)
+        mode.trace_add('write', paint)
+        paint()
+        return frame
+
+    def coop_go(self, step):
+        """Shows a step of the co-op setup; a later one only once the ones before it lack nothing."""
+        step = max(0, min(step, len(self.coop_steps) - 1))
+        if getattr(self, 'coop_change_job', None):
+            self.root.after_cancel(self.coop_change_job)
+        self.coop_changed()  # what was just typed counts
+        if any(at < step for at, _text in self.coop_missing_by_step()):
+            return
+        self.coop_steps[self.coop_step].grid_forget()
+        self.coop_step = step
+        self.coop_steps[step].grid(row=self.coop_step_row, column=0, columnspan=2, sticky='we')
+        self.coop_show_step()
+
+    def coop_show_step(self):
+        """The step bar, Back, and Next or Done, as the current step and what is missing allow."""
+        px, step, last = self.px, self.coop_step, len(self.coop_steps) - 1
+        missing = self.coop_missing_by_step()
+        blocked = min((at for at, _text in missing), default=last + 1)
+        for index, tab in enumerate(self.coop_step_tabs):
+            tab.configure(fg=GOLD if index == step else TEXT if index <= blocked else DIM,
+                          cursor='hand2' if index != step and index <= blocked else '')
+        for widget in (self.coop_back, self.coop_next, self.coop_done, self.coop_missing):
+            widget.pack_forget()
+        if step:
+            self.coop_back.pack(side='left')
+        here = [text for at, text in missing if at <= step]
+        button = self.coop_done if step == last else self.coop_next
+        button.configure(state='disabled' if here else 'normal')
+        button.pack(side='right')
+        self.coop_missing.configure(text=_('Still needed: {}', 'Ещё нужно: {}').format(', '.join(here))
+                                    if here else '')
+        self.coop_missing.pack(side='right', padx=(0, px(16)))
 
     def build_coop_custom(self, parent, start):
         """The player's own multipliers under the Enemies box, shown for Custom: each 1 to 10, as the game
@@ -4192,13 +4336,18 @@ class Launcher:
 
     def coop_ready(self):
         """What the co-op settings still lack (the window's words), [] when PLAY can start."""
+        return [text for _step, text in self.coop_missing_by_step()]
+
+    def coop_missing_by_step(self):
+        """(step, what) of each thing the co-op settings lack: the step of the setup that asks for it."""
         missing = []
         if not self.coop_game_folder():
-            missing.append(_('the game folder', 'папка игры'))
+            missing.append((0, _('the game folder', 'папка игры')))
         if not bbport_coop.valid_host(self.coop.get('host_ip', '')):
-            missing.append(_("the host's IP", 'IP хоста'))
-        if 'harder' not in getattr(self, 'coop_picked', {'harder'}):
-            missing.append(_('the enemies', 'враги'))
+            missing.append((0, _("the host's IP", 'IP хоста')))
+        # Auto scaling needs no level of its own (the game takes its own steps with the team's size).
+        if self.coop.get('rule_scale') != '1' and 'harder' not in getattr(self, 'coop_picked', {'harder'}):
+            missing.append((1, _('the enemies', 'враги')))
         return missing
 
     def open_coop(self, required=False):
@@ -4207,7 +4356,7 @@ class Launcher:
             self.close_coop_help()
         self.coop_cover.place(x=0, y=0, relwidth=1, relheight=1)
         self.coop_cover.lift()
-        self.coop_changed()
+        self.coop_go(0)
 
     def close_coop(self):
         if self.coop_ready():
@@ -4259,10 +4408,7 @@ class Launcher:
         self.coop['role'] = 'host' if bbport_coop.is_this_pc(self.coop.get('host_ip', '')) else 'guest'
         if not self.coop_searching:
             self.coop_show_game()
-        missing = self.coop_ready()
-        self.coop_done.configure(state='disabled' if missing else 'normal')
-        self.coop_missing.configure(text=_('Still needed: {}', 'Ещё нужно: {}').format(', '.join(missing))
-                                    if missing else '')
+        self.coop_show_step()
         if hasattr(self, 'checks'):
             self.refresh_status()
             self.refresh_game_line()
