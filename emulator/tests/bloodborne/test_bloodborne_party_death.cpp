@@ -1462,6 +1462,36 @@ TEST(PartyDeath, AWipeIsThePartysByWhoStoodWhenTheDeathCame) {
     EXPECT_EQ(call.TakeAtRespawn(), DeathReset::None);
 }
 
+// Kaniel's play test 2026-10-25 (Logarius): Lisara fell into the arena's pit while the others
+// stood, then krolebord fell and Kaniel's down ended in the wipe, all before her respawn. Her death
+// was no wipe when it came, so her game kept the boss's HP and, running the arena next, gave it
+// back to everyone. Nobody else standing on its map before its respawn makes it the wipe too.
+TEST(PartyDeath, TheRestOfThePartyFallingBeforeTheRespawnMakesItTheWipe) {
+    DeathResetCall call;
+    call.Died(false, true); // the others stood
+    call.StillDead(true, true);
+    EXPECT_EQ(call.TakeAtRespawn(), DeathReset::None) << "they still stand";
+    call.Died(false, true);
+    EXPECT_TRUE(call.StillDead(false, false)) << "the rest fell";
+    EXPECT_FALSE(call.StillDead(false, false)) << "told once";
+    EXPECT_EQ(call.TakeAtRespawn(), DeathReset::PartyWipe);
+    // Someone stands on another map: this map starts over alone.
+    call.Died(false, true);
+    EXPECT_TRUE(call.StillDead(false, true));
+    EXPECT_FALSE(call.StillDead(true, true)) << "never back";
+    EXPECT_EQ(call.TakeAtRespawn(), DeathReset::OwnMap);
+    call.Died(true, true);
+    EXPECT_TRUE(call.StillDead(false, false));
+    EXPECT_EQ(call.TakeAtRespawn(), DeathReset::PartyWipe);
+    // No death waiting for its respawn: nothing to change.
+    EXPECT_FALSE(call.StillDead(false, false));
+    EXPECT_EQ(call.TakeAtRespawn(), DeathReset::None);
+    call.Died(false, true);
+    call.Cancel();
+    EXPECT_FALSE(call.StillDead(false, false));
+    EXPECT_EQ(call.TakeAtRespawn(), DeathReset::None);
+}
+
 // Kaniel's playtest 2026-10-18 (a follower took the owner's HP from the log after a wipe: the same
 // damaged values as before it). Until the wipe's trip has loaded the map again, the game's enemy
 // copies are the ones from before the wipe: the owner reports none of their HP and a follower takes

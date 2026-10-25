@@ -3790,21 +3790,40 @@ public:
     // A death came: `reset`, its respawn resets the map (DeathResetsMap); `others_stand`, another
     // member stands anywhere now (SomeoneElseStandsAnywhere).
     void Died(bool reset, bool others_stand) {
-        call.store(!reset         ? DeathReset::None
-                   : others_stand ? DeathReset::OwnMap
-                                  : DeathReset::PartyWipe);
+        call.store(Waiting | static_cast<u8>(!reset         ? DeathReset::None
+                                             : others_stand ? DeathReset::OwnMap
+                                                            : DeathReset::PartyWipe));
+    }
+    // Kaniel's play test 2026-10-25 (Logarius): the member that fell first while the others stood
+    // lay dead while the rest of the party fell; its death was no wipe when it came. Each tick
+    // until the respawn: nobody else standing on its map (`someone_else_stands`, SomeoneElseStands)
+    // makes the respawn reset the map too, the party's wipe unless another member stands anywhere
+    // (`others_stand`). Only ever more; true when it changed.
+    bool StillDead(bool someone_else_stands, bool others_stand) {
+        if (someone_else_stands) {
+            return false;
+        }
+        const u8 now = static_cast<u8>(others_stand ? DeathReset::OwnMap : DeathReset::PartyWipe);
+        u8 seen = call.load();
+        while ((seen & Waiting) != 0 && (seen & ~Waiting) < now) {
+            if (call.compare_exchange_weak(seen, Waiting | now)) {
+                return true;
+            }
+        }
+        return false;
     }
     // Up again: that death's respawn came and went.
     void Cancel() {
-        call.store(DeathReset::None);
+        call.store(0);
     }
     // At the death's respawn (once).
     DeathReset TakeAtRespawn() {
-        return call.exchange(DeathReset::None);
+        return static_cast<DeathReset>(call.exchange(0) & ~Waiting);
     }
 
 private:
-    std::atomic<DeathReset> call{DeathReset::None};
+    static constexpr u8 Waiting = 0x80; // a death waits for its respawn
+    std::atomic<u8> call{0};
 };
 // Kaniel's playtest 2026-10-18 (a follower took the owner's HP from the log after a wipe: the same
 // damaged values as before it). Until the wipe's trip has loaded the map again this game's enemy

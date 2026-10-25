@@ -968,6 +968,65 @@ int AWipeOfOneMapStartsThatMapOverAlone() {
   return 0;
 }
 
+// Kaniel's play test 2026-10-25 (Logarius): Lisara fell into the arena's pit
+// while the others stood, krolebord fell after her while Kaniel lay down, and
+// Kaniel's down ended in the wipe. By the time krolebord's and Kaniel's games
+// told their wipe (after the death's animation) Lisara stood at the lamp
+// again, so shadNet took both wipes for their own and the log kept the boss's
+// HP. A member that was not standing since the wiping member fell does not
+// count as standing.
+int AMemberUpAgainAfterDyingFirstDoesNotStopTheWipe() {
+  Service service{{}};
+  Game host{1000, "kaniel", 11};
+  Game lisara{1001, "lisara", 12};
+  Game krolebord{1002, "krolebord", 13};
+  qint64 now = 1'000'000;
+  for (Game *game : {&host, &lisara, &krolebord}) {
+    game->Hello(now);
+  }
+  Pump(service, {&host, &lisara, &krolebord}, now);
+  constexpr u32 Up = 1;
+  constexpr u32 Down = 2;
+  constexpr u32 Dead = 3;
+  constexpr u32 Castle = 0x19000000;
+  host.Propose({{Castle, {7}}}, now);
+  for (Game *game : {&host, &lisara, &krolebord}) {
+    game->Send(VitalsOf(Castle, Up), now);
+  }
+  Pump(service, {&host, &lisara, &krolebord}, now);
+  const u64 before = krolebord.member.Epoch();
+  CHECK(Killed(krolebord, 7));
+  host.Send(VitalsOf(Castle, Down, 18), now + 1000);
+  lisara.Send(VitalsOf(Castle, Dead), now + 6000); // the pit
+  krolebord.Send(VitalsOf(Castle, Dead), now + 10'000); // the pit too
+  Pump(service, {&host, &lisara, &krolebord}, now + 10'000);
+  host.Send(VitalsOf(Castle, Dead, 18), now + 10'050); // the server's wipe
+  Pump(service, {&host, &lisara, &krolebord}, now + 10'050);
+  // Lisara stands at the lamp again; then the others' respawns tell the wipe.
+  lisara.Send(VitalsOf(Castle, Up), now + 15'000);
+  Pump(service, {&host, &lisara, &krolebord}, now + 15'000);
+  krolebord.Lifecycle(bbcoop::Lifecycle::WIPE, false, now + 19'000);
+  Pump(service, {&host, &lisara, &krolebord}, now + 19'000);
+  CHECK(krolebord.member.Epoch() != before);
+  CHECK(!Killed(krolebord, 7) && !Killed(lisara, 7));
+  // Someone who stood all along still keeps the log: no wipe of one stops it.
+  const u64 after = krolebord.member.Epoch();
+  now += 10 * 60'000;
+  for (Game *game : {&host, &lisara, &krolebord}) {
+    game->Send(VitalsOf(Castle, Up), now);
+  }
+  host.Propose({{Castle, {8}}}, now);
+  Pump(service, {&host, &lisara, &krolebord}, now);
+  krolebord.Send(VitalsOf(Castle, Dead), now + 1000);
+  Pump(service, {&host, &lisara, &krolebord}, now + 1000);
+  krolebord.Send(VitalsOf(Castle, Up), now + 9000);
+  krolebord.Lifecycle(bbcoop::Lifecycle::WIPE, false, now + 9000);
+  Pump(service, {&host, &lisara, &krolebord}, now + 9000);
+  CHECK(krolebord.member.Epoch() == after);
+  CHECK(Killed(krolebord, 8));
+  return 0;
+}
+
 int ThePartyIsWipedWhenNobodyOnTheMapStands() {
   Service service{{}};
   Game host{1000, "host", 11};
@@ -3333,6 +3392,8 @@ int main() {
       {"AMembersOwnWipeKeepsThePartysLog", AMembersOwnWipeKeepsThePartysLog},
       {"AWipeOfOneMapStartsThatMapOverAlone",
        AWipeOfOneMapStartsThatMapOverAlone},
+      {"AMemberUpAgainAfterDyingFirstDoesNotStopTheWipe",
+       AMemberUpAgainAfterDyingFirstDoesNotStopTheWipe},
       {"APortraitGoesToTheOthersAndToLaterMembers",
        APortraitGoesToTheOthersAndToLaterMembers},
       {"WhateverAGameSendsTheServiceKeepsWorking",
