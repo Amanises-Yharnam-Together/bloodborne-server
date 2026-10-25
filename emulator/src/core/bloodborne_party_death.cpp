@@ -1371,6 +1371,7 @@ struct DeathTick {
     std::span<const MemberVitals> board;
     bool armed = false;
     bool alive = false;
+    bool caught = false; // a lethal hit caught while standing (LethalCatches)
 };
 void StartSpectating(PartyDeathRun& run, const DeathTick& tick);
 
@@ -1408,10 +1409,7 @@ std::optional<DownedMember> SwingTargetByBody(PartyDeathRun& run, const DeathTic
 // Standing (or not in party death): a caught lethal hit puts the player down, a death is real, and
 // an attack near a downed member is a revive hit.
 void TickStanding(PartyDeathRun& run, const DeathTick& tick) {
-    const u32 catches = party_death_catches.load();
-    const bool caught = catches != run.seen_catches;
-    run.seen_catches = catches;
-    if (caught && tick.alive) {
+    if (tick.caught && tick.alive) {
         // Kaniel 2026-10-25: the team's death mode (its leader's pick, down by default).
         if (Coop::TeamDeathModeNow() == DeathMode::Spectate) {
             StartSpectating(run, tick);
@@ -1933,6 +1931,8 @@ void TickPartyDeath() {
     // Kaniel 2026-10-25: a teammate's lamp wakes a spectator; counted from every tick's board.
     const bool lamp_used = tick.view.Fresh() && run.lamp_watch.Tick(tick.board, tick.view.member);
     ReadLocalAliveState(tick.player, tick.alive);
+    // Every tick, before the switch below wakes a dead player: catches while down or dead go.
+    tick.caught = run.lethal_catches.Take(party_death_catches.load(), run.downed.Current());
     if (const u32 uses = lamp_uses.load(); uses != run.seen_lamp_uses) {
         run.seen_lamp_uses = uses;
         run.downed.ClearPenalty();

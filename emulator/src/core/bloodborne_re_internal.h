@@ -1132,7 +1132,7 @@ struct PartyDeathRun {
     DownedState downed{static_cast<u32>(std::random_device{}() % 0x40000000U) + 1};
     HoldToConfirm give_up{GiveUpHoldMs};
     ReviveHits revive_hits;
-    u32 seen_catches = 0;
+    LethalCatches lethal_catches;
     u32 seen_attacks = 0;
     u32 seen_lamp_uses = 0;
     u32 handled_wipe = 0;

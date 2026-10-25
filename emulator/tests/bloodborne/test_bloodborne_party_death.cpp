@@ -770,6 +770,24 @@ TEST(BloodbornePartyDeath, ARealDeathEndsTheDownAndRespawnsFresh) {
     EXPECT_EQ(state.DamageNeeded(), 600u);
 }
 
+// Kaniel 2026-10-25: after giving up (or a wipe) the player woke at the lamp and went straight
+// down again. The hook keeps catching lethal checks on the body while the death plays out (0 HP),
+// and those catches waited until the player stood again.
+TEST(BloodbornePartyDeath, ALethalCatchWhileDeadPutsNobodyDownAtTheLamp) {
+    LethalCatches catches;
+    EXPECT_FALSE(catches.Take(0, Vital::Up));
+    EXPECT_TRUE(catches.Take(1, Vital::Up)) << "a lethal hit while standing";
+    EXPECT_FALSE(catches.Take(1, Vital::Up)) << "the same catch counts once";
+    EXPECT_TRUE(catches.Take(3, Vital::Off)) << "standing out of a party session as well";
+    // Down, then dead: the checks on the body are caught, but nobody stands to be put down.
+    EXPECT_FALSE(catches.Take(3, Vital::Down));
+    EXPECT_FALSE(catches.Take(5, Vital::Dead));
+    EXPECT_FALSE(catches.Take(9, Vital::Dead));
+    // Up at the lamp: nothing caught since.
+    EXPECT_FALSE(catches.Take(9, Vital::Up));
+    EXPECT_TRUE(catches.Take(10, Vital::Up)) << "a new lethal hit still puts it down";
+}
+
 TEST(BloodbornePartyDeath, IgnoresHitsWhileUp) {
     DownedState state{1};
     EXPECT_FALSE(state.Damage(5, 0));

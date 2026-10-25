@@ -5415,6 +5415,12 @@ void DownedState::ClearPenalty() {
     downs = 0;
 }
 
+bool LethalCatches::Take(u32 count, Vital vital) {
+    const bool caught = count != seen;
+    seen = count;
+    return caught && (vital == Vital::Up || vital == Vital::Off);
+}
+
 bool HoldToConfirm::Tick(bool held, s64 now_ms) {
     if (!held) {
         held_since.reset();

@@ -32,6 +32,7 @@ SUITE_BOOT_S = 150
 # The scenarios of the recent playtest bugs (Kaniel 2026-10-25: "update rig with recent bugs"),
 # run in the full tier after the suites; a LONG one runs in the long tier instead.
 RECENT = {
+    "give-up-by-enemy": "10-25 a guest who gave up beside an enemy woke downed at its lamp",
     "dog-alone": "10-23 a lone guest drew the NPCs its story hid (#356)",
     "dog-alone3": "10-24 Eileen: a guest following another guest's game drew her (#390)",
     "lone-guest-kill": "10-23 the hag a lone guest killed lived on for the host (#356)",
