@@ -382,6 +382,21 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
                       members.value(*holder).online_id + "): use another account name";
         }
     }
+    if (refusal.isEmpty()) {
+        // Two PCs with one player id (a friend's install copied with its user\coop.json): each
+        // game's hello took the link from the other every few seconds, so a team made on one left
+        // at once and neither saw the other (player report 2026-10-24). A game that restarts or
+        // whose connection moves leaves its old link quiet first; one still heard is another PC.
+        for (const Link& other : std::as_const(members)) {
+            if (other.online_id == hello->online_id && other.endpoint.ipv4 != from.ipv4 &&
+                now_ms - other.last_heard_ms <= quiet_ms) {
+                refusal = "another PC plays with this player id, a copied install: on one PC "
+                          "delete user\\coop.json and set up co-op again (" +
+                          other.endpoint.Text().toUtf8() + ")";
+                break;
+            }
+        }
+    }
     if (!refusal.isEmpty()) {
         result.sends.append({from, Encode(Welcome{false, refusal})});
         result.log.append(

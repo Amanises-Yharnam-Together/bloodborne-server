@@ -544,13 +544,39 @@ int RoutesGamePackets() {
   std::cout << "server link routes game packets: ok\n";
   return 0;
 }
+
+// Two PCs with one player id (a copied install, player report 2026-10-24): the second one's hello
+// no longer takes the link from the first while that one is still heard.
+int TwoPCsOneId() {
+  Hub hub;
+  const Endpoint home{0x1A0BABBA, 59881};
+  const Endpoint friends_pc{0x1AFE174E, 50084};
+  auto result = hub.Receive(home, HelloFrom("Eloise"), 0);
+  CHECK(DecodeWelcome(SentTo(result, home).value(0))->accepted);
+  result = hub.Receive(friends_pc, HelloFrom("Eloise"), 1000);
+  const auto refused = DecodeWelcome(SentTo(result, friends_pc).value(0));
+  CHECK(refused && !refused->accepted && refused->text.contains("another PC") &&
+        refused->text.contains("coop.json"));
+  CHECK(result.gone.isEmpty() && hub.Members() == 1 && hub.VirtualOf(home) &&
+        !hub.VirtualOf(friends_pc));
+  // Its link still works.
+  hub.Receive(home, Encode(Kind::Ping, Ping{1, 2500}), 2500);
+  result = hub.Receive(friends_pc, HelloFrom("Eloise"), 5000);
+  CHECK(!DecodeWelcome(SentTo(result, friends_pc).value(0))->accepted);
+  // The first PC gone quiet (its game closed, or its connection moved): the id links from there.
+  result = hub.Receive(friends_pc, HelloFrom("Eloise"), 5600);
+  CHECK(DecodeWelcome(SentTo(result, friends_pc).value(0))->accepted);
+  CHECK(result.gone.size() == 1 && result.gone[0] == home && hub.Members() == 1);
+  std::cout << "server link one id on two PCs: ok\n";
+  return 0;
+}
 } // namespace
 
 int main() {
   if (Contracts() != 0 || HelloAndBuilds() != 0 || Relays() != 0 ||
       Liveness() != 0 || TeamOnly() != 0 || VirtualMembers() != 0 ||
       RoutesGamePackets() != 0 || SignsIn() != 0 ||
-      ALongSilenceEndsTheSignIn() != 0) {
+      ALongSilenceEndsTheSignIn() != 0 || TwoPCsOneId() != 0) {
     return 1;
   }
   return 0;
