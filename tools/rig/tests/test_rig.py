@@ -501,6 +501,11 @@ class LaneTest(unittest.TestCase):
         # The guest starts once the host's game is linked: the host's build is the one here.
         self.assertEqual(run_scenario.start_after(spec, "guest")[0], "host")
         self.assertIsNone(run_scenario.start_after(spec, "host"))
+        # Kaniel 2026-10-25: only another release is refused; the guest says another one.
+        version = scenarios.SCENARIOS["build-check-version"]
+        self.assertEqual(run_scenario.scenario_settings(version, "guest"),
+                         {"BB_RELEASE_VERSION": "0.0.1"})
+        self.assertEqual(run_scenario.start_after(version, "guest")[0], "host")
 
     def test_a_lanes_shadnet_checks_the_games_against_each_other_not_its_own_build(self):
         # Build check on join: the rig's servers are built apart from the games (another

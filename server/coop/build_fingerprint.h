@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <optional>
@@ -16,8 +17,9 @@
 // Build check on join (Kaniel 2026-10-24): everyone, the server included, runs one identical
 // build. Each game says its build in the server link's hello as a fingerprint, key=value fields
 // after "bb-build 1;" (the hello's build text, at most 255 bytes); shadNet compares a new game with
-// the games linked and with its own release, and refuses one that differs, naming each field with
-// both values. The games log the same differences from their peers' hellos.
+// the games linked and with its own release. It refuses another Seamless Co-op release only; any
+// other difference links, and the player is told their installation differs (each field with both
+// values in the logs). The games log the same differences from their peers' hellos.
 namespace BloodborneCoop {
 
 // Raised when a co-op frame's meaning changes (the history is at the game's PeerHelloType). Both
@@ -30,40 +32,42 @@ constexpr std::size_t BuildTextMax = 255;
 // The team screen's notice line (bbcoop_lobby::notice holds one more byte).
 constexpr std::size_t RefusalNoticeMax = 95;
 
-// The fields, in the order a refusal names them. `checked` ones change the game (another build,
-// other game files, other rules): a difference refuses the game. The rest are only logged
-// (purely visual settings). `server` ones the server knows of its own build.
+// What a difference in a field does (Kaniel 2026-10-25: "prevent it only if they have different
+// seamless coop version ... only warn them that their installation differs").
+enum class BuildCheck : u8 {
+    Refuse, // another release: the game is refused
+    Warn,   // another installation: the game links, and its player is told
+    Log,    // only logged (purely visual settings)
+};
+
+// The fields, in the order a refusal or warning names them. `kept` ones always go in the hello;
+// the others give way when it would be too long. Every refusing field is one the server knows of
+// its own build.
 struct BuildField {
     std::string_view key;
-    std::string_view label;   // in a log line: "<label> <mine>, theirs <theirs>"
-    std::string_view subject; // the refusal: "<subject> <mine>, <who> <verb> <theirs>: <advice>"
-    std::string_view verb;
-    std::string_view advice;
-    std::string_view short_subject; // the notice's
-    std::string_view short_label;   // the notice's "your <short label> differs"
-    bool checked;
-    bool server;
+    std::string_view label;         // in a log line: "<label> <mine>, theirs <theirs>"
+    std::string_view subject;       // a refusal: "<subject> <mine>, <who> <verb> <theirs>"
+    std::string_view verb;          //
+    std::string_view short_subject; // the refusal's notice
+    std::string_view warn_name;     // the warning's notice: "differs from the others (<names>)"
+    BuildCheck check;
+    bool kept;
 };
 inline constexpr std::array<BuildField, 12> BuildFields{{
-    {"version", "version", "your game is version", "run", "update in the launcher",
-     "your game is version", "version", true, true},
+    {"version", "version", "your game is version", "run", "your game is version", "",
+     BuildCheck::Refuse, true},
     {"protocol", "co-op protocol", "your game speaks co-op protocol", "speak",
-     "update in the launcher", "your co-op protocol is", "co-op protocol", true, true},
-    {"revision", "build", "your game is build", "run", "use the same release", "your game is build",
-     "build", true, true},
-    {"eboot", "eboot", "", "", "repair the game files", "", "game files", true, false},
-    {"events", "map events", "", "", "repair the game files", "", "game files", true, false},
-    {"harder", "harder-enemies setting", "your harder-enemies setting is", "use",
-     "change it in the launcher's co-op settings", "your harder enemies are",
-     "harder-enemies setting", true, false},
-    {"cheats", "cheats and tweaks", "your cheats and tweaks are", "use",
-     "use the same ones in the launcher", "your cheats are", "cheats", true, false},
-    {"rules", "co-op rules", "your co-op rules are", "use",
-     "everyone needs the same co-op settings", "your co-op rules are", "co-op rules", true, false},
-    {"fps", "frame rate", "", "", "", "", "", false, false},
-    {"mods", "mods", "", "", "", "", "", false, false},
-    {"patches", "other patches", "", "", "", "", "", false, false},
-    {"pbin", "patches.bin", "", "", "", "", "", false, false},
+     "your co-op protocol is", "", BuildCheck::Refuse, true},
+    {"revision", "build", "", "", "", "build", BuildCheck::Warn, true},
+    {"eboot", "eboot", "", "", "", "game files", BuildCheck::Warn, true},
+    {"events", "map events", "", "", "", "game files", BuildCheck::Warn, true},
+    {"harder", "harder-enemies setting", "", "", "", "harder enemies", BuildCheck::Warn, true},
+    {"cheats", "cheats and tweaks", "", "", "", "cheats", BuildCheck::Warn, true},
+    {"rules", "co-op rules", "", "", "", "co-op rules", BuildCheck::Warn, true},
+    {"fps", "frame rate", "", "", "", "", BuildCheck::Log, false},
+    {"mods", "mods", "", "", "", "mods", BuildCheck::Warn, false},
+    {"patches", "other patches", "", "", "", "patches", BuildCheck::Warn, false},
+    {"pbin", "patches.bin", "", "", "", "game files", BuildCheck::Warn, false},
 }};
 
 inline const BuildField* FindBuildField(std::string_view key) {
@@ -104,15 +108,15 @@ struct BuildFingerprint {
     bool operator==(const BuildFingerprint&) const = default;
 };
 
-// The hello's text. The fields only logged give way (from the last) when it would pass
-// BuildTextMax; the checked ones always fit.
+// The hello's text. The fields not kept give way (from the last) when it would pass BuildTextMax;
+// the kept ones always fit.
 inline std::string EncodeBuildFingerprint(const BuildFingerprint& build) {
     auto encode = [&](bool with_info, std::size_t info_fields) {
         std::string text{BuildTextStart};
         std::size_t info = 0;
         for (const auto& [key, value] : build.fields) {
             const BuildField* field = FindBuildField(key);
-            if (field == nullptr || !field->checked) {
+            if (field == nullptr || !field->kept) {
                 if (!with_info || info++ >= info_fields) {
                     continue;
                 }
@@ -180,14 +184,14 @@ struct BuildDifference {
     std::string theirs;
 };
 
-// The checked fields (with `server_only`, those a server knows) where `mine` and `theirs` hold
-// other values, in BuildFields' order. A field unknown on either side is not compared.
-inline std::vector<BuildDifference> CheckedDifferences(const BuildFingerprint& mine,
-                                                       const BuildFingerprint& theirs,
-                                                       bool server_only = false) {
+// The fields of `check` where `mine` and `theirs` hold other values, in BuildFields' order. A field
+// unknown on either side is not compared.
+inline std::vector<BuildDifference> DifferencesOf(const BuildFingerprint& mine,
+                                                  const BuildFingerprint& theirs,
+                                                  BuildCheck check) {
     std::vector<BuildDifference> differences;
     for (const BuildField& field : BuildFields) {
-        if (!field.checked || (server_only && !field.server)) {
+        if (field.check != check) {
             continue;
         }
         std::string a = mine.Get(field.key);
@@ -199,8 +203,8 @@ inline std::vector<BuildDifference> CheckedDifferences(const BuildFingerprint& m
     return differences;
 }
 
-// The log's line on another game's build: each checked field that differs, then each logged one
-// ("not checked: ..."); "" when nothing differs.
+// The log's line on another game's build: each refusing or warned field that differs, then each
+// logged one ("not checked: ..."); "" when nothing differs.
 inline std::string DescribeDifferences(const BuildFingerprint& mine,
                                        const BuildFingerprint& theirs) {
     std::string checked;
@@ -208,10 +212,11 @@ inline std::string DescribeDifferences(const BuildFingerprint& mine,
     for (const BuildField& field : BuildFields) {
         const std::string a = mine.Get(field.key);
         const std::string b = theirs.Get(field.key);
-        if (a == b || (field.checked && (a.empty() || b.empty()))) {
+        const bool compared = field.check != BuildCheck::Log;
+        if (a == b || (compared && (a.empty() || b.empty()))) {
             continue;
         }
-        std::string& line = field.checked ? checked : logged;
+        std::string& line = compared ? checked : logged;
         line += std::string{line.empty() ? "" : "; "} + std::string{field.label} + " " +
                 (a.empty() ? "?" : ShownBuildValue(field.key, a)) + ", theirs " +
                 (b.empty() ? "?" : ShownBuildValue(field.key, b));
@@ -227,24 +232,26 @@ struct BuildRefusal {
     std::string notice; // one line for the team screen, at most RefusalNoticeMax characters
 };
 
-// Why shadNet refuses a game whose hello says `game`: against its own build (`server`, null when
-// it does not check it) and the games linked here (`here`, null when none). Another release (the
-// version, protocol or revision) is named alone: it explains every other difference. Empty when
-// nothing differs.
+// Why shadNet refuses a game whose hello says `game`: another Seamless Co-op release than its own
+// build (`server`, null when it does not check it) or the games linked here (`here`, null when
+// none). The version is named alone when it differs (it explains the protocol). Empty when the
+// release is the same: whatever else differs only warns (BuildWarningOf).
 inline BuildRefusal BuildRefusalOf(std::string_view game, const BuildFingerprint* server,
                                    const BuildFingerprint* here) {
     constexpr std::string_view Start = "another build: ";
     constexpr std::string_view NoticeStart = "Co-op refused: ";
+    constexpr std::string_view Advice = "update in the launcher";
     const auto parsed = ParseBuildFingerprint(game);
     if (!parsed) {
         return {std::string{Start} + "your game is another release (it says \"" +
-                    std::string{game} + "\"): update in the launcher",
-                std::string{NoticeStart} + "your game is another release: update in the launcher"};
+                    std::string{game} + "\"): " + std::string{Advice},
+                std::string{NoticeStart} + "your game is another release: " + std::string{Advice}};
     }
     const std::vector<BuildDifference> from_server =
-        server ? CheckedDifferences(*parsed, *server, true) : std::vector<BuildDifference>{};
+        server ? DifferencesOf(*parsed, *server, BuildCheck::Refuse)
+               : std::vector<BuildDifference>{};
     const std::vector<BuildDifference> from_here =
-        here ? CheckedDifferences(*parsed, *here) : std::vector<BuildDifference>{};
+        here ? DifferencesOf(*parsed, *here, BuildCheck::Refuse) : std::vector<BuildDifference>{};
     const auto find = [](const std::vector<BuildDifference>& list,
                          std::string_view key) -> const BuildDifference* {
         for (const BuildDifference& difference : list) {
@@ -254,30 +261,13 @@ inline BuildRefusal BuildRefusalOf(std::string_view game, const BuildFingerprint
         }
         return nullptr;
     };
-    const auto differs = [&](std::string_view key) {
-        return find(from_server, key) != nullptr || find(from_here, key) != nullptr;
-    };
-    const bool release = differs("version") || differs("protocol") || differs("revision");
-
-    // One clause per field (the game files together): its long form and the notice's forms.
-    struct Clause {
-        std::string text;
-        std::vector<std::string> notices; // the longest first
-    };
-    std::vector<Clause> clauses;
-    std::vector<std::string> files;
     for (const BuildField& field : BuildFields) {
-        if (!field.checked || (release && !field.server) ||
-            (field.key == "revision" && differs("version"))) {
+        if (field.check != BuildCheck::Refuse) {
             continue;
         }
         const BuildDifference* by_server = find(from_server, field.key);
         const BuildDifference* by_here = find(from_here, field.key);
         if (by_server == nullptr && by_here == nullptr) {
-            continue;
-        }
-        if (field.subject.empty()) {
-            files.emplace_back(field.label);
             continue;
         }
         const std::string mine = ShownBuildValue(field.key, parsed->Get(field.key));
@@ -300,45 +290,90 @@ inline BuildRefusal BuildRefusalOf(std::string_view game, const BuildFingerprint
             who_long = "the games here " + verb + " " + shown(by_here);
             who_short = "the others " + verb + " " + shown(by_here);
         }
-        const std::string advice{field.advice};
+        const std::string advice = ": " + std::string{Advice};
         const std::string start = std::string{field.short_subject} + " " + mine + ", ";
-        clauses.push_back(
-            {std::string{field.subject} + " " + mine + ", " + who_long + ": " + advice,
-             {start + who_long + ": " + advice, start + who_short + ": " + advice,
-              start + who_short, "your " + std::string{field.short_label} + " differs: " + advice,
-              "your " + std::string{field.short_label} + " differs"}});
-    }
-    if (!files.empty()) {
-        std::string names;
-        for (const std::string& name : files) {
-            names += (names.empty() ? "" : ", ") + name;
+        BuildRefusal refusal{std::string{Start} + std::string{field.subject} + " " + mine + ", " +
+                                 who_long + advice,
+                             {}};
+        for (const std::string& notice :
+             {start + who_long + advice, start + who_short + advice, start + who_short,
+              "your " + std::string{field.label} + " differs" + advice}) {
+            const std::string line = std::string{NoticeStart} + notice;
+            if (line.size() <= RefusalNoticeMax) {
+                refusal.notice = line;
+                return refusal;
+            }
         }
-        const std::string advice{FindBuildField("eboot")->advice};
-        // First: only another release comes before the game files, and it is named alone.
-        clauses.insert(clauses.begin(), Clause{"your game files differ from the games here (" +
-                                                   names + "): " + advice,
-                                               {"your game files differ (" + names + "): " + advice,
-                                                "your game files differ (" + names + ")",
-                                                "your game files differ: " + advice}});
+        refusal.notice = std::string{NoticeStart} + "another release" + advice;
+        return refusal;
     }
-    if (clauses.empty()) {
+    return {};
+}
+
+// What a game whose hello says `game` is told when it links with another installation than the
+// games here (`here`, the builds they said): other game files, settings, cheats or mods. Its text
+// says each field with both values (theirs of the first game it differs from); its notice names
+// them on the team screen's line. Empty when nothing differs (another release is refused instead:
+// BuildRefusalOf).
+inline BuildRefusal BuildWarningOf(std::string_view game,
+                                   const std::vector<BuildFingerprint>& here) {
+    const auto parsed = ParseBuildFingerprint(game);
+    if (!parsed) {
         return {};
     }
-    BuildRefusal refusal{std::string{Start}, {}};
-    for (std::size_t i = 0; i < clauses.size(); ++i) {
-        refusal.text += (i == 0 ? "" : "; ") + clauses[i].text;
-    }
-    const std::string more =
-        clauses.size() > 1 ? " (+" + std::to_string(clauses.size() - 1) + " more)" : "";
-    for (const std::string& notice : clauses.front().notices) {
-        const std::string line = std::string{NoticeStart} + notice + more;
-        if (line.size() <= RefusalNoticeMax) {
-            refusal.notice = line;
-            return refusal;
+    for (const BuildFingerprint& other : here) {
+        if (!DifferencesOf(*parsed, other, BuildCheck::Refuse).empty()) {
+            return {};
         }
     }
-    refusal.notice = std::string{NoticeStart} + "your build differs" + more;
-    return refusal;
+    std::vector<BuildDifference> differences;
+    for (const BuildField& field : BuildFields) {
+        if (field.check != BuildCheck::Warn) {
+            continue;
+        }
+        for (const BuildFingerprint& other : here) {
+            std::string a = parsed->Get(field.key);
+            std::string b = other.Get(field.key);
+            if (!a.empty() && !b.empty() && a != b) {
+                differences.push_back({std::string{field.key}, std::move(a), std::move(b)});
+                break;
+            }
+        }
+    }
+    if (differences.empty()) {
+        return {};
+    }
+    BuildRefusal warning{"your installation differs from the games here: ", {}};
+    std::vector<std::string_view> names;
+    for (std::size_t i = 0; i < differences.size(); ++i) {
+        const BuildDifference& difference = differences[i];
+        const BuildField* field = FindBuildField(difference.key);
+        warning.text += std::string{i == 0 ? "" : "; "} + std::string{field->label} + " " +
+                        ShownBuildValue(difference.key, difference.mine) + ", theirs " +
+                        ShownBuildValue(difference.key, difference.theirs);
+        if (std::find(names.begin(), names.end(), field->warn_name) == names.end()) {
+            names.push_back(field->warn_name);
+        }
+    }
+    constexpr std::string_view Start = "Your installation differs from the others";
+    constexpr std::string_view End = ": co-op may misbehave";
+    // As many names as fit, the rest counted.
+    for (std::size_t shown = names.size(); shown > 0; --shown) {
+        std::string line = std::string{Start} + " (";
+        for (std::size_t i = 0; i < shown; ++i) {
+            line += std::string{i == 0 ? "" : ", "} + std::string{names[i]};
+        }
+        if (shown < names.size()) {
+            line += ", +" + std::to_string(names.size() - shown) + " more";
+        }
+        line += ")" + std::string{End};
+        if (line.size() <= RefusalNoticeMax) {
+            warning.notice = std::move(line);
+            return warning;
+        }
+    }
+    warning.notice = std::string{Start} + std::string{End};
+    return warning;
 }
 
 // A source revision as the fingerprint holds it: its first 12 characters and "-dirty" (changes
@@ -354,8 +389,8 @@ inline std::string FingerprintRevision(std::string_view revision) {
     return std::string{revision.substr(0, 12)} + (dirty ? "-dirty" : "");
 }
 
-// shadNet's own build: what it knows of the fields (BuildField::server). `version` "" is "dev",
-// as a game's without a release.
+// shadNet's own build: what it knows of the fields (every refusing one). `version` "" is "dev", as
+// a game's without a release.
 inline BuildFingerprint ServerBuildFingerprint(std::string_view version,
                                                std::string_view revision) {
     BuildFingerprint build;

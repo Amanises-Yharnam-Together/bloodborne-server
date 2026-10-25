@@ -1,5 +1,5 @@
 """run.py's part of the build check on join: the game's build fingerprint names the patches that change the game
-(patches.py's patches-names.json) and hashes patches.bin, so the server can refuse a player whose cheats differ."""
+(patches.py's patches-names.json) and hashes patches.bin, so the server can warn a player whose cheats differ."""
 from paths import ROOT
 import importlib.util
 import json

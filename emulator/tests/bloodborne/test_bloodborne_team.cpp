@@ -963,14 +963,34 @@ TEST(TeamLobby, ARefusedLinkIsShownOnTheTeamScreen) {
 // values), then the whole reason for the log.
 TEST(TeamLobby, ABuildRefusalShowsWhatDiffers) {
     const std::string refusal =
-        "Co-op refused: your harder enemies are HP x3 damage x1.5 poise x3, the others use off\n"
-        "another build: your harder-enemies setting is HP x3 damage x1.5 poise x3, the games "
-        "here use off: change it in the launcher's co-op settings";
+        "Co-op refused: your game is version 1.2.2, the server runs 1.2.3: update in the "
+        "launcher\n"
+        "another build: your game is version 1.2.2, the server and the games here run 1.2.3: "
+        "update in the launcher";
     EXPECT_EQ(LinkRefusalNotice(refusal),
-              "Co-op refused: your harder enemies are HP x3 damage x1.5 poise x3, the others use "
-              "off");
+              "Co-op refused: your game is version 1.2.2, the server runs 1.2.3: update in the "
+              "launcher");
     // Never longer than the screen's line, whatever the server sent.
     const std::string notice = LinkRefusalNotice(std::string(200, 'x') + "\nreason");
+    EXPECT_LE(notice.size(), BloodborneCoop::RefusalNoticeMax);
+    EXPECT_TRUE(notice.ends_with("...")) << notice;
+}
+
+// Kaniel 2026-10-25: another installation of the release links, and the team screen says so
+// while the lobby has nothing newer to say.
+TEST(TeamLobby, AnotherInstallationIsWarnedOfOnTheTeamScreen) {
+    const std::string warning =
+        "Your installation differs from the others (harder enemies): co-op may misbehave\n"
+        "your installation differs from the games here: harder-enemies setting HP x3 damage "
+        "x1.5 poise x3, theirs off";
+    EXPECT_EQ(TeamScreenNotice("", warning),
+              "Your installation differs from the others (harder enemies): co-op may misbehave");
+    // The lobby's own notice (an invitation, a kick) comes first.
+    EXPECT_EQ(TeamScreenNotice("Ada invited you to a team", warning), "Ada invited you to a team");
+    EXPECT_EQ(TeamScreenNotice("", ""), "");
+    EXPECT_EQ(TeamScreenNotice("Ada left the team", ""), "Ada left the team");
+    // Never longer than the screen's line.
+    const std::string notice = TeamScreenNotice("", std::string(200, 'x') + "\nfields");
     EXPECT_LE(notice.size(), BloodborneCoop::RefusalNoticeMax);
     EXPECT_TRUE(notice.ends_with("...")) << notice;
 }

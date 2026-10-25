@@ -56,8 +56,9 @@ EFFECTS={
 }
 # Build check on join: the patches that change the game for everyone in a party (cheats and gameplay
 # tweaks, the launcher's Cheats page) and their short names in the game's build fingerprint; a
-# player whose differ is refused by the co-op server. The rest (frame rate, effects, resolution)
-# change only how the game looks and are only logged.
+# player whose differ is warned by the co-op server that their installation differs (only another
+# release is refused). The rest (frame rate, effects, resolution) change only how the game looks and
+# are only logged.
 GAMEPLAY_PATCHES={
     'Player No Dead (Read note)':'no death',
     'Player Stealth (Read note)':'stealth',

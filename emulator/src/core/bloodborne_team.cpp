@@ -33,6 +33,17 @@ std::string LinkRefusalNotice(std::string_view refusal) {
     return notice;
 }
 
+std::string TeamScreenNotice(std::string_view lobby_notice, std::string_view link_warning) {
+    if (!lobby_notice.empty()) {
+        return std::string{lobby_notice};
+    }
+    std::string notice{link_warning.substr(0, link_warning.find('\n'))};
+    if (notice.size() > BloodborneCoop::RefusalNoticeMax) {
+        notice = notice.substr(0, BloodborneCoop::RefusalNoticeMax - 3) + "...";
+    }
+    return notice;
+}
+
 u32 TeamGuestSign(const bbcoop::LobbyState& lobby, const std::string& me,
                   const std::string& session_host) {
     constexpr u32 FirstGuestSign = 7;
