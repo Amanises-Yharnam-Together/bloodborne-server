@@ -410,13 +410,25 @@ void FrameGeneration::DestroyContext() {
     ticks.clear();
 }
 
+void FrameGeneration::ReleaseDlssFrameGen(Dlss& dlss) {
+    // Submitted frames may still use the feature; then no present beside its release
+    // (BbFrameGenPace::ReleaseBesidePresent).
+    scheduler.WaitSubmitted();
+    BbFrameGenPace::ReleaseBesidePresent(
+        Scheduler::submit_mutex,
+        [this] {
+            (void)instance.GetPresentQueue().waitIdle();
+            (void)instance.GetGraphicsQueue().waitIdle();
+        },
+        [&dlss] { dlss.ReleaseFrameGen(); });
+}
+
 void FrameGeneration::ReleaseAll() {
     // Submitted frames may still use them; the open command buffer does not.
     DestroyContext();
     if (provider == BbFrameGenPace::ProviderDlss) {
         if (Dlss* dlss = Dlss::Get()) {
-            scheduler.WaitSubmitted();
-            dlss->ReleaseFrameGen();
+            ReleaseDlssFrameGen(*dlss);
         }
     }
     provider = 0;
@@ -532,8 +544,7 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
             DestroyContext();
         } else if (provider == BbFrameGenPace::ProviderDlss) {
             if (Dlss* dlss = Dlss::Get()) {
-                scheduler.WaitSubmitted();
-                dlss->ReleaseFrameGen();
+                ReleaseDlssFrameGen(*dlss);
             }
         }
         provider = chosen;

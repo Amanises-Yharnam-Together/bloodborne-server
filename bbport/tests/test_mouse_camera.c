@@ -584,22 +584,51 @@ static void menu_controls(void) {
     assert(kbm.sensitivity==1.0f);
 }
 
-/* Kaniel 2026-10-18: the touchpad held opens the map; a short press is still the game's. */
+/* Kaniel 2026-10-18: the touchpad held opens the map; a short press is still the game's.
+ * Kaniel 2026-10-24: two taps close together place a team ping; a lone tap reaches the game a
+ * moment later (once no second tap came). */
 static void touchpad_hold_for_map(void) {
     MapHold h={0};
     int click=0;
-    /* A tap: nothing while held, then the press for a moment on its side, then nothing. */
+    /* A tap: nothing while held, nothing while a second tap may still come, then the press for a
+     * moment on its side, then nothing. */
     assert(!map_hold_step(&h,1,1,1000000,&click) && click==-1);
     assert(!map_hold_step(&h,1,1,1100000,&click) && click==-1);
-    assert(!map_hold_step(&h,0,0,1150000,&click) && click==1);
-    assert(!map_hold_step(&h,0,0,1200000,&click) && click==1);
-    assert(!map_hold_step(&h,0,0,1300000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,1150000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,1150000+TOUCH_DOUBLE_US-1,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,1150000+TOUCH_DOUBLE_US,&click) && click==1);
+    assert(!map_hold_step(&h,0,0,1150000+TOUCH_DOUBLE_US+50000,&click) && click==1);
+    assert(!map_hold_step(&h,0,0,1150000+TOUCH_DOUBLE_US+MAP_TAP_US,&click) && click==-1);
     /* A hold: the map opens once, and the game never sees the touchpad. */
     assert(!map_hold_step(&h,1,0,2000000,&click) && click==-1);
-    assert(map_hold_step(&h,1,0,2000000+MAP_HOLD_US,&click) && click==-1);
+    assert(map_hold_step(&h,1,0,2000000+MAP_HOLD_US,&click)==TOUCH_MAP && click==-1);
     assert(!map_hold_step(&h,1,0,3000000,&click) && click==-1);
     assert(!map_hold_step(&h,0,0,3100000,&click) && click==-1);
     assert(!map_hold_step(&h,0,0,3150000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,3100000+TOUCH_DOUBLE_US+1,&click) && click==-1);
+    /* A double tap: the ping as the second press comes; the game sees neither tap, and holding the
+     * second opens no map. */
+    assert(!map_hold_step(&h,1,0,5000000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,5080000,&click) && click==-1);
+    assert(map_hold_step(&h,1,0,5200000,&click)==TOUCH_PING && click==-1);
+    assert(!map_hold_step(&h,1,0,5200000+MAP_HOLD_US+1,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,6000000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,7000000,&click) && click==-1);
+    /* Two taps further apart: two taps for the game, no ping. */
+    assert(!map_hold_step(&h,1,1,8000000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,1,8050000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,1,8050000+TOUCH_DOUBLE_US,&click) && click==1);
+    assert(!map_hold_step(&h,1,0,8050000+TOUCH_DOUBLE_US+MAP_TAP_US+10000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,8050000+TOUCH_DOUBLE_US+MAP_TAP_US+60000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,8050000+2*TOUCH_DOUBLE_US+MAP_TAP_US+60000,&click) && click==0);
+    /* A double tap's second press held long still opens no map, and the next tap is a tap. */
+    assert(!map_hold_step(&h,1,0,9000000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,0,9050000,&click) && click==-1);
+    assert(map_hold_step(&h,1,0,9100000,&click)==TOUCH_PING);
+    assert(!map_hold_step(&h,0,0,9200000,&click) && click==-1);
+    assert(!map_hold_step(&h,1,1,9200000+TOUCH_DOUBLE_US+10000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,1,9200000+TOUCH_DOUBLE_US+60000,&click) && click==-1);
+    assert(!map_hold_step(&h,0,1,9200000+2*TOUCH_DOUBLE_US+60000,&click) && click==1);
 }
 
 int main(void) {
@@ -624,5 +653,5 @@ int main(void) {
 #ifdef _WIN32
     hook_install();
 #endif
-    puts("PASS: mouse input names and modifiers, held buttons, wheel steps, mouse settings, Dark Souls III default layout, keyboard sprint kept through direction changes, stick fallback, camera turn, hook refusals, hook install (stub page not writable, data page not executable), menu controls, the touchpad hold for the map");
+    puts("PASS: mouse input names and modifiers, held buttons, wheel steps, mouse settings, Dark Souls III default layout, keyboard sprint kept through direction changes, stick fallback, camera turn, hook refusals, hook install (stub page not writable, data page not executable), menu controls, the touchpad hold for the map and double tap for a ping");
 }

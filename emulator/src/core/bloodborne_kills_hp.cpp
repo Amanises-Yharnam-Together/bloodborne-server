@@ -413,6 +413,14 @@ bool HostAwayFromMyMap() {
 
 namespace Coop {
 
+bool HostAwayFromThisMap() {
+    return HostAwayFromMyMap();
+}
+
+} // namespace Coop
+
+namespace Coop {
+
 // Adds the echoes the other members got from kills made apart (see SharesKillEchoes) through
 // the player's AddSouls (vtable +0x3D0, the call the kill reward makes, with its rates).
 void GrantPartyEchoes() {
@@ -2022,6 +2030,55 @@ void ShowCharactersLikeTheHost(u32 map, std::span<const u64> characters,
 void HoldStoryRemovals(u32 map, std::span<const u64> characters,
                        const std::unordered_set<u32>& kill_hidden);
 
+// See LoneGuestSwitchesOff: a lone guest's characters its story hid but its game keeps loaded
+// switched off, and back on once shown again or no longer alone. The game's thread, every tick.
+void SwitchOffWhatALoneGuestKeepsLoaded(u32 map, std::span<const u64> characters) {
+    static std::unordered_map<u64, u32> switched; // character -> handle, switched off here
+    static u32 switched_map = 0;
+    if (map != switched_map) {
+        switched.clear(); // the old map's characters are gone
+        switched_map = map;
+    }
+    // Every guest on a map the host is not on, the one that runs its enemies and the others that
+    // follow it (Kaniel's playtest 2026-10-24: krolebord, following Lisara's game in the Grand
+    // Cathedral, saw Eileen there until the host came).
+    const bool lone_guest = IsPartyGuestRole() && (Coop::CurrentEnemyRole() == EnemyRole::Owner ||
+                                                   Coop::HostAwayFromThisMap());
+    if (!lone_guest && switched.empty()) {
+        return;
+    }
+    std::string off;
+    std::string on;
+    for (const u64 character : characters) {
+        const u64 control = ReadValue<u64>(character, 0x18);
+        if (control < 0x10000 || !HasMemoryAccess(character, 0x29, MemoryProt::CpuRead)) {
+            continue;
+        }
+        const bool hidden = ReadValue<u8>(character, 0x28) != 0;
+        const u32 handle = ReadValue<u32>(character, 0x08);
+        if (const auto it = switched.find(character); it != switched.end()) {
+            if (LoneGuestSwitchesBackOn(lone_guest, hidden) &&
+                SetCharacterDisabled(character, false)) {
+                switched.erase(it);
+                on += fmt::format(" {:#x}", handle);
+            }
+            continue;
+        }
+        if (LoneGuestSwitchesOff(lone_guest, hidden, IsCharacterDisabled(character),
+                                 ReadValue<s32>(control, 0x14), ReadValue<s32>(control, 0x10)) &&
+            SetCharacterDisabled(character, true)) {
+            switched.emplace(character, handle);
+            off += fmt::format(" {:#x}", handle);
+        }
+    }
+    if (!off.empty() || !on.empty()) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: this lone guest's hidden characters its game kept loaded on "
+                 "map {:#x}: off{} | on{}",
+                 map, off, on);
+    }
+}
+
 // See GetsKillDrop: the character's NpcParam row is [vtable +0x168 (character) +8], as the
 // respawn walk reads it (0x0190E433). `own`: this guest's own kill. The game's thread only.
 void GiveMemberKillDrop(u64 character, u32 handle, bool own = false) {
@@ -2207,6 +2264,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
             kill_hidden.insert(handle);
         }
         HoldStoryRemovals(PlayingMap(), loaded, kill_hidden);
+        SwitchOffWhatALoneGuestKeepsLoaded(PlayingMap(), loaded);
     }
     if (!WatchesKills(sharing, PartyTripActive(), loading)) {
         return;
@@ -2246,10 +2304,17 @@ void KeepEnemyDeathsInStep(bool sharing) {
     }
     for (size_t index = 0; index < characters.size(); ++index) {
         const auto changed = enemy_owner_changed_ms.find(pointers[index]);
-        characters[index].settling = CharacterSettles(now_ms, world_changed_ms.load(),
-                                                      changed != enemy_owner_changed_ms.end()
-                                                          ? std::optional{changed->second}
-                                                          : std::nullopt);
+        std::optional<bool> last_hit_mine;
+        {
+            std::scoped_lock lock{own_hits_mutex};
+            last_hit_mine = own_damage.LastHitMine(characters[index].handle);
+        }
+        characters[index].settling =
+            SettlingHidesDeath(CharacterSettles(now_ms, world_changed_ms.load(),
+                                                changed != enemy_owner_changed_ms.end()
+                                                    ? std::optional{changed->second}
+                                                    : std::nullopt),
+                               last_hit_mine);
     }
     // Where the others are: this member's kills stand while one of them stays on the map.
     std::vector<u32> others_maps;
@@ -2388,13 +2453,16 @@ void KeepEnemyDeathsInStep(bool sharing) {
             if (can_kill && !died_for_others.contains(handle) &&
                 IsCharacter(character, "member kill") &&
                 DiesInsteadOfHiding(me, CharacterPosition(character))) {
-                // Near this player: it dies as the game kills (no echoes), not vanishing.
-                using Kill = void PS4_SYSV_ABI (*)(u64 character);
-                reinterpret_cast<Kill>(image_base + KillCharacterOffset)(character);
-                died_for_others.insert(handle);
+                // Near this player: it dies as the game kills (no echoes), not vanishing. Its
+                // one-time drop first: given with its lot's flag on, the game's death drops no
+                // orb of it as well (Kaniel's test 2026-10-23: the host got the hag's drop and
+                // saw it lying there too).
                 if (member_kills.contains(handle)) {
                     GiveMemberKillDrop(character, handle);
                 }
+                using Kill = void PS4_SYSV_ABI (*)(u64 character);
+                reinterpret_cast<Kill>(image_base + KillCharacterOffset)(character);
+                died_for_others.insert(handle);
                 ++newly_died;
                 continue;
             }

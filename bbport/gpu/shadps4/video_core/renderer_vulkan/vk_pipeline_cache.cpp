@@ -1555,8 +1555,22 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
             ASSERT_MSG(vertex_binding < MaxVertexBufferCount,
                        "Vertex attribute binding count exceeded limit: {} >= {}", vertex_binding,
                        MaxVertexBufferCount);
+            // bbport: these V#s are read from guest memory the game may be rewriting. One whose
+            // formats name no format (data_format=15 and num_format=7 stopped a player's RX 580
+            // at "Begin the hunt") skips the draw instead of stopping the game.
+            if (!Vulkan::LiverpoolToVK::IsKnownSurfaceFormat(buffer.GetDataFmt(),
+                                                             buffer.GetNumberFmt())) {
+                static std::atomic<u32> reported{0};
+                if (reported.fetch_add(1, std::memory_order_relaxed) < 5) {
+                    std::printf("GPU: draw skipped: a vertex stream has no format (data_format=%u, "
+                                "num_format=%u)\n",
+                                static_cast<u32>(buffer.GetDataFmt()),
+                                static_cast<u32>(buffer.GetNumberFmt()));
+                }
+                return false;
+            }
             key.vertex_buffer_formats[vertex_binding++] =
-                Vulkan::LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt());
+                Vulkan::LiverpoolToVK::TrySurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt());
         }
     }
 

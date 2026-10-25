@@ -267,6 +267,13 @@ public:
         required_build = std::move(build);
     }
 
+    // Build check on join (coop/build_fingerprint.h): shadNet's own build, which a game's must
+    // match where the server knows the field (its release); empty: the server does not check its
+    // own (a dev or rig server built apart from the games). Without it only the games here count.
+    void SetServerBuild(QByteArray fingerprint) {
+        server_build = std::move(fingerprint);
+    }
+
     int Members() const {
         return static_cast<int>(members.size());
     }
@@ -349,6 +356,7 @@ private:
     PacketRoutes packet_routes;
     SignIn sign_in;
     QByteArray required_build;
+    QByteArray server_build;
 };
 
 } // namespace ServerLink

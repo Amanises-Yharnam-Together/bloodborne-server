@@ -222,6 +222,8 @@ TEST(CoopSites, ThePartyHeaderHooksAreRegistered) {
     EXPECT_TRUE(IsRegisteredCoopHook(PacketSendOffset, PacketSendPrologue));
     EXPECT_TRUE(IsRegisteredCoopHook(ReliableChannelCheckOffset, ReliableChannelCheck));
     EXPECT_TRUE(IsRegisteredCoopHook(UnreliableChannelCheckOffset, UnreliableChannelCheck));
+    // The item-received popup's queue push, skipped for silent grants (SilentItemGets).
+    EXPECT_TRUE(IsRegisteredCoopHook(ItemGetQueuedOffset, ItemGetQueuedPrologue));
     // Other bytes, another length or an offset that is no hook are not.
     EXPECT_FALSE(IsRegisteredCoopHook(HitOffset, std::span{HitPrologue}.first(6)));
     EXPECT_FALSE(IsRegisteredCoopHook(HitOffset + 1, HitPrologue));

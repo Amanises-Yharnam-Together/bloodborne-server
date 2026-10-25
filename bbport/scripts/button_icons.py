@@ -62,6 +62,16 @@ def icon_set(ini, gamepad='', gamepads=None):
     return bbport_controls.resolve_icon_set(choice, None, str(gamepad).strip())
 
 
+def on_mod(owner):
+    """The note's words for icons drawn on a mod's own menu/common.tpf.dcx (Bloodborne Enhanced has one; the
+    icons used to be switched off for such a mod, player report 2026-10-24)."""
+    return f", drawn on {owner}'s menu/common.tpf.dcx" if owner else ''
+
+
+def off_note(error, owner):
+    return f"Button icons are off for this run: {owner + ': ' if owner else ''}{error}"
+
+
 def environment(game, out_dir, ini, mods_dir, mods_config, mods_enabled, gamepad='', gamepads=None):
     """The environment entries of the icons: BB_ICONS_DIR (the generated common.tpf.dcx's folder) and
     BB_ICONS_NOTE (a line for the log). {} when the game keeps its own icons (PlayStation, or no game file to
@@ -86,15 +96,15 @@ def environment(game, out_dir, ini, mods_dir, mods_config, mods_enabled, gamepad
             import mods
         except ImportError as error:  # a source tree without Pillow
             return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
+        owner = None
         try:
-            note = mods.icons_note(mods.user_layers(game, mods_dir, mods_config, mods_enabled))
-            if note:
-                return {'BB_ICONS_NOTE': note}
-            path, built = bbport_icons.ensure_prompt_sets(game, Path(out_dir), ini)
+            source, owner = mods.icons_source(game, mods.user_layers(game, mods_dir, mods_config, mods_enabled))
+            path, built = bbport_icons.ensure_prompt_sets(game, Path(out_dir), ini, source)
         except Exception as error:  # nothing about the icons may stop the game from starting
-            return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
+            return {'BB_ICONS_NOTE': off_note(error, owner)}
         return {'BB_PROMPT_SETS': str(path),
-                'BB_ICONS_NOTE': f'Button icons: follow the device in use ({"made" if built else "from the cache"})'}
+                'BB_ICONS_NOTE': f'Button icons: follow the device in use ({"made" if built else "from the cache"})'
+                                 + on_mod(owner)}
     pads = gamepads() if choice == 'auto' and gamepads else []
     icon_set = bbport_controls.resolve_icon_set(choice, pads, str(gamepad).strip())
     if icon_set == 'playstation':
@@ -104,14 +114,13 @@ def environment(game, out_dir, ini, mods_dir, mods_config, mods_enabled, gamepad
         import mods
     except ImportError as error:  # a source tree without Pillow
         return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
+    owner = None
     try:
-        note = mods.icons_note(mods.user_layers(game, mods_dir, mods_config, mods_enabled))
-        if note:
-            return {'BB_ICONS_NOTE': note}
-        folder, built, kept = bbport_icons.ensure_layer(game, Path(out_dir), icon_set, ini)
+        source, owner = mods.icons_source(game, mods.user_layers(game, mods_dir, mods_config, mods_enabled))
+        folder, built, kept = bbport_icons.ensure_layer(game, Path(out_dir), icon_set, ini, source)
     except Exception as error:  # nothing about the icons may stop the game from starting
-        return {'BB_ICONS_NOTE': f'Button icons are off for this run: {error}'}
-    note = f'Button icons: {icon_set} ({"made" if built else "from the cache"})'
+        return {'BB_ICONS_NOTE': off_note(error, owner)}
+    note = f'Button icons: {icon_set} ({"made" if built else "from the cache"})' + on_mod(owner)
     if kept:
         note += f'; {kept} baked buttons kept their PlayStation art'
     return {'BB_ICONS_DIR': str(folder), 'BB_ICONS_NOTE': note}

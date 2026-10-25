@@ -343,6 +343,20 @@ class PortSetupTest(unittest.TestCase):
                              "played on the port")
 
 
+class LowSpecTest(unittest.TestCase):
+    def test_a_scenarios_ini_settings_go_over_the_low_spec_profile(self):
+        # Kaniel 2026-10-24 (aspect-hud-wide): a 21:9 output for one scenario, the rest as low.
+        ini = engines.low_spec("output_res=3840x2160\nkey.cross=X\n",
+                               {"output_res": "1680x720", "aspect_ratio": "auto"})
+        lines = ini.splitlines()
+        self.assertIn("output_res=1680x720", lines)
+        self.assertIn("aspect_ratio=auto", lines)
+        self.assertIn("key.cross=X", lines)
+        self.assertIn("upscaler=off", lines)
+        self.assertEqual(sum(line.startswith("output_res=") for line in lines), 1)
+        self.assertEqual(engines.low_spec("", None), engines.LOW_SPEC_SETTINGS)
+
+
 class EventFilesTest(unittest.TestCase):
     """The rig's shared event files follow this checkout's patcher (2026-10-22: a full run on
     main played an Oct 20 m21_00 patch without 12105040 and failed dream-shop-messengers)."""

@@ -435,33 +435,31 @@ def user_layers(game, mods_dir, config=None, enabled='1'):
     return layers
 
 
-def supplier(layers, relative):
-    """The name of the last layer that has the game file `relative` (any letter case), or None."""
-    found = None
+def icons_source(game, layers):
+    """(path, owner): the menu/common.tpf.dcx the game loads with these mod layers (the last layer's that has it, in
+    any letter case, else the game's own) and the name of the layer it comes from (None for the game's). The button
+    icons are drawn on that file, so a mod's own menu art keeps its look and still gets them."""
+    found = (Path(game) / ICONS_FILE, None)
     for name, root in layers:
-        if any(path.as_posix().casefold() == relative.casefold() for path, _ in mod_files(root)):
-            found = name
+        for path, source in mod_files(root):
+            if path.as_posix().casefold() == ICONS_FILE.casefold():
+                found = (source, name)
     return found
 
 
-def icons_note(layers):
-    """Why the button icons cannot be used with these mod layers (a mod has its own menu/common.tpf.dcx, and the
-    player's file wins), or None."""
-    owner = supplier(layers, ICONS_FILE)
-    return f'Button icons are off for this run: {owner} has its own menu/common.tpf.dcx' if owner else None
-
-
 def mod_layers(game, mods_dir, config=None, enabled='1', icons=None, port_layers=()):
-    """([(name, folder)], note): the layers of an overlay, lowest priority first. The port's own layers
-    (`port_layers`, such as the field of view's camera table) go first, then the button icons, so that any mod
-    replaces them; a mod that has the same file as the icons takes them out, and the note says so (None
-    otherwise)."""
+    """[(name, folder)]: the layers of an overlay, lowest priority first. The port's own layers (`port_layers`,
+    such as the field of view's camera table) go first, then the button icons, so that any mod replaces them. When
+    a mod has its own menu/common.tpf.dcx the icons were drawn on that one (button_icons.py, icons_source) and go
+    over the mods instead; they hold that file alone."""
     own = [(Path(layer).name, Path(layer)) for layer in port_layers if Path(layer).is_dir()]
     layers = user_layers(game, mods_dir, config, enabled)
     if not icons:
-        return [*own, *layers], None
-    note = icons_note(layers)
-    return ([*own, *layers], note) if note else ([*own, (ICONS_LAYER, Path(icons)), *layers], None)
+        return [*own, *layers]
+    icons_layer = (ICONS_LAYER, Path(icons))
+    if icons_source(game, layers)[1]:
+        return [*own, *layers, icons_layer]
+    return [*own, icons_layer, *layers]
 
 
 def main():
@@ -477,9 +475,7 @@ def main():
     parser.add_argument('--party-hud', action='store_true',
                         help='put the party HUD (hud_patch.py: the HUD the layers show, patched) over the mods')
     args = parser.parse_args()
-    layers, note = mod_layers(args.game, args.mods_dir, args.config, args.enabled, args.icons_layer, args.layer)
-    if note:
-        print(f'Mods: {note}', file=sys.stderr)
+    layers = mod_layers(args.game, args.mods_dir, args.config, args.enabled, args.icons_layer, args.layer)
     if args.party_hud:
         import hud_patch
         layers, notes = hud_patch.with_party_hud(args.game, layers, args.out)

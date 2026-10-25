@@ -1658,6 +1658,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     if (camera_motion->Enabled() && regs.color_buffers[0] &&
         FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
         scene_started = false;
+        upscaler->OnDisplayPassStart(); // while the frame's camera and depth are still there
         camera_motion->OnDisplayPass(cb_descs[0].first);
         screen_lighting->OnFrameStart();
         if (upscaler->OnFrameStart()) {
@@ -1715,6 +1716,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     push_data.xoffset *= target_scale[0];
     push_data.yscale *= target_scale[1];
     push_data.yoffset *= target_scale[1];
+    if (!pipeline->GetGraphicsKey().motion_vectors) {
+        push_data.motion_param = UiEdgeParam(pipeline);
+    }
     if (motion_draw && motion_geometry) {
         BB_SECTION(Motion);
         const auto& vs = pipeline->GetStage(Shader::SwStage::Vertex);
@@ -1948,6 +1952,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     push_data.xoffset *= target_scale[0];
     push_data.yscale *= target_scale[1];
     push_data.yoffset *= target_scale[1];
+    if (!pipeline->GetGraphicsKey().motion_vectors) {
+        push_data.motion_param = UiEdgeParam(pipeline);
+    }
     pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
                             {buffer_infos.data(), buffer_infos.size()});
     if (pipeline->GetGraphicsKey().motion_vectors && object_motion->Enabled()) {
@@ -3785,6 +3792,28 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
     return true;
 }
 
+u32 Rasterizer::UiEdgeParam(const GraphicsPipeline* pipeline) const {
+    // From deadinside28's bbport 0.6 (raster_targets.cpp UiEdgeStretch). A picture over the whole
+    // screen (the title's: 2048x1024) keeps its proportions, and so does text (its glyph sheet is
+    // 2048x2048). Masked content (Scaleform's masks are stencil tests: the HUD's item icons slide in
+    // a strip much taller than their slot) and the masks stay. Screen-space (clip disabled) draws
+    // are placed by the viewport scale alone.
+    const auto& regs = Regs();
+    if (ui_edges[0] == 0.0f || regs.IsClipDisabled() ||
+        (regs.depth_control.stencil_enable && regs.depth_buffer.StencilValid())) {
+        return 0;
+    }
+    const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    // Experiment bit 32 (BB_TOGGLE_FILE, while the game runs): big textures stretched too.
+    if (ps && !ps->images.empty() && !BbToggle::Experiment(32)) {
+        const auto texture = ps->images[0].GetSharp(*ps);
+        if (u32(texture.width) + 1 >= 2048 || u32(texture.height) + 1 >= 2048) {
+            return 0;
+        }
+    }
+    return UiComposition::EdgeParam(ui_edges[0], ui_edges[1], regs.viewports[0].yscale > 0.0f);
+}
+
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
     BB_SECTION(BeginRendering);
     // bbport: RenderStateMemo (see BeginMemo).
@@ -3825,6 +3854,7 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
             attachment_feedback_loop = false;
             push_data.scene_size = begin_memo.scene_size;
             target_scale = begin_memo.target_scale;
+            ui_edges = begin_memo.ui_edges;
             return begin_memo.state;
         }
         ++begin_memo_misses;
@@ -3841,7 +3871,7 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         if (!clears) {
             // Recomputed after the full path: it may have started the scene (scene_started).
             begin_memo = {true, MakeBeginSignature(pipeline), state, push_data.scene_size,
-                          target_scale};
+                          target_scale, ui_edges};
         }
     }
     return state;
@@ -4079,6 +4109,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     // bbport: a pass drawn into the upscaler's output-size images (UI, display pass): every
     // attachment must be redirected, viewports and scissors are scaled.
     target_scale = {1.0f, 1.0f};
+    ui_edges = {};
     if (color_redirected || depth_redirected) {
         u32 color_targets = 0;
         for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
@@ -4128,6 +4159,10 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             target_scale = UiComposition::Scale(guest_extent.first, guest_extent.second,
                                                 redirect.width, redirect.height,
                                                 native_coordinates);
+            if (const auto edges = UiComposition::ScreenEdges(redirect.width, redirect.height);
+                native_coordinates && (edges[0] < 1.0f || edges[1] < 1.0f)) {
+                ui_edges = edges;
+            }
         }
     }
 

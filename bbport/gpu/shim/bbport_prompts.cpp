@@ -80,9 +80,8 @@ struct Found {
     std::uint64_t written;
 };
 
-std::mutex mutex; ///< found and searched; never held while guest memory is written
+std::mutex mutex; ///< found; never held while guest memory is written
 std::vector<Found> found;
-std::set<std::pair<std::uintptr_t, int>> searched; ///< atlas textures (address, entry) looked at
 std::atomic<int> device{-1};                       ///< -1 nothing seen yet, else a Set
 std::atomic<bool> dirty{false};                    ///< something new to write
 std::atomic<int> shown{BbPromptSets::PlayStation}; ///< what Apply wrote last
@@ -95,10 +94,16 @@ std::vector<std::uint8_t> Gather(std::uintptr_t base, const BbPromptSets::Entry&
     return out;
 }
 
+/// `hash`: what the picture's pieces hold now. One found before whose memory now holds another
+/// set's bytes (the game loaded its file again at the same place) is written again.
 void Add(std::uintptr_t base, int entry, std::uint64_t hash) {
     std::scoped_lock lock{mutex};
-    for (const Found& f : found) {
+    for (Found& f : found) {
         if (f.base == base && f.entry == entry) {
+            if (f.written != hash) {
+                f.written = hash;
+                dirty = true;
+            }
             return;
         }
     }
@@ -193,12 +198,8 @@ void OnUpload(std::uintptr_t address, std::size_t size, std::uint32_t width, std
         if (e.IsGlyph() || e.width != width || e.height != height) {
             continue;
         }
-        {
-            std::scoped_lock lock{mutex};
-            if (!searched.insert({address, int(i)}).second) {
-                continue;
-            }
-        }
+        // Looked at on every upload (a few blocks): the memory may have held another texture of
+        // this size before, and the game may load its atlas there again.
         const auto bytes = Gather(address, e);
         const std::uint64_t hash = XXH3_64bits(bytes.data(), bytes.size());
         for (int s = 0; s < SetCount; ++s) {
@@ -260,7 +261,6 @@ void Apply() {
                 found[i].written = hash;
             } else {
                 found.erase(found.begin() + i);
-                searched.erase({base, entry});
             }
             break;
         }

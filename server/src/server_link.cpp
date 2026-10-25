@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QRandomGenerator>
 #include <QtEndian>
+#include "coop/build_fingerprint.h"
 #include "coop/packet_routes.h"
 #include "virtual_address.h"
 
@@ -630,17 +631,43 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
         return;
     }
     QByteArray refusal;
-    if (!required_build.isEmpty() && !hello->build.isEmpty() && hello->build != required_build) {
-        refusal = "another build: everyone needs the same release (this game runs " + hello->build +
-                  ", the server needs " + required_build + ")";
-    } else if (!hello->build.isEmpty() && required_build.isEmpty()) {
-        // Every other linked game's build (a game saying hello again is not one). Phase 11: a game
-        // signs in before its co-op code says the build; none said holds nothing, either way.
+    QByteArray refusal_logged; // when the game's text says more than its log needs
+    QString checked_aside;     // settings that differ but are only logged
+    if (!required_build.isEmpty() && !required_build.startsWith("bb-build ")) {
+        // Hosted: a HostedBuild that is no build fingerprint is the whole text every game must
+        // say.
+        if (!hello->build.isEmpty() && hello->build != required_build) {
+            refusal = "another build: everyone needs the same release (this game runs " +
+                      hello->build + ", the server needs " + required_build + ")";
+        }
+    } else if (!hello->build.isEmpty()) {
+        // Build check on join: the games linked here (a game saying hello again is not one; all
+        // of them run one build, so the first says it) and the server's own release (Hosted: a
+        // HostedBuild fingerprint in its place). Phase 11: a game signs in before its co-op code
+        // says the build; none said holds nothing, either way.
+        std::optional<BloodborneCoop::BuildFingerprint> here;
         for (const Link& link : std::as_const(members)) {
-            if (!(link.endpoint == from) && !link.build.isEmpty() && link.build != hello->build) {
-                refusal = "another build: everyone needs the same release (this game runs " +
-                          hello->build + ", the games here run " + link.build + ")";
+            if (!(link.endpoint == from) && !link.build.isEmpty()) {
+                here = BloodborneCoop::ParseBuildFingerprint(link.build.toStdString());
                 break;
+            }
+        }
+        const QByteArray& own = required_build.isEmpty() ? server_build : required_build;
+        const auto server =
+            own.isEmpty() ? std::nullopt : BloodborneCoop::ParseBuildFingerprint(own.toStdString());
+        const auto build = BloodborneCoop::BuildRefusalOf(
+            hello->build.toStdString(), server ? &*server : nullptr, here ? &*here : nullptr);
+        if (!build.text.empty()) {
+            // The team screen's line first, then the whole reason (the link's text holds 255
+            // bytes: the log has all of it).
+            refusal = QByteArray::fromStdString(build.notice + "\n" + build.text);
+            refusal_logged = QByteArray::fromStdString(build.text);
+        } else if (const auto game =
+                       BloodborneCoop::ParseBuildFingerprint(hello->build.toStdString());
+                   game && here) {
+            if (const std::string other = BloodborneCoop::DescribeDifferences(*game, *here);
+                !other.empty()) {
+                checked_aside = QString::fromStdString(other);
             }
         }
     }
@@ -678,13 +705,35 @@ void Hub::OnHello(const Endpoint& from, const QByteArray& datagram, qint64 now_m
                       members.value(*holder).online_id + "): use another account name";
         }
     }
+    if (refusal.isEmpty()) {
+        // Two PCs with one player id (a friend's install copied with its user\coop.json): each
+        // game's hello took the link from the other every few seconds, so a team made on one left
+        // at once and neither saw the other (player report 2026-10-24). A game that restarts or
+        // whose connection moves leaves its old link quiet first; one still heard is another PC.
+        for (const Link& other : std::as_const(members)) {
+            if (other.online_id == hello->online_id && other.endpoint.ipv4 != from.ipv4 &&
+                now_ms - other.last_heard_ms <= quiet_ms) {
+                refusal = "another PC plays with this player id, a copied install: on one PC "
+                          "delete user\\coop.json and set up co-op again (" +
+                          other.endpoint.Text().toUtf8() + ")";
+                break;
+            }
+        }
+    }
     if (!refusal.isEmpty()) {
         result.sends.append(
-            {from, ToQt(AnswerOf(*responder, Encode(Welcome{false, refusal})).datagram), true});
+            {from, ToQt(AnswerOf(*responder, Encode(Welcome{false, refusal.left(0xFF)})).datagram),
+             true});
         result.log.append(
             QStringLiteral("server link: refused %1 (%2): %3")
-                .arg(QString::fromUtf8(hello->online_id), from.Text(), QString::fromUtf8(refusal)));
+                .arg(QString::fromUtf8(hello->online_id), from.Text(),
+                     QString::fromUtf8(refusal_logged.isEmpty() ? refusal : refusal_logged)));
         return;
+    }
+    if (!checked_aside.isEmpty()) {
+        result.log.append(
+            QStringLiteral("server link: %1 (%2) runs other settings than the games here (%3)")
+                .arg(QString::fromUtf8(hello->online_id), from.Text(), checked_aside));
     }
     if (!stats_started) {
         stats_started = true;
