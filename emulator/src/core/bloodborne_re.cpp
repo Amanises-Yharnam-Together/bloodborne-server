@@ -1056,6 +1056,7 @@ void TickPartyController() {
     TimeTickPart("TickPlayersOnThisMap", TickPlayersOnThisMap);
     TimeTickPart("TickMapScreen", TickMapScreen);
     TimeTickPart("CheckAutoplayWatch", CheckAutoplayWatch);
+    TimeTickPart("LogBossFightBullets", LogBossFightBullets);
     TimeTickPart("LogJoinTaskChanges", LogJoinTaskChanges);
     TimeTickPart("WatchSummonJoin", WatchSummonJoin);
     TimeTickPart("KeepGuestBloodstainMark", KeepGuestBloodstainMark);

@@ -2270,6 +2270,14 @@ constexpr std::array<u8, 8> ShowNetworkBannerPrologue{0x55, 0x48, 0x89, 0xE5,
 // popup's queue. Its result is never read. Skipped while SilentItemGets lives (see there).
 constexpr u64 ItemGetQueuedOffset = 0x016D8850;
 constexpr std::array<u8, 8> ItemGetQueuedPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
+// The game's bullet creation (CreateBullet: rdi the bullet manager, rsi the request: +0x00 the
+// owner's handle, +0x04 the bullet's BulletParam id). No enemy bullet is ever sent: an enemy's
+// (EnemyIns vtable +0x1A8 returns 0, so the request's network bit 0x10 stays off) and an event's
+// (2003:5 ShootBullet) are made by each game from its own copy. The rig's bullet tracer logs them.
+constexpr u64 CreateBulletOffset = 0x01A03620;
+constexpr u64 BulletRequestOwnerOffset = 0x00;
+constexpr u64 BulletRequestIdOffset = 0x04;
+constexpr std::array<u8, 8> CreateBulletPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56};
 // Kaniel 2026-10-18: a guest whose connection dropped and came back (the party went on) still
 // had "Lost connection to the network. Returning to title menu." (FMG 204, 4701) with its OK
 // button over the game. The network script's OnLanCutError (0x01387130, a Lua C function: the
@@ -2978,6 +2986,9 @@ bool TracesDeathOf(s32 max_hp);
 constexpr u32 AutoplaySelf = 0xFFFFFFFF;
 constexpr u32 AutoplayMarked = 0xFFFFFFFE;
 std::optional<u32> ParseAutoplayTarget(std::string_view text);
+// watch-effects: the SpEffects a character gained ("+id") and lost ("-id") between two looks, in
+// id order, space separated; "" when nothing changed. Each copy of an effect counts.
+std::string DescribeEffectChanges(std::vector<s32> before, std::vector<s32> after);
 // `value <op> limit` for op <, <=, ==, !=, >=, >; nothing for another op.
 std::optional<bool> CompareAutoplay(s64 value, std::string_view op, s64 limit);
 // attack <target>: a real hit, so the kill reward and the death run as in play (the game's own
@@ -3712,6 +3723,22 @@ constexpr u64 BossGaugesOffset = 0x1658;
 constexpr std::size_t BossGaugeSlots = 3;
 constexpr std::size_t BossGaugeSize = 0x14;
 std::vector<u32> ClearBossGauges(std::span<u8> gauges);
+// The handles of the boss bars that are up (as ClearBossGauges reads them), the bars left alone.
+std::vector<u32> BossGaugesUp(std::span<const u8> gauges);
+// Kaniel 2026-10-25 (guests saw no boss spells): every game makes its own copies' bullets
+// (CreateBulletOffset), so while a boss bar is up each game logs what it made, every
+// BossFightBulletSeconds: whether a guest's game made a boss's spells at all. By owner and
+// BulletParam id.
+constexpr s64 BossFightBulletSeconds = 30;
+class BulletTally {
+public:
+    void Add(u32 owner, s32 bullet);
+    // "<id> x<count> from <owner>, ..." for the `most` most made, "none" for none; then empty.
+    std::string TakeSummary(std::size_t most);
+
+private:
+    std::map<std::pair<u32, s32>, u32> counts;
+};
 std::optional<DownedMember> ReviveTarget(std::span<const MemberVitals> board, std::string_view self,
                                          u32 map, const LampPosition& me);
 

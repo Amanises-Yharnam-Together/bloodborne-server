@@ -59,6 +59,12 @@ RECENT = {
 # runs measured near or over 300 s), each kept for the long tier until it becomes a suite
 # chapter. Most are older versions of a suite chapter (named after the arrow).
 LONG = {
+    "logarius-spells": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "logarius-look": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "logarius-runner-leaves": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "shadows-spells": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "shadows-look": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "shadows-runner-leaves": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
     "story-hostless": "the 10-20 case #286: a team join and a trip",
     "key-items-kept": "the 10-19 playtest case #267: a join, two trips",
     "gesture-own": "the 10-23 gestures case: a join, two trips",

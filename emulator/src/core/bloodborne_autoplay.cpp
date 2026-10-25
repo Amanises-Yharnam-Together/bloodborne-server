@@ -91,6 +91,7 @@ struct AutoplayRun {
     u32 pickup_handle = 0;            // pickup: the map item it went for
     LampPosition pickup_at{};         // pickup: where the player was put on it
     s32 hit_from_hp = 0;              // hit: the target's HP when it began
+    u64 bullets_from = 0;             // wait-bullets: how many this game had made when it began
     std::string script_path;          // sync: the go files are beside it (AutoplaySyncPath)
     std::string chapter;              // the chapter the script is in (a rig suite's section)
     // chapter <name> <seconds>: when the chapter's time budget runs out (the rig's, 2026-10-15).
@@ -104,6 +105,12 @@ struct AutoplayRun {
     std::optional<std::chrono::steady_clock::time_point> watch_until;
     std::optional<std::chrono::steady_clock::time_point> watch_started;
     u32 watch_seen = 0;
+    // watch-effects: the character whose SpEffects are logged, until when, the last full line's
+    // time and what it had at the last look.
+    u32 effects_handle = 0;
+    std::optional<std::chrono::steady_clock::time_point> effects_until;
+    std::optional<std::chrono::steady_clock::time_point> effects_logged;
+    std::vector<s32> effects_seen;
 };
 std::mutex autoplay_mutex;
 AutoplayRun autoplay_run;
@@ -1470,6 +1477,85 @@ bool AutoplayWatchUnseen(const AutoplayStep& step) {
     return true;
 }
 
+// wait-bullets <bullet> <count> [<timeout>]: until this game has made that many bullets of that
+// BulletParam id since the step began (default 60 s): a boss's spells made in every game, as each
+// makes its own copies' (Logarius's swords: 223200590).
+bool AutoplayWaitBullets(const AutoplayStep& step) {
+    const s32 bullet = static_cast<s32>(step.Number(0, 0));
+    if (!step.begun) {
+        autoplay_run.bullets_from = BulletsMade(bullet);
+    }
+    const u64 made = BulletsMade(bullet) - autoplay_run.bullets_from;
+    if (made >= static_cast<u64>(step.Number(1, 1))) {
+        LOG_INFO(Debug, "Bloodborne autoplay: {} bullets {} in {:.1f} s", made, bullet,
+                 step.elapsed);
+        return true;
+    }
+    if (step.elapsed > step.Number(2, 60)) {
+        step.failure = fmt::format("{} bullets {} in {:.0f} s", made, bullet, step.elapsed);
+    }
+    return false;
+}
+
+// watch-effects <target> <seconds>: from now on, for that long, the character's SpEffects are
+// logged once a second ("effects of <handle>: ...") and each one it gains or loses as it happens
+// ("effects of <handle> changed: +5633"): a boss's spells wait for effects its runner's AI puts
+// on it. The step itself ends at once.
+bool AutoplayWatchEffects(const AutoplayStep& step) {
+    const auto target = ParseAutoplayTarget(step.Arg(0));
+    if (!target) {
+        step.failure = "no such character";
+        return false;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    std::scoped_lock lock{autoplay_mutex};
+    autoplay_run.effects_handle = static_cast<u32>(*target);
+    autoplay_run.effects_until =
+        now + std::chrono::milliseconds{static_cast<s64>(step.Number(1, 30) * 1000.0)};
+    autoplay_run.effects_logged.reset();
+    autoplay_run.effects_seen.clear();
+    return true;
+}
+
+// The watch-effects log, every frame after the co-op tick (see CheckAutoplayWatch).
+void CheckAutoplayEffectsWatch(std::chrono::steady_clock::time_point now) {
+    u32 handle = 0;
+    {
+        std::scoped_lock lock{autoplay_mutex};
+        if (!autoplay_run.effects_until) {
+            return;
+        }
+        if (now > *autoplay_run.effects_until) {
+            LOG_INFO(Debug, "Bloodborne autoplay: effects watch on {:#x} over",
+                     autoplay_run.effects_handle);
+            autoplay_run.effects_until.reset();
+            return;
+        }
+        handle = autoplay_run.effects_handle;
+    }
+    if (!AutoplayInWorld()) {
+        return;
+    }
+    const auto found = FindAutoplayCharacter(handle);
+    if (!found) {
+        return;
+    }
+    std::vector<s32> effects = EffectsOf(found->character);
+    std::ranges::sort(effects);
+    std::scoped_lock lock{autoplay_mutex};
+    const std::string changes = DescribeEffectChanges(autoplay_run.effects_seen, effects);
+    if (!changes.empty() && autoplay_run.effects_logged) {
+        LOG_INFO(Debug, "Bloodborne autoplay: effects of {:#x} changed: {}", handle, changes);
+    }
+    if (!autoplay_run.effects_logged ||
+        now - *autoplay_run.effects_logged >= std::chrono::seconds{1}) {
+        LOG_INFO(Debug, "Bloodborne autoplay: effects of {:#x} hp {}: {}", handle,
+                 ReadValue<s32>(found->data, 0xF8), fmt::join(effects, " "));
+        autoplay_run.effects_logged = now;
+    }
+    autoplay_run.effects_seen = std::move(effects);
+}
+
 } // namespace
 
 namespace Coop {
@@ -1478,6 +1564,7 @@ namespace Coop {
 // world loads: nothing is drawn then.
 void CheckAutoplayWatch() {
     const auto now = std::chrono::steady_clock::now();
+    CheckAutoplayEffectsWatch(now);
     u32 handle = 0;
     double into = 0.0;
     {
@@ -1546,9 +1633,16 @@ bool AutoplayExpectMaxHp(const AutoplayStep& step) {
     return true;
 }
 
-// expect-effect <id> <0|1>: whether the player has that SpEffect (9200: the level sync).
+// expect-effect <id> <0|1> [<target>]: whether the player (or that character) has that SpEffect
+// (9200: the level sync).
 bool AutoplayExpectEffect(const AutoplayStep& step) {
-    const auto effects = LocalEffects();
+    const auto target = ParseAutoplayTarget(step.Arg(2).empty() ? "self" : step.Arg(2));
+    const auto found = target ? FindAutoplayCharacter(*target) : std::nullopt;
+    if (!found) {
+        step.failure = "no such character";
+        return false;
+    }
+    const auto effects = EffectsOf(found->character);
     const bool has =
         std::ranges::find(effects, static_cast<s32>(step.Number(0, 0))) != effects.end();
     if (has != (step.Number(1, 1) != 0)) {
@@ -2149,6 +2243,8 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-disabled", AutoplayExpectDisabled},
     {"set-disabled", AutoplaySetDisabled},
     {"watch-unseen", AutoplayWatchUnseen},
+    {"watch-effects", AutoplayWatchEffects},
+    {"wait-bullets", AutoplayWaitBullets},
     {"note-max-hp", AutoplayNoteMaxHp},
     {"expect-max-hp", AutoplayExpectMaxHp},
     {"expect-effect", AutoplayExpectEffect},

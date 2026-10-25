@@ -4787,6 +4787,28 @@ std::optional<u32> ParseAutoplayTarget(std::string_view text) {
     return handle;
 }
 
+std::string DescribeEffectChanges(std::vector<s32> before, std::vector<s32> after) {
+    std::ranges::sort(before);
+    std::ranges::sort(after);
+    std::vector<s32> gained;
+    std::vector<s32> lost;
+    std::ranges::set_difference(after, before, std::back_inserter(gained));
+    std::ranges::set_difference(before, after, std::back_inserter(lost));
+    std::vector<std::pair<s32, char>> changes;
+    for (const s32 effect : gained) {
+        changes.emplace_back(effect, '+');
+    }
+    for (const s32 effect : lost) {
+        changes.emplace_back(effect, '-');
+    }
+    std::ranges::sort(changes);
+    std::string text;
+    for (const auto& [effect, sign] : changes) {
+        text += fmt::format("{}{}{}", text.empty() ? "" : " ", sign, effect);
+    }
+    return text;
+}
+
 std::optional<bool> CompareAutoplay(s64 value, std::string_view op, s64 limit) {
     if (op == "<") {
         return value < limit;
@@ -5945,6 +5967,42 @@ std::vector<u32> ClearBossGauges(std::span<u8> gauges) {
         gauge[0x10] = 0;
     }
     return up;
+}
+
+std::vector<u32> BossGaugesUp(std::span<const u8> gauges) {
+    std::vector<u32> up;
+    for (std::size_t slot = 0; (slot + 1) * BossGaugeSize <= gauges.size(); ++slot) {
+        s32 handle = 0;
+        std::memcpy(&handle, gauges.data() + slot * BossGaugeSize + 4, sizeof(handle));
+        if (handle != -1) {
+            up.push_back(static_cast<u32>(handle));
+        }
+    }
+    return up;
+}
+
+void BulletTally::Add(u32 owner, s32 bullet) {
+    ++counts[{owner, bullet}];
+}
+
+std::string BulletTally::TakeSummary(std::size_t most) {
+    std::vector<std::pair<std::pair<u32, s32>, u32>> made{counts.begin(), counts.end()};
+    counts.clear();
+    if (made.empty()) {
+        return "none";
+    }
+    std::ranges::stable_sort(made,
+                             [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::string text;
+    for (std::size_t index = 0; index < made.size() && index < most; ++index) {
+        const auto& [key, count] = made[index];
+        text += fmt::format("{}{} x{} from {:#x}", text.empty() ? "" : ", ", key.second, count,
+                            key.first);
+    }
+    if (made.size() > most) {
+        text += fmt::format(", and {} more", made.size() - most);
+    }
+    return text;
 }
 
 bool SkipsEnemyBarDamage(u32 handle, std::span<const u32> downed_bodies) {

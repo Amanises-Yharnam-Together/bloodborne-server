@@ -379,6 +379,98 @@ void InstallBossDeathTracer(u64 base, u64 image_size) {
                     "call chain");
 }
 
+// See CreateBulletOffset: every bullet a game makes goes in the boss fight's tally
+// (LogBossFightBullets); the rig's games (autoplay) also log the first BulletTraceLines each with
+// its request (owner, BulletParam id, the spawn matrix).
+constexpr u64 BulletTraceLines = 3000;
+std::atomic<u64> bullets_made{0};
+bool bullets_logged_each = false;
+std::mutex bullet_tally_mutex;
+BulletTally bullet_tally;
+std::map<s32, u64> bullets_by_id; // every bullet this run made, by BulletParam id (wait-bullets)
+
+void PS4_SYSV_ABI TraceBullet(u64, const GuestRegisterSnapshot* registers) {
+    const u64 request = registers->rsi;
+    if (!HasMemoryAccess(request, 0x90, MemoryProt::CpuRead)) {
+        return;
+    }
+    {
+        std::scoped_lock lock{bullet_tally_mutex};
+        bullet_tally.Add(ReadValue<u32>(request, BulletRequestOwnerOffset),
+                         ReadValue<s32>(request, BulletRequestIdOffset));
+        ++bullets_by_id[ReadValue<s32>(request, BulletRequestIdOffset)];
+    }
+    const u64 made = bullets_made.fetch_add(1) + 1;
+    if (!bullets_logged_each || made > BulletTraceLines) {
+        return;
+    }
+    std::string fields;
+    for (u64 offset = 0x08; offset < 0x2C; offset += 4) {
+        fields += fmt::format(" {:x}", ReadValue<u32>(request, offset));
+    }
+    std::string at;
+    for (u64 offset = 0x30; offset < 0x90; offset += 4) {
+        at += fmt::format(" {:.2f}", ReadValue<float>(request, offset));
+    }
+    LOG_INFO(Debug, "Bloodborne bullet: {} from {:#x} (#{} in this game) fields{} at{}",
+             ReadValue<s32>(request, BulletRequestIdOffset),
+             ReadValue<u32>(request, BulletRequestOwnerOffset), made, fields, at);
+}
+
+void InstallBulletTracer(u64 base, u64 image_size) {
+    if (!party_controller ||
+        !CoopSitesMatch(base, image_size, "bullet tracer", "bullets are not logged")) {
+        return;
+    }
+    const char* autoplay = std::getenv("SHADPS4_BLOODBORNE_AUTOPLAY");
+    bullets_logged_each = autoplay != nullptr && *autoplay != '\0';
+    if (!InstallCoopHook(reinterpret_cast<void*>(base + CreateBulletOffset), CreateBulletPrologue,
+                         0, TraceBullet)) {
+        coop_features.Skipped("bullet tracer", "the hook did not go in");
+        return;
+    }
+    coop_features.On("bullet tracer");
+}
+
+} // namespace
+
+namespace Coop {
+
+u64 BulletsMade(s32 bullet) {
+    std::scoped_lock lock{bullet_tally_mutex};
+    const auto it = bullets_by_id.find(bullet);
+    return it == bullets_by_id.end() ? 0 : it->second;
+}
+
+// See BossFightBulletSeconds: while a boss bar is up, what this game made, every 30 s.
+void LogBossFightBullets() {
+    static s64 last_ms = SteadyMilliseconds();
+    const s64 now_ms = SteadyMilliseconds();
+    if (now_ms - last_ms < BossFightBulletSeconds * 1000) {
+        return;
+    }
+    last_ms = now_ms;
+    const u64 holder = ReadValue<u64>(image_base + BossGaugesPointerOffset, 0);
+    constexpr std::size_t Size = BossGaugeSlots * BossGaugeSize;
+    const std::vector<u32> bars =
+        holder >= 0x10000 && HasMemoryAccess(holder + BossGaugesOffset, Size, MemoryProt::CpuRead)
+            ? BossGaugesUp({reinterpret_cast<const u8*>(holder + BossGaugesOffset), Size})
+            : std::vector<u32>{};
+    std::string made;
+    {
+        std::scoped_lock lock{bullet_tally_mutex};
+        made = bullet_tally.TakeSummary(8);
+    }
+    if (!bars.empty()) {
+        LOG_INFO(Debug, "Bloodborne boss fight bullets in {} s (bars {:#x}): {}",
+                 BossFightBulletSeconds, fmt::join(bars, " "), made);
+    }
+}
+
+} // namespace Coop
+
+namespace {
+
 // See PacketTraceMode: the game's own packets on the co-op trace, nothing changed.
 PacketTraceMode packet_trace_mode = PacketTraceMode::Off;
 
@@ -1778,6 +1870,7 @@ void InstallCoopFeatures(u64 base, u64 image_size) {
     InstallSendPace(base, image_size);
     InstallShortSummonSlotHold(base, image_size);
     InstallBossDeathTracer(base, image_size);
+    InstallBulletTracer(base, image_size);
     InstallGuestStaysWhenTheHostLeaves(base, image_size);
     InstallServerOwnsLeaves(base, image_size);
     InstallSeamlessTravel(base, image_size);

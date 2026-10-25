@@ -4,6 +4,8 @@
 // Autoplay (SHADPS4_BLOODBORNE_AUTOPLAY=<script>): the emulator presses the buttons itself, from
 // the title screen into the world, then runs a test script, so a test needs no one at the pad.
 
+#include <array>
+#include <cstring>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -55,6 +57,51 @@ TEST(BloodborneAutoplay, TheTitleScreenGetsCrossNowAndThen) {
     EXPECT_FALSE(TitlePressesCross(2150));
     EXPECT_TRUE(TitlePressesCross(4100));
     EXPECT_FALSE(TitlePressesCross(5000));
+}
+
+// watch-effects: what a character gained (+) and lost (-) since the last look, in id order; an
+// effect held twice counts twice (the same SpEffect can be on a character more than once).
+TEST(BloodborneAutoplay, DescribesEffectChanges) {
+    EXPECT_EQ(DescribeEffectChanges({}, {}), "");
+    EXPECT_EQ(DescribeEffectChanges({7500, 5599}, {5599, 7500}), "") << "order does not matter";
+    EXPECT_EQ(DescribeEffectChanges({7500}, {7500, 5633}), "+5633");
+    EXPECT_EQ(DescribeEffectChanges({7500, 5633}, {7500}), "-5633");
+    EXPECT_EQ(DescribeEffectChanges({5599, 7500}, {7500, 5633, 100}), "+100 -5599 +5633");
+    EXPECT_EQ(DescribeEffectChanges({5633}, {5633, 5633}), "+5633") << "a second copy";
+}
+
+// Kaniel 2026-10-25 (guests saw no boss spells): a boss fight's bullets in one line, the most
+// made first (then by owner and id), "none" when the game made none; the tally starts over.
+TEST(BloodborneBullets, SumsUpAFightsBullets) {
+    BulletTally tally;
+    EXPECT_EQ(tally.TakeSummary(8), "none");
+    for (int i = 0; i < 3; ++i) {
+        tally.Add(0x1001c066, 223200590);
+    }
+    tally.Add(0x1001c053, 223210101);
+    tally.Add(0x1001c053, 223210100);
+    EXPECT_EQ(tally.TakeSummary(8), "223200590 x3 from 0x1001c066, 223210100 x1 from 0x1001c053, "
+                                    "223210101 x1 from 0x1001c053");
+    EXPECT_EQ(tally.TakeSummary(8), "none") << "taken: it starts over";
+    tally.Add(1, 10);
+    tally.Add(2, 20);
+    tally.Add(2, 20);
+    EXPECT_EQ(tally.TakeSummary(1), "20 x2 from 0x2, and 1 more") << "only the most made";
+}
+
+TEST(BloodborneBullets, ReadsTheBossBarsThatAreUp) {
+    std::array<u8, BossGaugeSlots * BossGaugeSize> gauges{};
+    const auto put = [&](std::size_t slot, s32 handle) {
+        std::memcpy(gauges.data() + slot * BossGaugeSize + 4, &handle, sizeof(handle));
+    };
+    for (std::size_t slot = 0; slot < BossGaugeSlots; ++slot) {
+        put(slot, -1);
+    }
+    EXPECT_TRUE(BossGaugesUp(gauges).empty());
+    put(0, 0x10024060);
+    put(2, 0x10024061);
+    EXPECT_EQ(BossGaugesUp(gauges), (std::vector<u32>{0x10024060, 0x10024061}));
+    EXPECT_TRUE(BossGaugesUp(std::span{gauges}.first(3)).empty()) << "too short: none";
 }
 
 TEST(BloodborneAutoplay, ReadsTargetsAndComparisons) {

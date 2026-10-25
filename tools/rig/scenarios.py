@@ -21,7 +21,12 @@ expect-hp <handle|self> <op> <value>, wait-hp <handle|self> <op> <value> [<timeo
 holds), expect-session <n>, expect-map <map>,
 set-flag <flag> <0|1>, expect-flag <flag> <0|1>, wait-flag <flag> <0|1> [<timeout>],
 wait-solo [<timeout>] (until the session is gone), note-max-hp (the player's, for
-expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1>,
+expect-max-hp <target> <op> <value|noted>), expect-effect <SpEffect> <0|1> [<target>] (the
+player's, or that character's), watch-effects <target> <seconds> (from now on, the character's
+SpEffects logged each second as "effects of <handle> hp <hp>: ...", and each change as "effects of
+<handle> changed: +id -id"), wait-bullets <bullet> <count> [<timeout>] (until this game made
+that many bullets of that BulletParam id since the step began); the rig's games log every
+bullet they make ("bullet: <id> from <owner>"),
 expect-others-near <n> <meters> (n other players alive that close), expect-compass <bearing> <metres>
 [<degrees> [<metres>]] [down|dead] (within 10 s a marker of the teammate compass at that bearing,
 degrees right of straight ahead, and distance; 20 degrees and 1.5 m either way by default; down or
@@ -4539,3 +4544,88 @@ SCENARIOS["frame-gen-look"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 300,
 }
+
+# Kaniel 2026-10-25: guests saw no boss spells (Logarius's flying swords, the Shadows of Yharnam's
+# snakes). Every game makes its own copies' bullets (CreateBulletOffset), so each game must make
+# them itself: wait-bullets checks it. Cainhurst's Logarius (m25_00 entity 2500800, defeat flag
+# 12501800, 9081 HP) fights 20 m off the Logarius' Seat lamp; in his second phase (SpEffect 5633)
+# his event 12504807, run by every game on its own, fires bullet 223200590 every second.
+CAINHURST_LOGARIUS_LAMP = 2502952
+CAINHURST_QUEEN_LAMP = 2502951  # 150 m from him, up the castle
+LOGARIUS_DEFEATED = 12501800
+LOGARIUS = "0x1001c052"  # rig census 2026-10-25
+LOGARIUS_SWORDS = 223200590
+
+
+def _logarius(role: str, *, look: bool = False, leave: bool = False) -> list[str]:
+    steps = [START, f"set-flag {LOGARIUS_DEFEATED} 0", f"travel {CAINHURST_LOGARIUS_LAMP}",
+             "godmode", "wait-session 2 300", f"watch-effects {LOGARIUS} 240"]
+    if role == "host":  # the host's game runs him: his second phase
+        steps += ["wait 10", f"hurt {LOGARIUS} 4000"]
+    steps += [f"wait-bullets {LOGARIUS_SWORDS} 10 90", "sync logarius-swords"]
+    if look:
+        steps += [f"approach {LOGARIUS} {0 if role == 'host' else 3} 10 3.1416"]
+        for index in range(10):
+            steps += ["wait 3", f"shot {role}-swords-{index}"]
+    if leave:  # the runner leaves: the guest's game goes on making them
+        steps += [f"travel {CAINHURST_QUEEN_LAMP}", "wait 20"] if role == "host" else \
+                 ["log the host left", f"wait-bullets {LOGARIUS_SWORDS} 15 60"]
+        steps += ["sync logarius-left"]
+    return steps + ["census 80", "snapshot", "expect-session 2"]
+
+
+# The Shadows of Yharnam (m27_00 entities 2700800-2700802, defeat flag 12701800) stand 12 m from
+# the Forbidden Grave lamp. With two dead, the last one's final phase brings the snakes (events
+# 12704806/12704810/12704811 send the three their joint attacks once they hold 5535/5536/5539).
+FORBIDDEN_GRAVE_LAMP = 2702951
+FORBIDDEN_WOODS_LAMP = 2702950  # 260 m off
+SHADOWS_DEFEATED = 12701800
+SHADOWS = ("0x1002405f", "0x10024060", "0x10024061")  # their handles in Kaniel's 10-25 log
+
+
+def _shadows(role: str, *, look: bool = False, leave: bool = False) -> list[str]:
+    steps = [START, f"set-flag {SHADOWS_DEFEATED} 0", f"travel {FORBIDDEN_GRAVE_LAMP}", "godmode",
+             "wait-session 2 300", f"watch-effects {SHADOWS[2]} 240", "wait 10", "census 80"]
+    # Both games kill them: the map's enemy owner's HP would bring a kill in the other back.
+    steps += ["sync shadows-kill", f"kill {SHADOWS[0]}", "wait 15", f"kill {SHADOWS[1]}", "wait 5",
+              f"expect-hp {SHADOWS[1]} <= 0", "sync shadows-last"]
+    if look:
+        steps += [f"approach {SHADOWS[2]} {0 if role == 'host' else 3} 10 3.1416"]
+        for index in range(12):
+            steps += ["wait 3", f"shot {role}-snakes-{index}"]
+    else:
+        steps += ["wait 30", "census 80", "wait 10"]
+    if leave:
+        steps += ["sync shadows-leave", "log the host left"]
+        steps += [f"travel {FORBIDDEN_WOODS_LAMP}", "wait 30"] if role == "host" else \
+                 ["wait 30", "census 80", "wait 20"]
+    return steps + ["census 80", "snapshot", "expect-session 2"]
+
+
+for _name, _steps, _syncs, _about in (
+        ("logarius-spells", lambda role: _logarius(role), ("logarius-swords",),
+         "the host takes Logarius to his second phase: both games make his flying swords"),
+        ("logarius-look", lambda role: _logarius(role, look=True), ("logarius-swords",),
+         "logarius-spells to look at (run without --headless): both stand 10 m off him, facing "
+         "him, and take a picture every 3 s"),
+        ("logarius-runner-leaves", lambda role: _logarius(role, leave=True),
+         ("logarius-swords", "logarius-left"),
+         "logarius-spells, then the host (his runner) travels to the far lamp: the guest's game "
+         "goes on making his swords"),
+        ("shadows-spells", lambda role: _shadows(role), ("shadows-last",),
+         "the host kills two of the Shadows of Yharnam; both games log the last one's SpEffects "
+         "and every bullet they make (its snakes)"),
+        ("shadows-look", lambda role: _shadows(role, look=True), ("shadows-last",),
+         "shadows-spells to look at (run without --headless): both stand 10 m off the last "
+         "Shadow and take a picture every 3 s"),
+        ("shadows-runner-leaves", lambda role: _shadows(role, leave=True),
+         ("shadows-last", "shadows-leave"),
+         "shadows-spells, then the host (the Shadows' runner) travels to the far lamp; the guest "
+         "stays and both keep logging")):
+    SCENARIOS[_name] = {
+        "about": _about,
+        "roles": {role: _steps(role) for role in ("host", "guest")},
+        "syncs": {sync: {"chapter": _name, "roles": ["host", "guest"]} for sync in _syncs + (("shadows-kill",) if _name.startswith("shadows") else ())},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 600,
+    }
