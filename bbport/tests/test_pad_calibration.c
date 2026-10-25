@@ -36,6 +36,7 @@ int bbcoop_cutscene_vote_pad(int options) { (void)options; return 0; }
 int bbcoop_team_menu_back(void) { return 0; }
 /* Kaniel 2026-10-18: the touchpad held opens the map (not here). */
 void bbcoop_map_from_pad(void) {}
+void bbcoop_ping_aim(void) {}
 void bbcoop_party_death_pad(uint32_t *buttons, uint8_t sticks[4], uint8_t *l2, uint8_t *r2) {
     (void)buttons; (void)sticks; (void)l2; (void)r2;
 }

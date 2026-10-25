@@ -26,6 +26,14 @@ def game_app_version(game):
 def game_is_patched(version, env=os.environ):
     return version in (None, "01.09") or bool(env.get("BB_FORCE_PATCHES"))
 
+PATCH_GROUPS = {"fps": [], "resolution": [], "effects": [], "fixes": []}
+
+def group_list(groups):
+    return ", ".join(sorted(groups))
+
+def matching_groups(elf_path):
+    return set(PATCH_GROUPS)  # the clean game
+
 if __name__ == "__main__":  # run.py also imports this file for game_app_version
     if "--print-scaled" in sys.argv:
         print(os.environ.get("STUB_SCALED", ""))

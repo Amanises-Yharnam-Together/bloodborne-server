@@ -4,10 +4,10 @@
 #include <memory>
 #include <string>
 
-#include <QByteArray>
-#include <QtGlobal>
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
+#include <QByteArray>
+#include <QtGlobal>
 
 #include "coop/coop_stream.h"
 #include "coop/rpc_tunnel.h"

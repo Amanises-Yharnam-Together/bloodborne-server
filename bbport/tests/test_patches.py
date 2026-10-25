@@ -89,6 +89,20 @@ class NativeUiTests(unittest.TestCase):
         # TAA is native-only and uses the live host targets.
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
 
+    def test_any_display_size_and_the_16x9_aspect_ratio(self):
+        # Kaniel 2026-10-24: ultrawide and other shapes; the scene keeps the output's shape.
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'preset': '0'}), ((2560, 1080), (2560, 1080)))
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'preset': '3'}), ((1280, 540), (2560, 1080)))
+        self.assertEqual(scaled_sizes({'output_res': '5120x1440', 'preset': '1'}), ((3414, 960), (5120, 1440)))
+        self.assertEqual(scaled_sizes({'output_res': '1600x1200', 'preset': '0'}), ((1600, 1200), (1600, 1200)))
+        # 16:9: the game's picture with bars; 2560x1080 is then the game's own 1920x1080.
+        self.assertIsNone(scaled_sizes({'output_res': '2560x1080', 'aspect_ratio': '16:9', 'preset': '3'}))
+        self.assertEqual(scaled_sizes({'output_res': '3440x1440', 'aspect_ratio': '16:9', 'preset': '0'}),
+                         ((2560, 1440), (2560, 1440)))
+        self.assertEqual(scaled_sizes({'output_res': '1920x1200', 'aspect_ratio': '16:9', 'preset': '0'}), None)
+        self.assertEqual(scaled_sizes({'output_res': '2560x1080', 'aspect_ratio': 'auto', 'preset': '0'}),
+                         ((2560, 1080), (2560, 1080)))
+
 
 class FpsListTests(unittest.TestCase):
     """The FPS++ lists follow shadps4-emu/ps4_cheats of 2026-10-02 (timesteps, foliage wind)."""
@@ -162,6 +176,153 @@ class FpsListTests(unittest.TestCase):
     def test_a_misspelled_preset_name_is_reported(self):
         presets = {'60': ['60 FPS++'], 'uncap': ['Uncap FPS+', 'Sprint Fix (High FPS)']}
         self.assertEqual(self.unknown_names(presets), [('uncap', 'Uncap FPS+')])
+
+
+def clean_elf():
+    """The 1.09 eboot as prepare.py's eboot.elf: BLOODBORNE_EBOOT (ci-check sets it from the
+    rig's game) or out/eboot.elf from a run; None without either."""
+    eboot = os.environ.get('BLOODBORNE_EBOOT')
+    if eboot and Path(eboot).is_file():
+        from prepare import parse_self
+        return parse_self(Path(eboot).read_bytes())[0]
+    path = ROOT / 'out/eboot.elf'
+    return path.read_bytes() if path.is_file() else None
+
+
+def elf_loads(elf):
+    """[(vaddr, file offset, file size)] of the ELF's loadable segments."""
+    phoff, = struct.unpack_from('<Q', elf, 0x20)
+    phentsize, phnum = struct.unpack_from('<HH', elf, 0x36)
+    loads = []
+    for i in range(phnum):
+        kind, _f, offset, vaddr, _p, filesz, _m, _a = struct.unpack_from('<IIQQQQQQ', elf, phoff + i * phentsize)
+        if kind == 1:
+            loads.append((vaddr, offset, filesz))
+    return loads
+
+
+def with_patches_applied(elf, names):
+    """`elf` with the named patches written over it, as a modified eboot.bin ships them."""
+    out = bytearray(elf)
+    loads = elf_loads(elf)
+    for at, data in compile_patches(XML, names, '01.09', SEGMENTS):
+        vaddr, offset, _size = next(l for l in loads if l[0] <= at < l[0] + l[2])
+        out[offset + at - vaddr:offset + at - vaddr + len(data)] = data
+    return bytes(out)
+
+
+def one_segment_elf():
+    """An ELF with one zero-filled segment over the whole image (code unlike the game's)."""
+    header = bytearray(64)
+    header[0:7] = b'\x7fELF\x02\x01\x01'
+    struct.pack_into('<Q', header, 0x20, 64)
+    struct.pack_into('<HH', header, 0x36, 56, 1)
+    return bytes(header) + struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, 0x6000000, 0x6000000, 0x1000)
+
+
+class PatchGroupTests(unittest.TestCase):
+    """Supermedo 48e41b7: an eboot.bin whose code differs gets only the groups of patches whose
+    code it did not change (a 60 fps patch applied to the file keeps the resolution and effect
+    patches), none over code it changed. bbport's game check refuses such an eboot.bin unless
+    BB_SKIP_GAME_CHECK=1; this keeps the patches off changed code then."""
+
+    def test_groups_cover_every_switch_and_enemy_control_goes_with_the_frame_rate(self):
+        groups = patches.PATCH_GROUPS
+        self.assertEqual(set(groups), {'fps', 'resolution', 'effects', 'fixes'})
+        for names in patches.FPS_PRESETS.values():
+            self.assertTrue(set(names) <= set(groups['fps']))
+        self.assertIn('Enemy Control', groups['fps'])
+        self.assertNotIn('Enemy Control', groups['effects'])
+        self.assertIn(RESOLUTION_TEMPLATE, groups['resolution'])
+        self.assertIn(patches.GX_COMMAND_HEAP, groups['fixes'])
+        for name in patches.effect_patches({key: '1' for key in patches.EFFECTS} | {'model_lod': '2'}):
+            self.assertIn(patches.GROUP_OF.get(name), ('effects', 'fps'), name)
+
+    def test_groups_write_disjoint_code(self):
+        sites = {group: patches.patch_sites(XML, '01.09', names) for group, names in patches.PATCH_GROUPS.items()}
+        for first in sites:
+            for second in sites:
+                if first < second:
+                    for a, b in sites[first]:
+                        for c, d in sites[second]:
+                            self.assertFalse(a < d and c < b, f'{first} and {second} share {a:#x}')
+
+    def test_group_list_reads_as_a_sentence(self):
+        self.assertEqual(patches.group_list({'fps'}), 'frame rate')
+        self.assertEqual(patches.group_list({'fps', 'effects'}), 'frame rate and effect options')
+
+    def test_other_code_gets_no_group(self):
+        elf = one_segment_elf()
+        self.assertEqual(patches.matching_groups_of(lambda start, end: patches.eboot_bytes(elf, start, end)), set())
+
+    def test_a_game_version_without_fingerprints_keeps_every_group(self):
+        self.assertEqual(patches.matching_groups_of(lambda start, end: b'', '01.00'), set(patches.PATCH_GROUPS))
+
+    def compile(self, elf, env=None, fps='60'):
+        """patches.py as run.py runs it on `elf`; returns (log, number of writes, write offsets)."""
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            (out / 'eboot.elf').write_bytes(elf)
+            (out / 'bbport.ini').write_text('upscaler=fsr3\npreset=1\n')
+            settings = {key: value for key, value in os.environ.items()
+                        if key not in ('BB_FORCE_PATCHES', 'BB_SKIP_NETWORK_CHOICE')}
+            settings.update(env or {})
+            run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out),
+                                  '--fps', fps, '--settings', str(out / 'bbport.ini'),
+                                  '--game-dir', str(out), '--xml', str(XML), '--render-res', '1280x720'],
+                                 env=settings, capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(run.returncode, 0, run.stderr)
+            blob = (out / 'patches.bin').read_bytes()
+        count, = struct.unpack_from('<Q', blob, 16)
+        position, offsets = 24, set()
+        for _ in range(count):
+            offset, length = struct.unpack_from('<QQ', blob, position)
+            offsets.add(offset)
+            position += 16 + length
+        return run.stdout, count, offsets
+
+    def test_other_code_is_not_patched_unless_forced(self):
+        log, count, _ = self.compile(one_segment_elf())
+        self.assertEqual(count, 0)
+        self.assertIn('none applied', log)
+        _, forced, _ = self.compile(one_segment_elf(), {'BB_FORCE_PATCHES': '1'})
+        self.assertGreater(forced, 0)
+
+
+@unittest.skipUnless(clean_elf(), 'needs the 1.09 eboot (BLOODBORNE_EBOOT or out/eboot.elf)')
+class PatchGroupGameTests(unittest.TestCase):
+    """The groups against the real 1.09 executable."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.clean = clean_elf()
+
+    def groups(self, elf):
+        return patches.matching_groups_of(lambda start, end: patches.eboot_bytes(elf, start, end))
+
+    def test_stored_fingerprints_match_the_clean_game(self):
+        self.assertEqual(self.groups(self.clean), set(patches.PATCH_GROUPS))
+
+    def test_a_60_fps_eboot_keeps_resolution_effects_and_fixes(self):
+        modified = with_patches_applied(self.clean, ['60 FPS++'])
+        self.assertEqual(self.groups(modified), {'resolution', 'effects', 'fixes'})
+
+    def test_changed_resolution_code_keeps_the_frame_rate(self):
+        modified = with_patches_applied(self.clean, [RESOLUTION_TEMPLATE])
+        self.assertEqual(self.groups(modified), {'fps', 'effects', 'fixes'})
+
+    def test_main_leaves_the_changed_group_out(self):
+        fps_offsets = {offset for offset, _ in compile_patches(XML, ['60 FPS++'], '01.09', SEGMENTS)}
+        log, count, offsets = PatchGroupTests.compile(self, self.clean)
+        self.assertTrue(fps_offsets <= offsets)
+        self.assertNotIn('code differs', log)
+        log, count, offsets = PatchGroupTests.compile(self, with_patches_applied(self.clean, ['60 FPS++']))
+        self.assertIn('frame rate code differs', log)
+        self.assertFalse(fps_offsets & offsets)
+        self.assertIn('scene 1280x720', log)  # the resolution group still applies
+        self.assertGreater(count, 0)
 
 
 class PatchedGameTests(unittest.TestCase):
@@ -412,6 +573,7 @@ class SkipNetworkChoiceTests(unittest.TestCase):
             struct.pack_into('<HH', header, 0x36, 56, 1)
             (out / 'eboot.elf').write_bytes(bytes(header) + struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, 0x6000000, 0x6000000, 0x1000))
             settings = {key: value for key, value in os.environ.items() if key != 'BB_SKIP_NETWORK_CHOICE'}
+            settings['BB_FORCE_PATCHES'] = '1'  # the zero-filled ELF has none of the game's code
             settings.update(env)
             run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out),
                                   '--fps', '60', '--settings', str(out / 'none.ini'),
@@ -465,6 +627,64 @@ class IntelTonemapTests(unittest.TestCase):
         xml = ET.parse(ROOT / 'patches/Bloodborne.xml')
         names = [m.get('Name') for m in xml.iter('Metadata')]
         self.assertIn(patches.INTEL_TONEMAP, names)
+
+
+class BuildCheckNamesTests(unittest.TestCase):
+    """Build check on join: the patches that change the game (cheats and gameplay tweaks) must be the
+    same for everyone in a party; the rest (frame rate, effects, resolution) only go in the log."""
+
+    def test_gameplay_patches_get_short_names_and_the_rest_stays_apart(self):
+        gameplay, other = patches.build_check_names(
+            ['60 FPS++', 'Player No Dead (Read note)', 'Disable DoF', 'Disable Rally (HP Regain)'])
+        self.assertEqual(gameplay, ['no death', 'no rally'])
+        self.assertEqual(other, ['60 FPS++', 'Disable DoF'])
+
+    def test_every_cheat_and_gameplay_tweak_of_the_launcher_is_checked(self):
+        for key in ('cheat_no_death', 'cheat_stealth', 'cheat_silent', 'cheat_rally_no_decay',
+                    'cheat_enemy_control', 'tweak_no_rally'):
+            name = patches.EFFECTS[key][1]
+            self.assertIn(name, patches.GAMEPLAY_PATCHES, key)
+        xml = ET.parse(ROOT / 'patches/Bloodborne.xml')
+        names = {m.get('Name') for m in xml.iter('Metadata')}
+        self.assertLessEqual(set(patches.GAMEPLAY_PATCHES), names)
+
+    def run_main_on_a_blank_eboot(self, **env):
+        """patches.py's main on an eboot of zeros (no patch group's fingerprint matches it): the
+        names it wrote beside patches.bin."""
+        import json
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            header = bytearray(64)
+            header[0:7] = b'\x7fELF\x02\x01\x01'
+            struct.pack_into('<Q', header, 0x20, 64)
+            struct.pack_into('<HH', header, 0x36, 56, 1)
+            (out / 'eboot.elf').write_bytes(bytes(header) + struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, 0x6000000,
+                                                                        0x6000000, 0x1000))
+            (out / 'bbport.ini').write_text('cheat_no_death=1\neffect_dof=0\n', encoding='utf-8')
+            (out / 'patches-names.json').write_text('{"gameplay": ["stale"], "other": []}\n', encoding='utf-8')
+            run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out),
+                                  '--fps', '60', '--settings', str(out / 'bbport.ini'),
+                                  '--game-dir', str(out), '--xml', str(XML)],
+                                 env={**os.environ, 'BB_INTEL_TONEMAP_FIX': '0', **env},
+                                 capture_output=True, text=True, encoding='utf-8')
+            self.assertEqual(run.returncode, 0, run.stderr)
+            return json.loads((out / 'patches-names.json').read_text(encoding='utf-8'))
+
+    def test_main_writes_the_names_beside_patches_bin(self):
+        # BB_FORCE_PATCHES: the blank eboot matches no group's fingerprint (eboot check per patch
+        # group, #388), and the names are those of the patches applied.
+        names = self.run_main_on_a_blank_eboot(BB_FORCE_PATCHES='1')
+        self.assertEqual(names['gameplay'], ['no death'])
+        self.assertIn('60 FPS++', names['other'])
+        self.assertIn('Disable DoF', names['other'])
+
+    def test_an_eboot_no_patch_fits_names_none(self):
+        # No group fits, so none is applied: the build check must not tell the server about a
+        # cheat this game does not have (nor keep the names of an earlier run).
+        names = self.run_main_on_a_blank_eboot(BB_FORCE_PATCHES='')
+        self.assertEqual(names, {'gameplay': [], 'other': []})
 
 
 if __name__ == '__main__':

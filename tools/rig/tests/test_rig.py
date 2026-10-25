@@ -27,10 +27,11 @@ VERBS = {
     "mark", "approach", "attack", "teleport", "press", "cutscene-options", "stick", "set-flag",
     "expect-walks", "place",  # playtest 2026-10-18: a player kept in a talk never walks
     "expect-flag",
-    "wait-flag", "godmode", "snapshot", "log", "expect-hp", "expect-session", "expect-map", "done",
+    "wait-flag", "flags", "altar-record", "godmode", "snapshot", "log", "expect-hp", "wait-hp", "expect-session", "expect-map", "done",
     "wait-solo", "note-max-hp", "expect-max-hp", "expect-effect", "expect-others-near", "expect-others-shown",
     "expect-compass",  # Kaniel 2026-10-17: the teammate compass
     "expect-stains", "pickup-stain",  # Kaniel 2026-10-20: bloodstains on the compass and map
+    "ping-aim", "ping-map", "expect-pings",  # Kaniel 2026-10-24: team pings
     "pickup", "hit", "rise", "approach-downed", "revive-downed", "wait-vital", "wait-member-vital",
     "shot", "expect-hidden", "expect-disabled", "set-disabled", "census", "peek", "poke", "dump", "raise-stat",
     "add-effect",  # #300: Insight for Hemwick's mist ambush
@@ -44,6 +45,7 @@ VERBS = {
     "menu-invite", "menu-kick", "menu-join", "menu-leave",  # the team menu in game
     "trade-give", "trade-stock", "trade-offer", "trade-answer", "expect-held", "wait-trade",
     "trade-socket", "expect-socketed",
+    "talk-gesture", "expect-gesture",  # an NPC talk's gesture step
     "cut-link",  # phase 7: a dropped connection
     "watch-unseen",  # a story NPC never drawn after a load
 }
@@ -76,6 +78,19 @@ class ScenarioTest(unittest.TestCase):
                             self.assertIn(words[1], BUTTONS)
                         if words[0] in ("wait-vital", "wait-member-vital"):
                             self.assertIn(words[1], VITALS)
+
+    def test_every_sync_is_declared(self):
+        # Kaniel 2026-10-24 (the first pings run): a sync the scenario does not declare is never
+        # let go, and every game waits on it until the run times out.
+        for name, scenario in scenarios.SCENARIOS.items():
+            declared = scenario.get("syncs", {})
+            for role, script in scenario["roles"].items():
+                for command in sum(run_scenario.stages_of(script), []):
+                    words = command.split()
+                    if words[0] == "sync":
+                        with self.subTest(scenario=name, role=role, sync=words[1]):
+                            self.assertIn(words[1], declared)
+                            self.assertIn(role, declared[words[1]]["roles"])
 
     def test_every_shot_has_a_plain_name_of_its_own(self):
         for name, scenario in scenarios.SCENARIOS.items():
@@ -466,6 +481,31 @@ class LaneTest(unittest.TestCase):
         self.assertEqual(again.count("BloodborneBackend="), 1)
         self.assertIn("BloodborneBackend=true\n", again)
         self.assertIn("BloodborneBackend=false\n", run_scenario.with_backend(config, False))
+
+    def test_a_role_can_have_settings_of_its_own(self):
+        # Build check on join: two games on different settings (one with harder enemies).
+        scenario = {"settings": {"A": "1", "B": "2"},
+                    "role_settings": {"guest": {"B": "3", "C": "4"}}}
+        self.assertEqual(run_scenario.scenario_settings(scenario, "host"), {"A": "1", "B": "2"})
+        self.assertEqual(run_scenario.scenario_settings(scenario, "guest"),
+                         {"A": "1", "B": "3", "C": "4"})
+        self.assertEqual(run_scenario.scenario_settings({}, "guest"), {})
+        spec = scenarios.SCENARIOS["build-check-harder"]
+        self.assertEqual(spec["role_settings"]["guest"]["SHADPS4_BLOODBORNE_HARDER_ENEMIES"],
+                         "3,1.5,3")
+        # The guest starts once the host's game is linked: the host's build is the one here.
+        self.assertEqual(run_scenario.start_after(spec, "guest")[0], "host")
+        self.assertIsNone(run_scenario.start_after(spec, "host"))
+
+    def test_a_lanes_shadnet_checks_the_games_against_each_other_not_its_own_build(self):
+        # Build check on join: the rig's servers are built apart from the games (another
+        # checkout, another day), so only the games here count (CheckServerBuild).
+        config = "[General]\nUnsecuredPort=32313\nCheckServerBuild=true\n"
+        changed = run_scenario.with_build_check(config)
+        self.assertIn("CheckServerBuild=false\n", changed)
+        self.assertEqual(changed.count("CheckServerBuild="), 1)
+        self.assertIn("CheckServerBuild=false\n",
+                      run_scenario.with_build_check("[General]\nUnsecuredPort=32313\n"))
 
     def test_a_lane_is_a_copy_of_the_rig_without_its_game_image_and_logs(self):
         with tempfile.TemporaryDirectory() as folder:

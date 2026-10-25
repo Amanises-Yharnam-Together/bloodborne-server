@@ -73,6 +73,14 @@ GraphicsPipeline::GraphicsPipeline(
             const auto& vs_info = runtime_infos[u32(Shader::SwStage::Vertex)].sw.vs;
             GetVertexInputs(sdata.vertex_attributes, sdata.vertex_bindings, sdata.divisors,
                             guest_buffers, vs_info.step_rate_0, vs_info.step_rate_1);
+            // bbport: the formats the key was made with. The V#s read again here (on a compile
+            // thread, later) may already be another draw's.
+            for (auto& attribute : sdata.vertex_attributes) {
+                if (const vk::Format format = key.vertex_buffer_formats[attribute.location];
+                    format != vk::Format::eUndefined) {
+                    attribute.format = format;
+                }
+            }
         }
     }
 
@@ -459,7 +467,7 @@ void GraphicsPipeline::GetVertexInputs(
         attributes.push_back(Attribute{
             .location = semantic,
             .binding = semantic,
-            .format = LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()),
+            .format = LiverpoolToVK::VertexInputFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()),
             .offset = 0,
         });
         bindings.push_back(Binding{

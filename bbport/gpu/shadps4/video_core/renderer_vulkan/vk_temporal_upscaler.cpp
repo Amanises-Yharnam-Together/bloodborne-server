@@ -16,6 +16,7 @@
 
 #include <vk_mem_alloc.h>
 
+#include "bbport_guest_hooks.h"
 #include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "ffx_vk_portable.h"
@@ -331,21 +332,27 @@ bool TemporalUpscaler::OnFrameStart() {
     if (++proxy_cleanup_frames % 64 == 0) {
         scene_targets.CleanupStaleEntries();
     }
-    // bbport: BB_PRESET_FILE=<file> holding a preset number, read about once a second: switches
-    // the preset like the menu does (scripted tests of live preset changes).
+    // bbport: BB_PRESET_FILE=<file> holding "preset [output [upscaler]]", read about once a
+    // second: switches them like the menu does (scripted tests of live changes). The output is a
+    // number of the old list (0 720p .. 3 4K) or a size ("2560x1080").
     static const char* preset_file = std::getenv("BB_PRESET_FILE");
     if (preset_file && ++preset_file_frames % 64 == 0) {
         if (FILE* f = std::fopen(preset_file, "r")) {
             int value = 0;
-            int output = -1;
+            char output[32] = {};
             int provider = -1;
-            const int fields = std::fscanf(f, "%d %d %d", &value, &output, &provider);
+            const int fields = std::fscanf(f, "%d %31s %d", &value, output, &provider);
             if (fields >= 1 && value >= 0 &&
                 value < BbSettings::PresetCount) {
                 BbSettings::Get().preset.store(value);
             }
-            if (fields >= 2 && output >= 0 && output < BbSettings::OutputCount) {
-                BbSettings::Get().output_res.store(output);
+            if (fields >= 2) {
+                const int number = std::atoi(output);
+                if (const auto size = BbOutputSizes::Parse(output)) {
+                    BbSettings::Get().output_res.store(BbOutputSizes::Pack(*size));
+                } else if (number >= 0 && number < int(std::size(BbOutputSizes::Standard))) {
+                    BbSettings::Get().output_res.store(BbOutputSizes::Pack(BbOutputSizes::Standard[number]));
+                }
             }
             if (fields == 3 && provider >= 0 && provider < BbSettings::UpscalerCount) {
                 BbSettings::Get().upscaler.store(provider);
@@ -364,19 +371,32 @@ bool TemporalUpscaler::OnFrameStart() {
     const bool active = Active();
     const bool jitter_on = active && settings.jitter && !BbToggle::Disabled(1u << 25);
     const int upscaler = settings.upscaler.load();
-    const int output = settings.output_res.load();
+    // The output (any size the display has); a game whose camera hooks are not in keeps the
+    // 16:9 picture, as large as the output holds (the presenter centres it).
+    auto output_size = BbSettings::CurrentOutput();
+    if (!BbGuestHooks::AspectSupported()) {
+        output_size = BbOutputSizes::Fit16x9(output_size);
+    }
+    const u32 output = BbOutputSizes::Pack(output_size);
     const bool output_changed = !scaled_session && applied_output != output;
     if (output_changed) {
-        target_width = BbSettings::OutputWidths[output];
-        target_height = BbSettings::OutputHeights[output];
+        target_width = u32(output_size.width);
+        target_height = u32(output_size.height);
         std::printf("Output resolution: %ux%u (live)\n", target_width, target_height);
         failed = false;
         fsr4_failed = false;
     }
+    // The game's camera, HUD markers and UI follow the output's aspect ratio (bbport_guest_hooks).
+    if (const float aspect = enabled ? float(target_width) / float(target_height) : 16.0f / 9.0f;
+        aspect != applied_aspect) {
+        applied_aspect = aspect;
+        BbGuestHooks::SetDisplayAspect(aspect);
+    }
     const bool changed = output_changed || applied_preset != preset || active != last_active ||
                          jitter_on != last_jitter || applied_upscaler != upscaler;
-    if (applied_upscaler != upscaler) {
-        // A failed provider keeps a fatal flag internally; a user retry gets a fresh context.
+    if (applied_upscaler != upscaler || (output_changed && BbSettings::IsFsr4(upscaler))) {
+        // A failed provider keeps a fatal flag internally; a user retry gets a fresh context, and
+        // so does another output (one it could not do, 7680x2160, must not keep it off at 2560x1080).
         scheduler.Finish();
         fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
         if (BbSettings::IsFsr4(upscaler)) BbSettings::Get().fsr4_problem = nullptr;
@@ -1500,6 +1520,31 @@ float TemporalUpscaler::SceneMipBias() const {
     const float render = float(BbSettings::Get().active_render_width.load());
     const float output = float(Scaled() ? target_width : 1920u);
     return render > 0.0f && render < output ? std::log2(render / output) : 0.0f;
+}
+
+void TemporalUpscaler::OnDisplayPassStart() {
+    static const bool finish_without_ui = [] {
+        const char* value = std::getenv("BB_SCENE_WITHOUT_UI");
+        return !(value && value[0] == '0');
+    }();
+    const auto edges = UiComposition::ScreenEdges(target_width, target_height);
+    if (!finish_without_ui || (edges[0] >= 1.0f && edges[1] >= 1.0f) || !Scaled() || ui_phase ||
+        !ldr_target || !camera_motion.Ready()) {
+        return;
+    }
+    if (Active() && !failed) {
+        RunScaled();
+    }
+    if (!ui_phase) {
+        RunUiOnly(ldr_target, camera_motion.Depth());
+    }
+    if (ui_phase) {
+        static u64 count = 0;
+        if (++count <= 3 || (count & (count - 1)) == 0) {
+            std::printf("Scene output: frame without UI completed at %ux%u (%llu so far)\n", ui_width,
+                        ui_height, static_cast<unsigned long long>(count));
+        }
+    }
 }
 
 bool TemporalUpscaler::Scaled() const {

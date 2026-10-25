@@ -234,23 +234,38 @@ static void touch_click(PadData *d, int right) {
 
 /* Kaniel 2026-10-18: holding the pad's touchpad (Back / View on pads without one) opens the port's
  * map, as Elden Ring's map button; a short press is still the game's touchpad (its gestures), sent
- * for a moment when it is let go, on the side it was pressed. */
+ * for a moment when it is let go, on the side it was pressed.
+ * Kaniel 2026-10-24: two taps within TOUCH_DOUBLE_US place a team ping (as the second press comes)
+ * and the game sees neither; so a lone tap reaches the game once that moment has passed. */
 #define MAP_HOLD_US 450000u
 #define MAP_TAP_US 120000u
-typedef struct { uint64_t since; int fired, side; uint64_t tap_until; int tap_side; } MapHold;
-/* `down`: the pad's touchpad now (`side` 1: its right half). Returns 1 once a hold is long enough;
- * `*click`: -1 when the game sees no touchpad, else the side its press is on. */
+#define TOUCH_DOUBLE_US 250000u
+enum { TOUCH_MAP=1, TOUCH_PING=2 };
+typedef struct {
+    uint64_t since; int fired, side;
+    uint64_t tap_until; int tap_side;
+    uint64_t lone_until; int lone_side; /* a tap let go: a second may still come until then */
+} MapHold;
+/* `down`: the pad's touchpad now (`side` 1: its right half). Returns TOUCH_MAP once a hold is long
+ * enough, TOUCH_PING on a double tap's second press; `*click`: -1 when the game sees no touchpad,
+ * else the side its press is on. */
 static int map_hold_step(MapHold *h, int down, int side, uint64_t now, int *click) {
-    int opened=0;
+    int what=0;
+    if (h->lone_until && now>=h->lone_until) { /* no second tap: the first is the game's */
+        h->tap_until=h->lone_until+MAP_TAP_US; h->tap_side=h->lone_side; h->lone_until=0;
+    }
     if (down) {
-        if (!h->since) { h->since=now ? now : 1; h->fired=0; h->side=side; }
-        if (!h->fired && now-h->since>=MAP_HOLD_US) { h->fired=1; opened=1; }
+        if (!h->since) {
+            h->since=now ? now : 1; h->fired=0; h->side=side;
+            if (h->lone_until) { h->lone_until=0; h->fired=1; what=TOUCH_PING; }
+        }
+        if (!h->fired && now-h->since>=MAP_HOLD_US) { h->fired=1; what=TOUCH_MAP; }
     } else if (h->since) {
-        if (!h->fired) { h->tap_until=now+MAP_TAP_US; h->tap_side=h->side; }
+        if (!h->fired) { h->lone_until=now+TOUCH_DOUBLE_US; h->lone_side=h->side; }
         h->since=0;
     }
     *click=!down && now<h->tap_until ? h->tap_side : -1;
-    return opened;
+    return what;
 }
 static MapHold map_hold;
 
@@ -787,7 +802,9 @@ static void sample_host(PadData *d) {
         const int touch_down=(d->buttons & BTN_TOUCHPAD) || touch_right;
         const int side=touch_right || (d->touch_count && d->touches[0].x>959);
         int click=-1;
-        if (map_hold_step(&map_hold,touch_down,side,d->timestamp,&click)) bbcoop_map_from_pad();
+        const int touch=map_hold_step(&map_hold,touch_down,side,d->timestamp,&click);
+        if (touch==TOUCH_MAP) bbcoop_map_from_pad();
+        else if (touch==TOUCH_PING) bbcoop_ping_aim();
         d->buttons&=~(uint32_t)BTN_TOUCHPAD;
         d->touch_count=0;
         if (click>=0) touch_click(d,click);
