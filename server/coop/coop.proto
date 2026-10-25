@@ -219,6 +219,9 @@ message Vitals {
     // Kaniel 2026-10-25: the lamps this member used this run (it counts up with each): a
     // spectating teammate wakes once another's goes up.
     uint32 lamp_uses = 17;
+    // Kaniel 2026-10-25: the bosses (handles) this member's game runs now, so that every game picks
+    // the same runner for a fight (BossRunnerPick). The server keeps it with the rest.
+    repeated uint32 bosses = 18;
 }
 message VitalsBoard {
     message Member {

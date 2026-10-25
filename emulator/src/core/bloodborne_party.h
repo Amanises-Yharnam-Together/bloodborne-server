@@ -3458,6 +3458,10 @@ struct MemberVitals {
     // Kaniel 2026-10-25: the lamps it used this run (the server only, as cutscene): a spectating
     // teammate wakes once it goes up (LampUseWatch).
     u32 lamp_uses = 0;
+    // The bosses (handles) this member's game runs now (BossClaims), so that every game, a fresh
+    // one too, picks the same runner (BossRunnerPick). The server only; the direct line keeps the
+    // board's.
+    std::vector<u32> bosses;
     bool operator==(const MemberVitals&) const = default;
 };
 // Where the team's host stands (up or down, on a map) on the vitals board, as a resume point.
@@ -3657,23 +3661,47 @@ constexpr float BossLeaveMetres = 45.0f;
 // Yharnam and dozens of a chalice dungeon's scaled enemies, and the pick handed them out. Only the
 // game's bosses (NpcParam npcType 1) are handed out; a row that does not read (`npc_type` none)
 // falls back on the boss size.
+// Kaniel's playtest 2026-10-25 (v1.2.2): the Shadows of Yharnam stood still for minutes. Each game
+// kept the fight's runner in its own memory: Kaniel's game, restarted, picked krolebord (nearest),
+// while krolebord's game still remembered the game's own runner (Kaniel's) from before a trip, so
+// each followed the other. The pick now keeps nothing of its own: the runner's game says so on the
+// board (MemberVitals::bosses, BossClaims), and a claimed boss stays with its claimer (the game's
+// own runner first, then by name) while it is on the map, up or down. With no claim: the game's
+// own runner if it is in the arena, else the nearest standing member within BossEnterMetres.
 constexpr u64 NpcTypeOffset = 0x12E;
 constexpr u8 NpcTypeBoss = 1;
 bool HandsOutBoss(std::optional<u8> npc_type, bool boss_sized);
 class BossRunnerPick {
 public:
-    // The member whose game runs the boss at `boss` on `map` now, "" for the game's own (the map's
-    // enemy owner, `owner`).
-    std::string Tick(u32 map, const LampPosition& boss, std::span<const MemberVitals> board,
-                     std::string_view owner = {});
+    // The member whose game runs the boss `handle` at `boss` on `map` now, "" for the game's own
+    // (the map's enemy owner, `owner`).
+    std::string Tick(u32 map, u32 handle, const LampPosition& boss,
+                     std::span<const MemberVitals> board, std::string_view owner = {});
     const std::string& Last() const {
         return current;
     }
 
 private:
     std::string current;
-    bool owner_holds = false; // the game's own runner (current "") took the fight
 };
+// The bosses this member's game ran lately (it was the pick, or the game's own runner with the
+// pick empty, and the boss was awake): what it claims on the board. A claim lasts KeepMs after the
+// last run, so a boss left behind (a trip, its death, asleep) is let go.
+class BossClaims {
+public:
+    static constexpr s64 KeepMs = 2'000;
+    void Ran(u32 handle, s64 now_ms);
+    std::vector<u32> Current(s64 now_ms); // sorted
+
+private:
+    std::map<u32, s64> last;
+};
+// Whether this member (`self`) claims an awake boss it sees: picked itself (`runner`), or the
+// game's own runner (`runner` "", `own_runner` this game) in the arena (`distance` to it within
+// BossLeaveMetres) or with its claim already on the board (`claimed`). A game's own runner far away
+// claims nothing, so a member walking in still takes the fight (Lisara's Gascoigne, 2026-10-16).
+bool ClaimsBoss(std::string_view runner, std::string_view self, bool own_runner, bool claimed,
+                float distance);
 
 // Real revive hits. A character's team is ChrIns +0x88; the game's relation tables
 // ([my team][other's]: hit an enemy 0x04731560, hit a friend 0x04731960, hostile 0x05127B90)

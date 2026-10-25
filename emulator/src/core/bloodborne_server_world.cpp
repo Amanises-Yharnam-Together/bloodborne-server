@@ -522,7 +522,8 @@ void TakeBoard(const bbcoop::Envelope& envelope) {
                              .boss = vitals.boss(),
                              .killed_by_invader = vitals.killed_by_invader(),
                              .hostile = entry.hostile(),
-                             .lamp_uses = vitals.lamp_uses()});
+                             .lamp_uses = vitals.lamp_uses(),
+                             .bosses = {vitals.bosses().begin(), vitals.bosses().end()}});
         }
         for (const auto& wipe : envelope.vitals_board().wipes()) {
             board.wipes.push_back(
@@ -1216,6 +1217,9 @@ void SendServerVitals(const MemberVitals& mine, std::span<const ReviveHitTotal> 
     vitals.set_boss(mine.boss);
     vitals.set_killed_by_invader(mine.killed_by_invader);
     vitals.set_lamp_uses(mine.lamp_uses);
+    for (const u32 boss : mine.bosses) {
+        vitals.add_bosses(boss);
+    }
     PutPosition(mine.at, vitals.mutable_at());
     for (const ReviveHitTotal& hit : hits) {
         bbcoop::ReviveHit* out = vitals.add_hits();

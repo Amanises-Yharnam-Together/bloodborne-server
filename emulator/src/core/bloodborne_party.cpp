@@ -5938,12 +5938,14 @@ VitalsBoard MergeDirectVitals(const VitalsBoard& board, std::span<const DirectVi
         const u32 board_cutscene = same->cutscene;
         const u32 board_vials = same->vials, board_bullets = same->bullets;
         const u32 board_lamp_uses = same->lamp_uses;
+        std::vector<u32> board_bosses = same->bosses;
         *same = update.self;
         same->revive_damage = board_damage;
         same->cutscene = board_cutscene; // the direct line does not carry these
         same->vials = board_vials;
         same->bullets = board_bullets;
         same->lamp_uses = board_lamp_uses;
+        same->bosses = std::move(board_bosses);
     }
     for (MemberVitals& member : merged.members) {
         u32 hits = 0;
@@ -5972,7 +5974,7 @@ bool HandsOutBoss(std::optional<u8> npc_type, bool boss_sized) {
     return npc_type ? *npc_type == NpcTypeBoss : boss_sized;
 }
 
-std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
+std::string BossRunnerPick::Tick(u32 map, u32 handle, const LampPosition& boss,
                                  std::span<const MemberVitals> board, std::string_view owner) {
     const auto distance = [&](const MemberVitals& member) {
         float sum = 0.0f;
@@ -5983,27 +5985,31 @@ std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
         return std::sqrt(sum);
     };
     // On the boss's map, standing or down (a fight it is still in), however far.
-    const auto holds = [&](std::string_view name) {
-        const auto member = std::ranges::find(board, name, &MemberVitals::member);
-        return member != board.end() && member->map == map &&
-               (member->vital == Vital::Up || member->vital == Vital::Down);
+    const auto holds = [&](const MemberVitals& member) {
+        return member.map == map && (member.vital == Vital::Up || member.vital == Vital::Down);
     };
-    const auto in_arena = [&](std::string_view name) {
-        const auto member = std::ranges::find(board, name, &MemberVitals::member);
-        return holds(name) && distance(*member) <= BossLeaveMetres;
-    };
-    if (current.empty() && owner_holds) {
-        if (!owner.empty() && holds(owner)) {
-            return current; // the game's own runner keeps its fight
+    // A claimer keeps its fight: the game's own runner first, then by name (the same in every game).
+    const MemberVitals* claimer = nullptr;
+    for (const MemberVitals& member : board) {
+        if (!holds(member) || !std::ranges::contains(member.bosses, handle)) {
+            continue;
         }
-        owner_holds = false;
+        const bool owns = !owner.empty() && member.member == owner;
+        const bool claimer_owns = claimer != nullptr && claimer->member == owner;
+        if (claimer == nullptr || (owns && !claimer_owns) ||
+            (owns == claimer_owns && member.member < claimer->member)) {
+            claimer = &member;
+        }
     }
-    if (current.empty() && !owner.empty() && in_arena(owner)) {
-        owner_holds = true;
-        return current; // the game's own runner fights it already
-    }
-    if (!current.empty() && holds(current)) {
+    if (claimer != nullptr) {
+        current = claimer->member == owner ? std::string{} : claimer->member;
         return current;
+    }
+    const auto owner_line = std::ranges::find(board, owner, &MemberVitals::member);
+    if (!owner.empty() && owner_line != board.end() && holds(*owner_line) &&
+        distance(*owner_line) <= BossLeaveMetres) {
+        current.clear();
+        return current; // the game's own runner fights it already
     }
     const MemberVitals* nearest = nullptr;
     for (const MemberVitals& member : board) {
@@ -6017,6 +6023,27 @@ std::string BossRunnerPick::Tick(u32 map, const LampPosition& boss,
     }
     current = nearest ? nearest->member : std::string{};
     return current;
+}
+
+void BossClaims::Ran(u32 handle, s64 now_ms) {
+    last[handle] = now_ms;
+}
+
+std::vector<u32> BossClaims::Current(s64 now_ms) {
+    std::erase_if(last, [&](const auto& entry) { return now_ms - entry.second > KeepMs; });
+    std::vector<u32> handles;
+    for (const auto& [handle, at] : last) {
+        handles.push_back(handle);
+    }
+    return handles;
+}
+
+bool ClaimsBoss(std::string_view runner, std::string_view self, bool own_runner, bool claimed,
+                float distance) {
+    if (!runner.empty()) {
+        return !self.empty() && runner == self;
+    }
+    return own_runner && (claimed || distance <= BossLeaveMetres);
 }
 
 std::vector<u32> ClearBossGauges(std::span<u8> gauges) {

@@ -840,8 +840,10 @@ bool MarkPositionToSend(u64 world, u64 character) {
 namespace {
 
 // See BossRunnerPick: whose game runs a boss-sized enemy (by handle), "" for the game's own; the
-// game's thread.
+// game's thread. And the bosses this game runs, for its vitals (OwnBossClaims).
 std::map<u32, BossRunnerPick> boss_runners;
+std::mutex boss_claims_mutex;
+BossClaims boss_claims;
 bool IsBossSized(u64 character); // below, with the characters shown like the host
 
 // The character's NpcParam npcType ([vtable +0x168 (character) +8] is its row, see
@@ -878,7 +880,27 @@ std::string BossRunnerOf(u64 character) {
         owner = enemy_owner_member;
     }
     const std::string runner =
-        boss_runners[handle].Tick(PlayingMap(), *at, view.board.members, owner);
+        boss_runners[handle].Tick(PlayingMap(), handle, *at, view.board.members, owner);
+    // Ours to run, awake and alive: claimed on the board (see ClaimsBoss).
+    const u64 control = ReadValue<u64>(character, 0x18);
+    const auto mine = std::ranges::find(view.board.members, view.member, &MemberVitals::member);
+    const auto me = CharacterPosition(GetLocalPlayer());
+    float distance = std::numeric_limits<float>::max();
+    if (me) {
+        float sum = 0.0f;
+        for (size_t axis = 0; axis < 3; ++axis) {
+            sum += ((*me)[axis] - (*at)[axis]) * ((*me)[axis] - (*at)[axis]);
+        }
+        distance = std::sqrt(sum);
+    }
+    if (ClaimsBoss(runner, view.member, CurrentEnemyRole() == EnemyRole::Owner,
+                   mine != view.board.members.end() && std::ranges::contains(mine->bosses, handle),
+                   distance) &&
+        control >= 0x10000 && ReadValue<s32>(control, 0x14) == EnemyAwake &&
+        CharacterHp(character) > 0) {
+        std::scoped_lock lock{boss_claims_mutex};
+        boss_claims.Ran(handle, SteadyMilliseconds());
+    }
     static std::map<u32, std::string> logged;
     if (auto& said = logged[handle]; said != runner) {
         said = runner;
@@ -895,6 +917,11 @@ bool IsMe(const std::string& member) {
 } // namespace
 
 namespace Coop {
+
+std::vector<u32> OwnBossClaims() {
+    std::scoped_lock lock{boss_claims_mutex};
+    return boss_claims.Current(SteadyMilliseconds());
+}
 
 void PS4_SYSV_ABI KeepAwakeEnemies(u64, const GuestRegisterSnapshot* registers) {
     const EnemyRole role = CurrentEnemyRole();

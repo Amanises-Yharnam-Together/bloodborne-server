@@ -2830,6 +2830,9 @@ TEST(BloodborneDirectBoards, DirectVitalsGoOverTheBoardsCopy) {
     board.members[0].bullets = 7;
     EXPECT_EQ(MergeDirectVitals(board, direct).members[0].vials, 12u);
     EXPECT_EQ(MergeDirectVitals(board, direct).members[0].bullets, 7u);
+    // Kaniel 2026-10-25: and the bosses its game runs (every game's boss pick reads them).
+    board.members[0].bosses = {0x1002405F};
+    EXPECT_EQ(MergeDirectVitals(board, direct).members[0].bosses, std::vector<u32>{0x1002405F});
 }
 
 // A member's standing kills go to the peers whole (at once on a change, again every half

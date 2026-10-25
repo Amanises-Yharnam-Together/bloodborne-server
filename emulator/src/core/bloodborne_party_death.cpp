@@ -1851,6 +1851,7 @@ void PostVitalsAndPanel(PartyDeathRun& run, const DeathTick& tick) {
             .level = OwnCharacterLevel(),
             .boss = tick.alive && EventFlagOn(BossFightFlag),
             .killed_by_invader = run.downed.Current() == Vital::Dead && died_to_invader.load(),
+            .bosses = tick.in_session ? OwnBossClaims() : std::vector<u32>{},
         },
         run.revive_hits.Totals(tick.board, tick.view.Fresh()));
 
