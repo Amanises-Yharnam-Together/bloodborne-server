@@ -14,6 +14,7 @@
 #include "bbport_overlay.h"
 #include "bbport_prompts.h"
 #include "bbport_settings.h"
+#include "core/emulator_settings.h"
 
 namespace Frontend {
 
@@ -171,6 +172,9 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_MAXIMIZED_BOOLEAN, maximize);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
+    // A headless rig game (BB_NULL_GPU) draws nothing: its window stays hidden, so no rig game
+    // shows on the desktop while Kaniel plays (2026-10-25).
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, EmulatorSettings.IsNullGPU());
     // Window mode (BbSettings::WindowMode, from bbport.ini or the launcher's BB_FULLSCREEN): set
     // right after creation, then whenever a menu changes it.
     base_title = title;

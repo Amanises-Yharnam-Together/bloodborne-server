@@ -229,6 +229,25 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(options["startupinfo"].wShowWindow, 4)  # SW_SHOWNOACTIVATE
             self.assertTrue(options["creationflags"] & 0x08000000)  # CREATE_NO_WINDOW
 
+    def test_lane_servers_open_no_window(self):
+        # 2026-10-25: a new console opened a Windows Terminal window per lane server on the
+        # player's desktop (Windows Terminal as the default terminal).
+        if sys.platform != "win32":
+            self.skipTest("Windows consoles only")
+        with tempfile.TemporaryDirectory() as folder, \
+                unittest.mock.patch.object(run_scenario.subprocess, "Popen") as popen:
+            log = pathlib.Path(folder) / "server.log"
+            run_scenario.start_server(["shadnet.exe"], pathlib.Path(folder), None)
+            run_scenario.start_server(["shadnet.exe"], pathlib.Path(folder), log)
+        self.assertEqual(popen.call_count, 2)
+        for call in popen.call_args_list:
+            flags = call.kwargs["creationflags"]
+            self.assertTrue(flags & 0x08000000, "CREATE_NO_WINDOW")  # a console, but no window
+            self.assertFalse(flags & 0x00000010, "no CREATE_NEW_CONSOLE")
+            # Without a console window Qt logs to the debugger: the log (and its "party worlds:"
+            # line the rig waits for) would stay empty.
+            self.assertEqual(call.kwargs["env"]["QT_FORCE_STDERR_LOGGING"], "1")
+
     def test_a_scenario_switches_on_its_own_settings_only(self):
         party_death = {"SHADPS4_BLOODBORNE_PARTY_DEATH": "1"}
         env = run_scenario.game_environment("host", None, "rig:x", party_death)

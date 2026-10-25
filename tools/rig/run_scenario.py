@@ -571,16 +571,23 @@ def stop_servers():
         time.sleep(0.5)
 
 
+# A console of its own (as before) but no window: with Windows Terminal as the default terminal a
+# new console opened a Terminal window on the player's desktop (2026-10-25).
+SERVER_CONSOLE = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def start_server(command: list[str], cwd: pathlib.Path, log: pathlib.Path | None):
     env = dict(os.environ, SHADNET_BLOODBORNE_RE_TRACE="1")  # every summon request's body
+    # Qt logs to the debugger, not stderr, when its console has no window (SERVER_CONSOLE).
+    env["QT_FORCE_STDERR_LOGGING"] = "1"
     if log is None:
         subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                         stderr=subprocess.DEVNULL, creationflags=SERVER_CONSOLE)
         return
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "wb") as output:  # the server keeps its own handle
         subprocess.Popen(command, cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT,
-                         creationflags=subprocess.CREATE_NEW_CONSOLE)
+                         creationflags=SERVER_CONSOLE)
 
 
 def install_shadnet(build: str | None, server: pathlib.Path | None = None) -> bool:
