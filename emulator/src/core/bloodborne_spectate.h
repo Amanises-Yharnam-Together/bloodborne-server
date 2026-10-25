@@ -140,4 +140,25 @@ FreeCamera StepFreeCamera(const FreeCamera& camera, const PadInput& pad, float m
 // Whether the free camera's pad hotkey went down: Square pressed while L3 is held.
 bool FreeCameraHotkey(u32 before, u32 now);
 
+// Kaniel 2026-10-25 ("if you are in the boss fight and you are died like that you should be in the
+// new spectator mode instead of respawning", "and then trigger overall death"; guests fell into
+// Logarius' pit one by one and woke at lamps mid-fight): in a boss fight, a death the down does not
+// catch (the game's kills: an event's kill plane, a fall into a pit's void) spectates while a
+// teammate still fights there, in either death mode. The last fighter's death is then the party's
+// wipe for everyone (EndOfSpectate). Outside boss fights nothing changes.
+// Whether the game's boss bars (BossGaugesOffset, BossGaugeSlots of BossGaugeSize) show a boss: a
+// slot with a boss's handle (-1 none; 0 never one either).
+bool BossBarsUp(std::span<const u8> gauges);
+// A boss fight (its bars up in this game) with a teammate standing in it: another member up on
+// `map` within BossLeaveMetres of this player (`me`; nothing while it is not known).
+bool BossFightCatchesDeath(bool bars_up, std::span<const MemberVitals> board, std::string_view self,
+                           u32 map, const std::optional<LampPosition>& me);
+// What the IsNoDead hook makes of a check that would kill the player: nothing (the game's own
+// answer), a down's catch (party death's rule, KeepsPlayerAlive: the team's death mode follows),
+// or a boss fight's: its lethal checks and the game's kills (Instant) while `boss_fight`
+// (BossFightCatchesDeath) or `spectating` (a spectator stays out of reach of every kill).
+enum class DeathCatch { None, Down, BossFight };
+DeathCatch CatchOf(NoDeadCheck check, bool armed, bool down, bool answer, bool boss_fight,
+                   bool spectating);
+
 } // namespace Core::Bloodborne

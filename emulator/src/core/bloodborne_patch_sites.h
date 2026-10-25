@@ -108,6 +108,7 @@ inline constexpr auto CoopFeatures = std::to_array<CoopFeature>({
     {"flag block guard", false},
     {"packet guard", false},
     {"co-op camera", false},
+    {"boss fight deaths", false},
 });
 
 inline constexpr auto CoopSites = std::to_array<CoopSite>({
@@ -587,6 +588,10 @@ inline constexpr auto CoopSites = std::to_array<CoopSite>({
     // spectator's and the free camera go in there.
     {"camera manager result", "co-op camera", CoopSiteKind::Hook, 0x0193BE5A,
      "49 8B 85 28 01 00 00"},
+
+    // Kaniel 2026-10-25: the game's KillCharacter (an event's ForceCharacterDeath and the like),
+    // which never asks IsNoDead of the player: a boss fight's kill of it spectates instead.
+    {"kill character", "boss fight deaths", CoopSiteKind::Hook, 0x018BF9A0, "55 48 89 E5 41 57"},
 });
 
 // The flag block guard's choice: a block that is there, else the zeros it reads instead.

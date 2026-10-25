@@ -318,6 +318,14 @@ std::atomic<bool> party_death_down{};
 // the party tick (the teammate watched) and turns the spectator's camera with the right stick.
 std::atomic<bool> party_spectating{};
 std::atomic<int> spectate_steps{};
+// Kaniel 2026-10-25: a boss fight with a teammate in it (BossFightCatchesDeath, from the party
+// tick): the game's kills spectate (CatchOf). Each such catch is counted for the party tick, and
+// whether it was a fall into the void (the body is put back on its last ground). Our own kills
+// (giving up, a wipe's death) go through while party_death_own_kill is set.
+std::atomic<bool> party_death_boss_fight{};
+std::atomic<u32> party_death_boss_catches{};
+std::atomic<bool> party_death_boss_void{};
+std::atomic<bool> party_death_own_kill{};
 // Lethal hits the hook kept from killing the armed player: each change puts it down.
 std::atomic<u32> party_death_catches{};
 // The local player fell into the void (a lethal check while FallsIntoTheVoid, or a real death in
@@ -1019,9 +1027,10 @@ void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
     if (check == NoDeadCheck::Other) {
         return; // a hit that left HP
     }
+    bool void_fall = false;
     if (check == NoDeadCheck::Lethal && FallsIntoTheVoid(data)) {
         check = NoDeadCheck::Instant;
-        party_death_void_fall.store(true, std::memory_order_relaxed);
+        void_fall = true;
     }
     const bool answer = (registers->r14 & 0xFF) != 0;
     // Kaniel 2026-10-25: in a duel a lethal hit puts the player out of it (TickDuel), never down
@@ -1039,14 +1048,58 @@ void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
         died_to_invader.store(true, std::memory_order_relaxed);
         return;
     }
-    if (answer ||
-        !KeepsPlayerAlive(check, party_death_armed.load(std::memory_order_relaxed), down, answer)) {
+    // A boss fight's catch takes the game's kills, not HP set outright (the revive's and the event
+    // bindings' own writes ask too, 0x018BCD9C and 0x018BC5C5), nor our own kills.
+    const bool hp_set = return_offset == 0x018BCD9C || return_offset == 0x018BC5C5;
+    const bool own_kill = party_death_own_kill.load(std::memory_order_relaxed);
+    const DeathCatch caught =
+        CatchOf(check, party_death_armed.load(std::memory_order_relaxed), down, answer,
+                !own_kill && !hp_set && party_death_boss_fight.load(std::memory_order_relaxed),
+                !own_kill && party_spectating.load(std::memory_order_relaxed));
+    if (caught == DeathCatch::None) {
+        if (void_fall) {
+            party_death_void_fall.store(true, std::memory_order_relaxed);
+        }
         return;
     }
     registers->r14 = (registers->r14 & ~u64{0xFF}) | 1;
-    if (!down) {
+    if (down) {
+        return;
+    }
+    if (caught == DeathCatch::BossFight) {
+        party_death_boss_void.store(void_fall, std::memory_order_relaxed);
+        party_death_boss_catches.fetch_add(1, std::memory_order_relaxed);
+    } else {
         party_death_catches.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// Kaniel 2026-10-25: the game's KillCharacter (KillCharacterOffset) asks IsNoDead only of a
+// character linked at its data module +0xF0, never of the player itself: it writes 0 HP, sets the
+// dead bit (+0x1E3) and goes on to the death step (0x018BD9D0). So an event's kill (an arena's kill
+// plane, a pit) is caught at its entry: in a boss fight with a teammate in it, or while
+// spectating, the local player's kill is skipped and spectates (our own kills go through).
+bool kill_hook_installed = false;
+bool PS4_SYSV_ABI SkipBossFightKill(u64, const GuestRegisterSnapshot* registers) {
+    const u64 player = registers->rdi;
+    if (party_death_data.load(std::memory_order_relaxed) == 0 ||
+        party_death_own_kill.load(std::memory_order_relaxed) || player < 0x10000 ||
+        player != GetLocalPlayer()) {
+        return false;
+    }
+    const bool spectating = party_spectating.load(std::memory_order_relaxed);
+    if (!spectating && !party_death_boss_fight.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    if (!spectating && !party_death_down.load(std::memory_order_relaxed)) {
+        // A fall into a pit fades the body out as it goes (character +0x20C, DeathWasAVoidFall).
+        party_death_boss_void.store(
+            DeathWasAVoidFall(CharacterInTheVoid(player),
+                              ReadValue<float>(player, CharacterFadeOffset)),
+            std::memory_order_relaxed);
+        party_death_boss_catches.fetch_add(1, std::memory_order_relaxed);
+    }
+    return true;
 }
 
 // The animation a downed player plays (DownedAnimation): none. Getting up from the kneel plays its
@@ -1056,6 +1109,14 @@ const s32 downed_animation = DownedAnimation(std::getenv("SHADPS4_BLOODBORNE_DOW
 } // namespace
 
 namespace Coop {
+
+bool KillCharacterCallable() {
+    return kill_hook_installed ||
+           std::ranges::equal(
+               std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
+                                   KillCharacterStart.size()},
+               KillCharacterStart);
+}
 
 VitalsBoard vitals_board;
 std::optional<std::chrono::steady_clock::time_point> vitals_heard_at;
@@ -1335,19 +1396,15 @@ void GetUp(PartyDeathRun& run, u64 data, s64 now_ms) {
 // The game's own kill of the local player (its death and respawn as any), else its HP to 0.
 // Whether the game's kill ran.
 bool KillLocalPlayer(u64 player, u64 data) {
-    static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
-    const bool killed =
-        IsCharacter(player, "DieFromDown kill") &&
-        std::ranges::equal(
-            std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
-                                KillPrologue.size()},
-            KillPrologue);
+    const bool killed = IsCharacter(player, "DieFromDown kill") && Coop::KillCharacterCallable();
+    party_death_own_kill.store(true);
     if (killed) {
         reinterpret_cast<void PS4_SYSV_ABI (*)(u64 character)>(image_base +
                                                                KillCharacterOffset)(player);
     } else {
         WriteValue(data, 0xF8, s32{0});
     }
+    party_death_own_kill.store(false);
     return killed;
 }
 
@@ -1373,7 +1430,7 @@ struct DeathTick {
     bool alive = false;
     bool caught = false; // a lethal hit caught while standing (LethalCatches)
 };
-void StartSpectating(PartyDeathRun& run, const DeathTick& tick);
+void StartSpectating(PartyDeathRun& run, const DeathTick& tick, bool boss_fight);
 
 // Without party death the vitals board still says who stands on which map: a host back from a trip
 // asks a member that was still joining for its data only once it stands here (FinishWaitingJoins;
@@ -1409,10 +1466,16 @@ std::optional<DownedMember> SwingTargetByBody(PartyDeathRun& run, const DeathTic
 // Standing (or not in party death): a caught lethal hit puts the player down, a death is real, and
 // an attack near a downed member is a revive hit.
 void TickStanding(PartyDeathRun& run, const DeathTick& tick) {
-    if (tick.caught && tick.alive) {
-        // Kaniel 2026-10-25: the team's death mode (its leader's pick, down by default).
-        if (Coop::TeamDeathModeNow() == DeathMode::Spectate) {
-            StartSpectating(run, tick);
+    const u32 boss_catches = party_death_boss_catches.load();
+    const bool boss_caught = boss_catches != run.seen_boss_catches;
+    run.seen_boss_catches = boss_catches;
+    if ((tick.caught || boss_caught) && tick.alive) {
+        // Kaniel 2026-10-25: the team's death mode (its leader's pick, down by default); a boss
+        // fight's death the down does not catch spectates in either mode.
+        if (boss_caught) {
+            StartSpectating(run, tick, true);
+        } else if (Coop::TeamDeathModeNow() == DeathMode::Spectate) {
+            StartSpectating(run, tick, false);
         } else {
             GoDown(run, tick.data, tick.now);
         }
@@ -1604,7 +1667,23 @@ void WatchTeammate(PartyDeathRun& run, const DeathTick& tick, int step) {
     }
 }
 
-void StartSpectating(PartyDeathRun& run, const DeathTick& tick) {
+void StartSpectating(PartyDeathRun& run, const DeathTick& tick, bool boss_fight) {
+    // Kaniel 2026-10-25: a fall into an arena's pit spectates from the ground it fell from (the
+    // player's last ground, [player +0x400] +0x30, where its bloodstain would lie), not in the
+    // void.
+    party_death_void_fall.store(false);
+    if (boss_fight && party_death_boss_void.exchange(false)) {
+        const u64 ground = ReadValue<u64>(tick.player, 0x400);
+        if (ground >= 0x10000 && HasMemoryAccess(ground + 0x30, 12, MemoryProt::CpuRead)) {
+            const LampPosition at{ReadValue<float>(ground, 0x30), ReadValue<float>(ground, 0x34),
+                                  ReadValue<float>(ground, 0x38)};
+            TeleportLocalPlayer(at, LocalPlayerHeading().value_or(0.0f));
+            LOG_INFO(Debug,
+                     "Bloodborne spectate: fell into the void in a boss fight; the body waits on "
+                     "its last ground ({:.1f}, {:.1f}, {:.1f})",
+                     at[0], at[1], at[2]);
+        }
+    }
     run.downed.Spectate();
     run.give_up.Restart((party_pad_buttons.load() & PadCircle) != 0);
     party_death_down.store(true); // the hook keeps it alive; no hit's push or reaction
@@ -1625,9 +1704,9 @@ void StartSpectating(PartyDeathRun& run, const DeathTick& tick) {
     KeepSpectating(run, tick.player, tick.data);
     WatchTeammate(run, tick, 0);
     LOG_INFO(Debug,
-             "Bloodborne spectate: out of the fight on map {:#x} (the team's death mode): unseen "
-             "where it fell, watching its teammates",
-             tick.map);
+             "Bloodborne spectate: out of the fight on map {:#x} ({}): unseen where it fell, "
+             "watching its teammates",
+             tick.map, boss_fight ? "a death in a boss fight" : "the team's death mode");
 }
 
 void EndSpectating(PartyDeathRun& run, u64 player, u64 data) {
@@ -1928,6 +2007,29 @@ void TickPartyDeath() {
                                    run.downed.Current() == Vital::Spectate
                                ? tick.data
                                : 0);
+    // Kaniel 2026-10-25: a boss fight with a teammate in it (its deaths spectate).
+    {
+        const u64 holder = ReadValue<u64>(image_base + BossGaugesPointerOffset, 0);
+        constexpr std::size_t Size = BossGaugeSlots * BossGaugeSize;
+        const bool bars_up =
+            holder >= 0x10000 &&
+            HasMemoryAccess(holder + BossGaugesOffset, Size, MemoryProt::CpuRead) &&
+            BossBarsUp({reinterpret_cast<const u8*>(holder + BossGaugesOffset), Size});
+        static bool bars_were_up = false;
+        if (bars_up != bars_were_up) {
+            bars_were_up = bars_up;
+            LOG_INFO(Debug, "Bloodborne party death: the boss bars are {}",
+                     bars_up ? "up" : "down");
+        }
+        const bool boss_fight =
+            tick.in_session && BossFightCatchesDeath(bars_up, tick.board, tick.view.member,
+                                                     tick.map, LocalPlayerPosition());
+        if (party_death_boss_fight.exchange(boss_fight) != boss_fight) {
+            LOG_INFO(Debug, "Bloodborne party death: boss fight with a teammate in it {} (bars {})",
+                     boss_fight ? "on: a death the down does not catch spectates" : "off",
+                     bars_up ? "up" : "down");
+        }
+    }
     // Kaniel 2026-10-25: a teammate's lamp wakes a spectator; counted from every tick's board.
     const bool lamp_used = tick.view.Fresh() && run.lamp_watch.Tick(tick.board, tick.view.member);
     ReadLocalAliveState(tick.player, tick.alive);
@@ -2479,6 +2581,15 @@ void InstallPartyDeath(u64 base, u64 image_size) {
     } else {
         coop_features.Skipped("no hit reaction while down",
                               SiteFailure(base, image_size, HitReactionOffset));
+    }
+    if (KillCharacterOffset + KillCharacterStart.size() <= image_size &&
+        InstallCoopHook(reinterpret_cast<void*>(base + KillCharacterOffset), KillCharacterStart, 0,
+                        GuestFunctionOverride{SkipBossFightKill})) {
+        kill_hook_installed = true;
+        coop_features.On("boss fight deaths");
+    } else {
+        coop_features.Skipped("boss fight deaths",
+                              SiteFailure(base, image_size, KillCharacterOffset));
     }
     if (EnemyBarDamageOffset + EnemyBarDamageStart.size() <= image_size &&
         InstallCoopHook(reinterpret_cast<void*>(base + EnemyBarDamageOffset), EnemyBarDamageStart,

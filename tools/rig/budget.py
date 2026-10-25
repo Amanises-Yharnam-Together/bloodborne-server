@@ -66,6 +66,8 @@ RECENT = {
 # runs measured near or over 300 s), each kept for the long tier until it becomes a suite
 # chapter. Most are older versions of a suite chapter (named after the arrow).
 LONG = {
+    "boss-death-spectate": "#414: a boss fight to a teammate's death and the fight after (600 s)",
+    "boss-death-wipe": "#414: a boss fight to the whole party's deaths (600 s)",
     "story-hostless": "the 10-20 case #286: a team join and a trip",
     "key-items-kept": "the 10-19 playtest case #267: a join, two trips",
     "gesture-own": "the 10-23 gestures case: a join, two trips",

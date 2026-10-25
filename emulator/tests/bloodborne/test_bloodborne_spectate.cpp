@@ -5,6 +5,7 @@
 // pads, and the cameras.
 
 #include <cmath>
+#include <cstring>
 #include <numbers>
 
 #include <gtest/gtest.h>
@@ -235,4 +236,60 @@ TEST(BloodborneSpectate, TheFreeCamerasPadHotkey) {
     EXPECT_TRUE(FreeCameraHotkey(PadL3, PadL3 | PadSquare));
     EXPECT_FALSE(FreeCameraHotkey(PadL3 | PadSquare, PadL3 | PadSquare)); // held, not pressed
     EXPECT_FALSE(FreeCameraHotkey(0, PadSquare));                         // no L3
+}
+
+// Kaniel 2026-10-25 ("if you are in the boss fight and you are died like that you should be in the
+// new spectator mode instead of respawning", "and then trigger overall death"): the game's boss
+// bars say a boss fight is on; with a teammate standing in it (up on this map, within
+// BossLeaveMetres of this player), a death the down does not catch spectates.
+TEST(BloodborneBossFightDeath, TheBossBarsSayAFightIsOn) {
+    std::array<u8, BossGaugeSlots * BossGaugeSize> gauges{};
+    EXPECT_FALSE(BossBarsUp(gauges)); // a handle of 0 is no boss either
+    ClearBossGauges(gauges);
+    EXPECT_FALSE(BossBarsUp(gauges));
+    const s32 handle = 0x1001409c;
+    std::memcpy(gauges.data() + BossGaugeSize + 4, &handle, sizeof(handle));
+    EXPECT_TRUE(BossBarsUp(gauges));
+}
+
+TEST(BloodborneBossFightDeath, OnlyWithATeammateFightingThere) {
+    const LampPosition me{0.0f, 0.0f, 0.0f};
+    MemberVitals near = Member("ada", Vital::Up);
+    near.at = {10.0f, 0.0f, 0.0f};
+    MemberVitals far = Member("bo", Vital::Up);
+    far.at = {BossLeaveMetres + 5.0f, 0.0f, 0.0f};
+    MemberVitals down = Member("cy", Vital::Down);
+    MemberVitals self = Member("me", Vital::Up);
+    EXPECT_TRUE(BossFightCatchesDeath(true, std::vector{self, near}, "me", Map, me));
+    EXPECT_FALSE(BossFightCatchesDeath(false, std::vector{self, near}, "me", Map, me))
+        << "no boss bar: nothing changes";
+    EXPECT_FALSE(BossFightCatchesDeath(true, std::vector{self, far}, "me", Map, me))
+        << "a teammate out of the arena is not in the fight";
+    EXPECT_FALSE(BossFightCatchesDeath(true, std::vector{self, down}, "me", Map, me));
+    EXPECT_FALSE(BossFightCatchesDeath(true, std::vector{self}, "me", Map, me)) << "alone";
+    near.map = OtherMap;
+    EXPECT_FALSE(BossFightCatchesDeath(true, std::vector{self, near}, "me", Map, me));
+    EXPECT_FALSE(BossFightCatchesDeath(true, std::vector{self, Member("ada", Vital::Up)}, "me", Map,
+                                       std::nullopt))
+        << "where this player is not known: nothing changes";
+}
+
+// What the IsNoDead hook does with a check: the down's own rule first (party death), then a boss
+// fight's (or a spectator's) catches the game's kills too; the rig's and our own kills go through.
+TEST(BloodborneBossFightDeath, ABossFightCatchesTheGamesKills) {
+    using C = NoDeadCheck;
+    EXPECT_EQ(CatchOf(C::Lethal, true, false, false, false, false), DeathCatch::Down);
+    EXPECT_EQ(CatchOf(C::Instant, true, false, false, false, false), DeathCatch::None)
+        << "outside a boss fight the game's kills stay deaths";
+    EXPECT_EQ(CatchOf(C::Instant, true, false, false, true, false), DeathCatch::BossFight);
+    EXPECT_EQ(CatchOf(C::Lethal, false, false, false, true, false), DeathCatch::BossFight);
+    EXPECT_EQ(CatchOf(C::Lethal, true, false, false, true, false), DeathCatch::Down)
+        << "a lethal hit with a teammate up is the death mode's (down or spectate)";
+    EXPECT_EQ(CatchOf(C::Instant, false, true, false, false, true), DeathCatch::BossFight)
+        << "a spectator is kept from the game's kills";
+    EXPECT_EQ(CatchOf(C::Instant, false, true, false, false, false), DeathCatch::None)
+        << "a downed player's void fall stays a death";
+    EXPECT_EQ(CatchOf(C::Other, true, true, false, true, true), DeathCatch::None);
+    EXPECT_EQ(CatchOf(C::Lethal, true, true, true, true, true), DeathCatch::None)
+        << "the game said no death itself";
 }

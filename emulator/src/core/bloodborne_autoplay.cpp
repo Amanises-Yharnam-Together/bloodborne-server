@@ -598,12 +598,8 @@ bool AutoplayHurtOrKill(const AutoplayStep& step) {
     const s32 target_hp = verb == "kill" ? 0 : std::min(hp, static_cast<s32>(step.Number(1, 1)));
     // A kill goes through the game's own (writing 0 HP leaves a standing corpse); checked
     // against its prologue first.
-    static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
     if (verb == "kill" && IsCharacter(found->character, "autoplay kill") &&
-        std::ranges::equal(
-            std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
-                                KillPrologue.size()},
-            KillPrologue)) {
+        Coop::KillCharacterCallable()) {
         using Kill = void PS4_SYSV_ABI (*)(u64 character);
         reinterpret_cast<Kill>(image_base + KillCharacterOffset)(found->character);
     } else {
