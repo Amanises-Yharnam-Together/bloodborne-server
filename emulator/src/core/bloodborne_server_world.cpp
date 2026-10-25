@@ -225,10 +225,54 @@ void WriteCharacterName(int slot, const std::string& name) {
     file << name << '\n';
 }
 
+// Kaniel 2026-10-25: the host rules this game plays by (the team's while in one, else its own),
+// for the game thread's every frame without the team's lock.
+std::atomic<u8> team_rules_bits{0};
+std::atomic<bool> in_team{false};
+// The team's rot for this player, as the server last had it (a game that came back takes it).
+std::mutex kept_rot_mutex;
+std::optional<std::vector<u32>> kept_rot;
+
+u8 RulesBits(const HostRules& rules) {
+    return static_cast<u8>((rules.rot ? 1 : 0) | (rules.travel_together ? 2 : 0) |
+                           (rules.travel_vote && rules.travel_together ? 4 : 0) |
+                           (rules.enemy_scaling ? 8 : 0));
+}
+
+HostRules RulesOf(u8 bits) {
+    return {.rot = (bits & 1) != 0,
+            .travel_together = (bits & 2) != 0,
+            .travel_vote = (bits & 4) != 0,
+            .enemy_scaling = (bits & 8) != 0};
+}
+
+void NoteTeamRules(const bbcoop::LobbyState& state, const std::string& me) {
+    const bool team = state.has_team();
+    const bbcoop::TeamRules& r = state.team().rules();
+    const HostRules rules{.rot = r.rot(),
+                          .travel_together = r.travel_together(),
+                          .travel_vote = r.travel_vote(),
+                          .enemy_scaling = r.enemy_scaling()};
+    const u8 bits = RulesBits(rules);
+    const bool was_in = in_team.exchange(team);
+    if (team && (team_rules_bits.exchange(bits) != bits || !was_in)) {
+        LOG_INFO(Debug, "Co-op host rules: the team's rules are {}", HostRulesText(rules));
+    }
+    if (team) {
+        for (const bbcoop::TeamMember& m : state.team().members()) {
+            if (m.member() == me) {
+                std::scoped_lock lock{kept_rot_mutex};
+                kept_rot.emplace(m.rot().begin(), m.rot().end());
+            }
+        }
+    }
+}
+
 bool TakeLobbyMessage(const bbcoop::Envelope& envelope) {
     if (envelope.has_lobby_state()) {
         std::scoped_lock lock{team_mutex};
         team_gate.TakeLobby(envelope.lobby_state());
+        NoteTeamRules(envelope.lobby_state(), lobby_member);
         if (!envelope.lobby_state().notice().empty()) {
             LOG_WARNING(Debug, "Co-op team lobby: the server refused: {}",
                         envelope.lobby_state().notice());
@@ -302,6 +346,16 @@ void SendLobby(s64 now_ms) {
         hello.mutable_lobby_hello()->set_name(lobby_name);
         hello.mutable_lobby_hello()->set_playing(lobby_playing);
         stream->Send(EncodeEnvelope(hello), now_ms);
+        // Kaniel 2026-10-25: this launcher's host rules, the team's if this player leads it.
+        const HostRules& own = OwnHostRules();
+        bbcoop::Envelope rules;
+        rules.mutable_team_request()->set_action(bbcoop::TeamRequest::RULES);
+        bbcoop::TeamRules& r = *rules.mutable_team_request()->mutable_rules();
+        r.set_rot(own.rot);
+        r.set_travel_together(own.travel_together);
+        r.set_travel_vote(own.travel_vote);
+        r.set_enemy_scaling(own.enemy_scaling);
+        stream->Send(EncodeEnvelope(rules), now_ms);
     }
     for (const bbcoop::Envelope& envelope : lobby_outbox) {
         stream->Send(EncodeEnvelope(envelope), now_ms);
@@ -465,6 +519,10 @@ void StreamTick(s64 now_ms) {
                                 altar_records.push_back(std::move(record));
                             }
                         }
+                        continue;
+                    }
+                    if (envelope->has_team_travel()) {
+                        TakeTeamTravelNews(envelope->team_travel());
                         continue;
                     }
                     if (envelope->has_ping()) {
@@ -769,6 +827,15 @@ void SendTeamPing(const TeamPing& ping) {
     }
     bbcoop::Envelope envelope;
     *envelope.mutable_ping() = ToMessage(ping);
+    Queue(std::move(envelope));
+}
+
+void SendTeamTravel(const bbcoop::TeamTravel& travel) {
+    if (!ServerWorldOn()) {
+        return;
+    }
+    bbcoop::Envelope envelope;
+    *envelope.mutable_team_travel() = travel;
     Queue(std::move(envelope));
 }
 
@@ -1837,6 +1904,37 @@ std::string CharacterNameOf(std::string_view member) {
         }
     }
     return {};
+}
+
+const HostRules& OwnHostRules() {
+    static const HostRules own = [] {
+        const char* setting = std::getenv("SHADPS4_BLOODBORNE_HOST_RULES");
+        const HostRules rules = ParseHostRules(setting != nullptr ? setting : "");
+        LOG_INFO(Debug, "Co-op host rules: this launcher's are {}", HostRulesText(rules));
+        return rules;
+    }();
+    return own;
+}
+
+HostRules ActiveHostRules() {
+    return in_team.load() ? RulesOf(team_rules_bits.load()) : OwnHostRules();
+}
+
+std::optional<std::vector<u32>> TakeKeptRot() {
+    std::scoped_lock lock{kept_rot_mutex};
+    return std::exchange(kept_rot, std::nullopt);
+}
+
+void ReportRot(std::span<const u32> rot) {
+    if (!team_switch || !in_team.load()) {
+        return;
+    }
+    bbcoop::Envelope envelope;
+    envelope.mutable_team_request()->set_action(bbcoop::TeamRequest::ROT);
+    for (const u32 kind : rot) {
+        envelope.mutable_team_request()->add_rot(kind);
+    }
+    QueueLobby(std::move(envelope));
 }
 
 void TeamLobbyRequest(bbcoop::TeamRequest::Action action, const std::string& id) {

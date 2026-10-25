@@ -322,6 +322,21 @@ std::optional<bool> LampCharacterOff(s32 entity) {
     return std::nullopt;
 }
 
+// Kaniel 2026-10-25 (travel together): a lamp's or headstone's trip the team's question takes over
+// (the game's own trip is not made then).
+bool TeamQuestionTakesTrip(s32 flag) {
+    const bool lamp = IsLampTravelFlag(flag);
+    if (!lamp_rest_hooks_installed || (!lamp && !IsHeadstoneTravelFlag(flag)) ||
+        !OfferTeamTravel(lamp ? HuntersDreamWarpPoint : HeadstoneWarpPoint(flag))) {
+        return false;
+    }
+    if (lamp) {
+        lamp_uses.fetch_add(1); // a lamp touched (the Rot rule's cure)
+    }
+    LOG_INFO(Debug, "Bloodborne party: trip flag {} waits for the team question", flag);
+    return true;
+}
+
 void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers) {
     const s32 flag = static_cast<s32>(registers->r15);
     // A ritual altar's talk runs in every game: only the talker's game sets its warp.
@@ -364,6 +379,10 @@ void PS4_SYSV_ABI RestInsteadOfLampTravel(u64, GuestRegisterSnapshot* registers)
     // Event 12107000 ends for a client: a party guest's headstone trip is ours to make. Not gated
     // on the white-phantom type: in the host's Dream that check stopped the trip (the type is
     // logged to find out why).
+    if (TeamQuestionTakesTrip(flag)) {
+        registers->rax = reinterpret_cast<u64>(no_talk_flag_range.data());
+        return;
+    }
     if (lamp_rest_hooks_installed && IsHeadstoneTravelFlag(flag) && InPartySession() &&
         party_controller->SearchEffectId() == SmallResonantBellEffect) {
         const auto now = std::chrono::steady_clock::now();

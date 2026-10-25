@@ -177,6 +177,8 @@ struct Game {
       altar_records.push_back(envelope.altar_record());
     } else if (envelope.has_ping()) {
       pings.push_back(envelope.ping());
+    } else if (envelope.has_team_travel()) {
+      travels.push_back(envelope.team_travel());
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -246,6 +248,7 @@ struct Game {
   std::vector<bbcoop::EnemyHit> hits;
   std::vector<bbcoop::AltarRecord> altar_records;
   std::vector<bbcoop::Ping> pings;
+  std::vector<bbcoop::TeamTravel> travels;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -1209,6 +1212,49 @@ int AnAltarRecordReachesTheOthersWhole() {
     CHECK(game->altar_records[0].bits() == bits);
   }
   CHECK(guest.altar_records.empty());
+  return 0;
+}
+
+// Kaniel 2026-10-25 (travel together): a member's team trip goes to the
+// party's other members at once, under the sender's name; not to another
+// party, and nothing is kept.
+int ATeamTripReachesThePartyAtOnce() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game stranger{1003, "stranger", 14};
+  const std::vector<Game *> games{&host, &guest, &stranger};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  stranger.Hello(now, "someone:else");
+  Pump(service, games, now);
+  bbcoop::Envelope ask;
+  ask.mutable_team_travel()->set_step(bbcoop::TeamTravel::ASK);
+  ask.mutable_team_travel()->set_id(4);
+  ask.mutable_team_travel()->set_point(2102962);
+  ask.mutable_team_travel()->set_member("spoofed");
+  host.Send(ask, now + 10);
+  Pump(service, games, now + 10);
+  CHECK(guest.travels.size() == 1);
+  CHECK(guest.travels[0].member() == "host");
+  CHECK(guest.travels[0].step() == bbcoop::TeamTravel::ASK);
+  CHECK(guest.travels[0].id() == 4u && guest.travels[0].point() == 2102962);
+  CHECK(host.travels.empty() && stranger.travels.empty());
+  bbcoop::Envelope answer;
+  answer.mutable_team_travel()->set_step(bbcoop::TeamTravel::ANSWER);
+  answer.mutable_team_travel()->set_id(4);
+  answer.mutable_team_travel()->set_asker("host");
+  answer.mutable_team_travel()->set_yes(false);
+  guest.Send(answer, now + 20);
+  Pump(service, games, now + 20);
+  CHECK(host.travels.size() == 1);
+  CHECK(host.travels[0].member() == "guest" && !host.travels[0].yes());
+  CHECK(host.travels[0].asker() == "host");
+  Game late{1004, "late", 15};
+  late.Hello(now + 30);
+  Pump(service, {&host, &guest, &late}, now + 30);
+  CHECK(late.travels.empty());
   return 0;
 }
 
@@ -2300,6 +2346,7 @@ int main() {
       {"AnAltarRecordReachesTheOthersWhole",
        AnAltarRecordReachesTheOthersWhole},
       {"APingReachesTheTeamAtOnce", APingReachesTheTeamAtOnce},
+      {"ATeamTripReachesThePartyAtOnce", ATeamTripReachesThePartyAtOnce},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"GamePacketsGoByMapAndOwner", GamePacketsGoByMapAndOwner},

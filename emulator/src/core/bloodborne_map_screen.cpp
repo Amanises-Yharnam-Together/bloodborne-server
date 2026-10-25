@@ -33,6 +33,8 @@ constexpr s32 BossFightFlag = 4000;
 
 std::atomic<bool> map_screen_open{};
 std::atomic<s32> map_trip_request{};
+// Kaniel 2026-10-25 (travel together): a team trip for this player (RequestTeamTrip).
+std::atomic<s32> team_trip_request{};
 std::mutex map_view_mutex;
 MapScreenView map_view_now;
 bool map_view_read = false;
@@ -217,8 +219,28 @@ namespace Coop {
 void TickMapScreen() {
     const bool open = map_screen_open.load(std::memory_order_relaxed);
     const s32 request = map_trip_request.exchange(0);
+    const s32 team_request = team_trip_request.exchange(0);
     static Clock::time_point read_at{};
     const auto now = Clock::now();
+    if (team_request != 0) {
+        // The team's trip: to its lamp (the asker's world's, the team's), unless this player
+        // cannot go now.
+        const bool loading = Loading();
+        const bool in_world = !loading && GameHudUp() && GetLocalPlayer() >= 0x10000;
+        const MapTravelBlock block =
+            MapTravelCheck({.lit = true,
+                            .in_world = in_world,
+                            .down = in_world && LocalPlayerDown(),
+                            .boss_fight = in_world && EventFlagOn(BossFightFlag),
+                            .travelling = Travelling()});
+        if (block == MapTravelBlock::None) {
+            LOG_INFO(Debug, "Co-op team trip: this player travels to {}", team_request);
+            StartMapTrip(team_request);
+        } else {
+            LOG_INFO(Debug, "Co-op team trip: this player stays (block {})",
+                     static_cast<int>(block));
+        }
+    }
     if (!open && request == 0) {
         TickMapTripArrival(map_trip.active && Loading());
         // Shut: only which map this player is on, every few seconds (the overlay draws its picture
@@ -294,5 +316,13 @@ std::vector<std::array<s16, 2>> ExploredOn(u32 packed_map) {
 void RequestMapTrip(s32 warp_point) {
     map_trip_request.store(warp_point);
 }
+
+namespace Coop {
+
+void RequestTeamTrip(s32 point) {
+    team_trip_request.store(point);
+}
+
+} // namespace Coop
 
 } // namespace Core::Bloodborne

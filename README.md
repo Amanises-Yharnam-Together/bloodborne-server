@@ -77,6 +77,16 @@ expect rough edges and keep backups of your saves. New builds come out as GitHub
 - **No stolen bloodstains.** Your echoes stay where you died until you pick them up.
 - **Harder enemies** (optional): three times the HP and poise and half again the damage for every
   enemy and boss, to make up for the extra hunters.
+- **Host rules** (optional, all off by default; the team leader's launcher sets them for the
+  whole team, and the team screen shows them):
+  - *Rot*: each real death (not a down a teammate revives) adds a random penalty, up to five
+    (-10% max HP, -10% max stamina, +10% stamina use, -15% rally or -10 Item Discovery). A lamp,
+    a level up, a boss kill, killing the enemy that killed you or picking up your own bloodstain
+    takes it all away.
+  - *Travel together*: a lamp or headstone asks "Travel with the team?" and takes everyone there;
+    with the vote, the team has 20 s and one No stops the trip.
+  - *Enemies scale with the team*: the normal game alone, up to the Harder values for four hunters
+    on the same map.
 - **Self-hosted.** One player's PC runs the co-op server (the team lobby, the teams' worlds,
   every game's co-op traffic) and a stand-in for the game's online services. No PlayStation
   Network, no community server, nothing in the cloud.

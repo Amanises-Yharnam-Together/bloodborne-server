@@ -667,8 +667,113 @@ int AWorldsLampsAreCounted() {
   return 0;
 }
 
+// Kaniel 2026-10-25 (host rules): the leader's rules are the team's, all off
+// by default; a member sees them, only the leader sets them, at any time.
+int TheLeaderSetsTheTeamsRules() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  const bbcoop::TeamRules none = lobby.StateFor("b").team().rules();
+  CHECK(!none.rot() && !none.travel_together() && !none.travel_vote() &&
+        !none.enemy_scaling());
+  bbcoop::TeamRequest rules = Request(Action::RULES);
+  rules.mutable_rules()->set_rot(true);
+  rules.mutable_rules()->set_enemy_scaling(true);
+  CHECK(!lobby.Request("b", rules).notice.empty()); // not the leader
+  CHECK(!lobby.StateFor("b").team().rules().rot());
+  CHECK(lobby.Request("a", rules).changed);
+  CHECK(lobby.StateFor("b").team().rules().rot());
+  CHECK(lobby.StateFor("b").team().rules().enemy_scaling());
+  CHECK(!lobby.Request("a", rules).changed); // the same again: nothing to send
+  // While the team plays, too.
+  t.Start();
+  rules.mutable_rules()->set_rot(false);
+  rules.mutable_rules()->set_travel_together(true);
+  CHECK(lobby.Request("a", rules).changed);
+  const bbcoop::TeamRules now = lobby.StateFor("b").team().rules();
+  CHECK(!now.rot() && now.travel_together() && now.enemy_scaling());
+  // The rules survive the trip to the game and back (the LobbyState's bytes).
+  bbcoop::LobbyState back;
+  CHECK(back.ParseFromString(lobby.StateFor("b").SerializeAsString()));
+  CHECK(back.team().rules().travel_together() &&
+        back.team().rules().enemy_scaling() && !back.team().rules().rot());
+  return 0;
+}
+
+// A player's games send their rules at the title, before any team: the team
+// it makes takes them, and a team it joins keeps its leader's.
+int RulesSetBeforeATeamGoIntoTheTeam() {
+  TeamLobby lobby = NewLobby();
+  lobby.Arrive("a", "Kaniel", false);
+  lobby.Arrive("b", "Ada", false);
+  bbcoop::TeamRequest rules = Request(Action::RULES);
+  rules.mutable_rules()->set_travel_together(true);
+  rules.mutable_rules()->set_travel_vote(true);
+  CHECK(!lobby.Request("a", rules).changed); // nothing anyone sees yet
+  bbcoop::TeamRequest other = Request(Action::RULES);
+  other.mutable_rules()->set_rot(true);
+  lobby.Request("b", other);
+  lobby.Request("a", Request(Action::CREATE));
+  const std::string team = lobby.TeamOf("a")->id();
+  CHECK(lobby.TeamOf("a")->rules().travel_together());
+  CHECK(lobby.TeamOf("a")->rules().travel_vote());
+  lobby.Request("a", Request(Action::INVITE, "b"));
+  lobby.Request("b", Request(Action::ACCEPT, {}, team));
+  CHECK(!lobby.StateFor("b").team().rules().rot()); // the leader's, not b's
+  CHECK(lobby.StateFor("b").team().rules().travel_together());
+  return 0;
+}
+
+// Kaniel 2026-10-25 (the Rot rule): a member's rot is the server's while its
+// team lives, so a game that crashes and comes back gets it back. At most
+// MaxRot penalties, each a RotKind; a member sets only its own.
+int AMembersRotIsKeptWhileItsTeamLives() {
+  TwoHunters t;
+  TeamLobby &lobby = t.lobby;
+  t.Start();
+  bbcoop::TeamRequest rot = Request(Action::ROT);
+  rot.add_rot(bbcoop::ROT_MAX_HP);
+  rot.add_rot(bbcoop::ROT_RALLY);
+  CHECK(lobby.Request("b", rot).changed);
+  const auto rot_of = [&](const std::string &member) {
+    std::vector<uint32_t> out;
+    const bbcoop::LobbyState state = lobby.StateFor("a");
+    for (const bbcoop::TeamMember &m : state.team().members()) {
+      if (m.member() == member) {
+        out.assign(m.rot().begin(), m.rot().end());
+      }
+    }
+    return out;
+  };
+  CHECK((rot_of("b") == std::vector<uint32_t>{1, 4}));
+  CHECK(rot_of("a").empty());
+  // b's game is gone and back: its rot is still there.
+  lobby.Leave("b");
+  lobby.Arrive("b", "Ada", true);
+  CHECK((rot_of("b") == std::vector<uint32_t>{1, 4}));
+  // Too many, or a penalty the game has not: refused, the old rot kept.
+  bbcoop::TeamRequest many = Request(Action::ROT);
+  for (int i = 0; i < 6; ++i) {
+    many.add_rot(bbcoop::ROT_MAX_STAMINA);
+  }
+  CHECK(!lobby.Request("b", many).notice.empty());
+  bbcoop::TeamRequest bad = Request(Action::ROT);
+  bad.add_rot(9);
+  CHECK(!lobby.Request("b", bad).notice.empty());
+  CHECK((rot_of("b") == std::vector<uint32_t>{1, 4}));
+  // Cleared (a lamp): empty.
+  CHECK(lobby.Request("b", Request(Action::ROT)).changed);
+  CHECK(rot_of("b").empty());
+  // Out of a team there is no rot to keep.
+  lobby.Request("b", Request(Action::LEAVE));
+  CHECK(!lobby.Request("b", rot).notice.empty());
+  return 0;
+}
+
 int main() {
   int failed = 0;
+  failed |= TheLeaderSetsTheTeamsRules();
+  failed |= RulesSetBeforeATeamGoIntoTheTeam();
+  failed |= AMembersRotIsKeptWhileItsTeamLives();
   failed |= PlayersAreSeenByTheirCharactersName();
   failed |= TeamFormsByInvite();
   failed |= TeamHoldsFour();

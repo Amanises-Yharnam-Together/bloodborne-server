@@ -2197,6 +2197,11 @@ std::size_t MakeNpcAttacksHarder(std::span<u8> param, float damage);
 // changed.
 constexpr std::array<s32, 4> CoopBossHpEffects{7500, 7501, 7502, 7503};
 std::size_t RemoveCoopBossHpBonus(std::span<u8> sp_effect_param);
+// Kaniel 2026-10-25 (the enemy scaling rule): those rows' max HP rates as the table holds them,
+// and put back (a team scaled down to the normal game gets the bonus again).
+std::vector<std::pair<s32, float>> CoopBossHpRates(std::span<const u8> sp_effect_param);
+void SetCoopBossHpRates(std::span<u8> sp_effect_param,
+                        std::span<const std::pair<s32, float>> rates);
 
 // Multiplayer UI polish (Kaniel 2026-10-11), all at runtime for a configured party:
 // - The messages say Host and Guest. The game reads its text from MsgRepository (pointer at

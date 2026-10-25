@@ -713,6 +713,19 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
         SendToOthers(world, member, relayed, now_ms);
         break;
     }
+    case bbcoop::Envelope::kTeamTravel: {
+        // Kaniel 2026-10-25 (travel together): a team trip's ask, answers and go, at once to the
+        // others under the sender's name; nothing is kept.
+        bbcoop::Envelope relayed = envelope;
+        relayed.mutable_team_travel()->set_member(member.name);
+        result.log.append(QStringLiteral("party world %1: %2's team trip %3 (%4) to the others")
+                              .arg(world.name, QString::fromStdString(member.name))
+                              .arg(envelope.team_travel().id())
+                              .arg(QString::fromStdString(
+                                  bbcoop::TeamTravel::Step_Name(envelope.team_travel().step()))));
+        SendToOthers(world, member, relayed, now_ms);
+        break;
+    }
     case bbcoop::Envelope::kLoadProgress: {
         bbcoop::Envelope relayed = envelope;
         relayed.mutable_load_progress()->set_member(member.name);

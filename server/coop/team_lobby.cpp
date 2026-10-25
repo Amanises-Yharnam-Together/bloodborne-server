@@ -332,6 +332,7 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
             !pick.empty() && FindWorld(pick) && !PlayedBy(pick, nullptr)) {
             PickWorld(team, pick);
         }
+        *team.mutable_rules() = players[member].rules; // Kaniel 2026-10-25: its host rules
         return {.changed = true};
     }
     case Action::INVITE: {
@@ -453,6 +454,42 @@ TeamLobby::Outcome TeamLobby::Request(const std::string& member,
             return {};
         }
         PickWorld(*mine, request.world());
+        return {.changed = true};
+    }
+    case Action::RULES: {
+        // Kaniel 2026-10-25: a leader's launcher rules are its team's; anyone's are kept for the
+        // team it makes.
+        players[member].rules = request.rules();
+        if (!mine) {
+            return {};
+        }
+        if (mine->leader() != member) {
+            return refuse("only the team's leader sets its rules");
+        }
+        if (mine->rules().SerializeAsString() == request.rules().SerializeAsString()) {
+            return {};
+        }
+        *mine->mutable_rules() = request.rules();
+        return {.changed = true};
+    }
+    case Action::ROT: {
+        if (!mine) {
+            return refuse("you are not in a team");
+        }
+        if (static_cast<size_t>(request.rot_size()) > MaxRot) {
+            return refuse("too much rot");
+        }
+        for (const u32 kind : request.rot()) {
+            if (kind == bbcoop::ROT_NONE || !bbcoop::RotKind_IsValid(static_cast<int>(kind))) {
+                return refuse("no such rot");
+            }
+        }
+        bbcoop::TeamMember& m = *MemberIn(*mine, member);
+        if (std::equal(m.rot().begin(), m.rot().end(), request.rot().begin(),
+                       request.rot().end())) {
+            return {};
+        }
+        *m.mutable_rot() = request.rot();
         return {.changed = true};
     }
     case Action::FORGET_WORLD: {

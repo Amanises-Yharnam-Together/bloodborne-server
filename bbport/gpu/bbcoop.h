@@ -295,9 +295,44 @@ typedef struct bbcoop_lobby {
      * world. */
     int world_count, world;
     bbcoop_lobby_world worlds[BBCOOP_LOBBY_WORLDS];
+    /* Kaniel 2026-10-25: the host rules, the team's (its leader's launcher's); before a team,
+     * this player's own launcher's. */
+    int rule_rot, rule_travel, rule_vote, rule_scale;
 } bbcoop_lobby;
 /* Fills `lobby`; 0 when the team lobby is off. */
 int bbcoop_lobby_view(bbcoop_lobby *lobby);
+/* Kaniel 2026-10-25, the Rot host rule: this player's rot for the party HUD, each penalty's kind
+ * (BBCOOP_ROT_*), the oldest first; 0 while the rule is off or there is none. */
+enum {
+    BBCOOP_ROT_MAX = 5,
+    BBCOOP_ROT_MAX_HP = 1,
+    BBCOOP_ROT_MAX_STAMINA = 2,
+    BBCOOP_ROT_STAMINA_USE = 3,
+    BBCOOP_ROT_RALLY = 4,
+    BBCOOP_ROT_DISCOVERY = 5
+};
+typedef struct bbcoop_rot {
+    int count;
+    int kinds[BBCOOP_ROT_MAX];
+} bbcoop_rot;
+int bbcoop_rot_view(bbcoop_rot *rot);
+/* Kaniel 2026-10-25, the travel together host rule: the question over the game. `question` 1:
+ * this player's trip, with the team or alone; 2: `from`'s trip for the team (the vote), Yes or
+ * No within `seconds_left`. `waiting`: this player's trip waits for the team's vote. `point` the
+ * trip's warp point, `lamp_name_id` its lamp's name (item FMG; -1 none). `notice` 1: `from` said
+ * No to this player's trip; 2: `from`'s trip is off. 0 when there is nothing to show. */
+typedef struct bbcoop_team_travel {
+    int question;
+    int32_t point;
+    int32_t lamp_name_id;
+    char from[40];
+    float seconds_left;
+    int waiting;
+    int notice;
+} bbcoop_team_travel;
+int bbcoop_team_travel_view(bbcoop_team_travel *travel);
+/* The answer to the question shown: 1 Yes (with the team), 0 No (alone). */
+void bbcoop_team_travel_answer(int yes);
 /* The menu's requests (TeamRequest actions): create, leave, invite a player (`id`), accept or
  * decline an invite (`id`: its team), remove a member (`id`). */
 enum { BBCOOP_TEAM_CREATE = 1, BBCOOP_TEAM_INVITE = 2, BBCOOP_TEAM_ACCEPT = 3,

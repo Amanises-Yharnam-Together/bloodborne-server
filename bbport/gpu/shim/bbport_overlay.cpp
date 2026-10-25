@@ -3584,6 +3584,26 @@ void Screen() {
                   lobby.notice[0] ? ImU32(IM_COL32(220, 150, 110, 255)) : Plain(0.8f), line);
     ImGui::PopFont();
     {
+        // Kaniel 2026-10-25: the host rules (the leader's launcher's Co-op settings), shown to all.
+        std::string rules;
+        const auto add = [&](bool on, const char* name) {
+            if (on) {
+                rules += rules.empty() ? "" : "  \xC2\xB7  ";
+                rules += name;
+            }
+        };
+        add(lobby.rule_rot, T("Rot", "Гниль"));
+        add(lobby.rule_travel, lobby.rule_vote ? T("Travel together (vote)", "Путь вместе (голосование)")
+                                               : T("Travel together", "Путь вместе"));
+        add(lobby.rule_scale, T("Enemies scale with the team", "Враги сильнее с командой"));
+        const std::string text = std::string(T("Host rules: ", "Правила хоста: ")) +
+                                 (rules.empty() ? std::string(T("none", "нет")) : rules);
+        ImGui::PushFont(MenuArt::Font(), 16.0f);
+        ts = ImGui::CalcTextSize(text.c_str());
+        draw->AddText(ImVec2(win.x + (size.x - ts.x) * 0.5f, by + bh + S(46.0f)), Plain(0.7f), text.c_str());
+        ImGui::PopFont();
+    }
+    {
         // As the game's own key guide: the buttons' icons, then what they do.
         ImGui::PushFont(MenuArt::Font(), 18.0f);
         const Keys::Hint keys[] = {{"Dpad", "Arrows", T("Move", "Выбор")},
@@ -4340,9 +4360,65 @@ void Supplies(ImDrawList* draw) {
     }
 }
 
+/// Kaniel 2026-10-25 (the Rot host rule): this player's rot, a small line under the party's
+/// list (under the player's own bars when it plays alone): each kind's sum, the game's way.
+bbcoop_rot rot{}; // present thread: as Visible() read it last
+bool rot_shown = false;
+
+bool ReadRot() {
+    rot_shown = bbcoop_rot_view(&rot) != 0;
+    return rot_shown;
+}
+
+void RotLine(ImDrawList* draw) {
+    using Ui::S;
+    using Ui::T;
+    if (!rot_shown) {
+        return;
+    }
+    int count[6] = {};
+    for (int i = 0; i < rot.count; ++i) {
+        if (rot.kinds[i] >= 1 && rot.kinds[i] <= 5) {
+            ++count[rot.kinds[i]];
+        }
+    }
+    std::string line;
+    char part[64];
+    std::snprintf(part, sizeof part, T("Rot %d/%d", "Гниль %d/%d"), rot.count, BBCOOP_ROT_MAX);
+    line = part;
+    const char* names[6] = {"",
+                            T("Max HP", "Макс. ОЗ"),
+                            T("Max stamina", "Макс. выносл."),
+                            T("Stamina use", "Расход выносл."),
+                            T("Rally", "Возврат ОЗ"),
+                            T("Discovery", "Находки")};
+    for (int kind = 1; kind <= 5; ++kind) {
+        if (count[kind] == 0) {
+            continue;
+        }
+        if (kind == BBCOOP_ROT_DISCOVERY) {
+            std::snprintf(part, sizeof part, "   %s -%d", names[kind], 10 * count[kind]);
+        } else {
+            const int step = kind == BBCOOP_ROT_RALLY ? 15 : 10;
+            std::snprintf(part, sizeof part, "   %s %s%d%%", names[kind],
+                          kind == BBCOOP_ROT_STAMINA_USE ? "+" : "-", step * count[kind]);
+        }
+        line += part;
+    }
+    float y = BbPartyLayout::ListTop(game, shift);
+    if (shown && panel.member_count > 0) {
+        y = panel.native_list
+                ? HudY(game, 330.0f + 95.0f * float(panel.member_count) - 30.0f, shift)
+                : y + float(panel.member_count) * S(64.0f);
+    }
+    const float x = BbPartyLayout::ListLeft(game, base_scale, shift) + S(8.0f);
+    Text(draw, sans_font, S(15.0f), ImVec2(x, y), Rgba(0.86f, 0.52f, 0.46f, 0.95f), line.c_str());
+}
+
 void Draw() {
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const float pulse = 0.5f + 0.5f * std::sin(float(ImGui::GetTime()) * 4.0f);
+    RotLine(draw);
     if (!panel.native_list) { // else the game's HUD shows it (the party HUD's CoopParty tags)
         MemberList(draw, pulse);
     } else if (!panel.native_supplies) { // else the HUD's own vial and bullet show them
@@ -6136,6 +6212,130 @@ void Screen() {
 
 } // namespace Map
 
+/// Kaniel 2026-10-25 (the travel together host rule): "Travel with the team?" over the game when
+/// this player's lamp or headstone trip waits for it, a member's trip for the team's vote (Yes or
+/// No, with the time left), and a short line while this player's vote waits or after a No.
+namespace TeamTravel {
+using namespace Ui;
+
+bbcoop_team_travel view{}; // present thread: as Visible() read it last
+bool shown = false;
+bool yes = true;
+int question_seen = 0;
+
+bool Read() {
+    const int was = view.question;
+    shown = bbcoop_team_travel_view(&view) != 0;
+    if (!shown) {
+        view = {};
+    }
+    if (view.question != was) {
+        yes = true; // a new question starts on Yes
+        question_seen = 0;
+    }
+    return shown;
+}
+
+bool Asking() {
+    return shown && view.question != 0;
+}
+
+std::string LampName() {
+    return view.lamp_name_id >= 0 ? BbMapCharts::LampName(view.lamp_name_id)
+                                  : std::string{T("Hunter's Dream", "Сон охотника")};
+}
+
+void Draw(ImVec2 display) {
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    char line[160];
+    if (!Asking()) {
+        // The vote waiting, or why a trip did not go: one line low in the middle.
+        if (view.waiting) {
+            std::snprintf(line, sizeof line, T("The team votes on the trip: %.0f s", "Команда голосует: %.0f с"),
+                          double(view.seconds_left));
+        } else if (view.notice == 1) {
+            std::snprintf(line, sizeof line, T("%s said no: nobody travels", "%s против: никто не отправляется"),
+                          view.from);
+        } else if (view.notice == 2) {
+            std::snprintf(line, sizeof line, T("%s's trip is off", "Путь %s отменён"), view.from);
+        } else {
+            return;
+        }
+        ImGui::PushFont(MenuArt::Font(), 20.0f);
+        const ImVec2 ts = ImGui::CalcTextSize(line);
+        draw->AddText(ImVec2((display.x - ts.x) * 0.5f, display.y * 0.80f), Plain(0.9f), line);
+        ImGui::PopFont();
+        return;
+    }
+    // Keys: left / right (or up / down) pick, Cross chooses, Circle is No. A question that opened
+    // this frame takes no keys yet.
+    const bool ready = ++question_seen > 1;
+    const auto pressed = [](std::initializer_list<ImGuiKey> keys) {
+        for (const ImGuiKey key : keys) {
+            if (ImGui::IsKeyPressed(key, false)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (ready && pressed({ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_UpArrow, ImGuiKey_DownArrow,
+                          ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadDpadUp,
+                          ImGuiKey_GamepadDpadDown})) {
+        yes = !yes;
+    }
+    bool choose = ready && pressed({ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space, ImGuiKey_GamepadFaceDown});
+    bool cancel = ready && pressed({ImGuiKey_Escape, ImGuiKey_GamepadFaceRight});
+    const ImVec2 size(S(680.0f), S(250.0f));
+    const ImVec2 p0((display.x - size.x) * 0.5f, (display.y - size.y) * 0.5f), p1(p0.x + size.x, p0.y + size.y);
+    draw->AddRectFilled(ImVec2(0, 0), display, Party::Rgba(0, 0, 0, 0.45f));
+    HunterCard(draw, p0, p1, false);
+    ImGui::PushFont(MenuArt::Font(), 24.0f);
+    const std::string name = LampName();
+    ImVec2 ts = ImGui::CalcTextSize(name.c_str());
+    draw->AddText(ImVec2((display.x - ts.x) * 0.5f, p0.y + S(40.0f)), Bright(), name.c_str());
+    ImGui::PopFont();
+    ImGui::PushFont(MenuArt::Font(), 20.0f);
+    if (view.question == 1) {
+        std::snprintf(line, sizeof line, "%s", T("Travel with the team?", "Отправиться всей командой?"));
+    } else {
+        std::snprintf(line, sizeof line,
+                      T("%s calls the team here. Go? (%.0f s)", "%s зовёт команду сюда. Идти? (%.0f с)"),
+                      view.from, double(view.seconds_left));
+    }
+    ts = ImGui::CalcTextSize(line);
+    draw->AddText(ImVec2((display.x - ts.x) * 0.5f, p0.y + S(78.0f)), Plain(), line);
+    ImGui::PopFont();
+    Divider(draw, p0.x + S(40.0f), p1.x - S(40.0f), p0.y + S(122.0f), 0.7f);
+    ImGui::PushFont(MenuArt::Font(), 22.0f);
+    const float bw = S(220.0f), bh = S(48.0f), gap = S(30.0f);
+    const float bx = (display.x - 2 * bw - gap) * 0.5f, by = p1.y - bh - S(40.0f);
+    for (int b = 0; b < 2; ++b) {
+        const bool is_yes = b == 0;
+        const ImVec2 a(bx + float(b) * (bw + gap), by), end(a.x + bw, a.y + bh);
+        MenuArt::Nine(draw, MenuArt::Row, a, end, 12.0f, S(9.0f), 1.0f);
+        if (ImGui::IsMouseHoveringRect(a, end)) {
+            yes = is_yes;
+            choose = choose || (ready && ImGui::IsMouseClicked(ImGuiMouseButton_Left));
+        }
+        const bool focused = yes == is_yes;
+        if (focused) {
+            draw->AddRect(ImVec2(a.x + S(2.0f), a.y + S(2.0f)), ImVec2(end.x - S(2.0f), end.y - S(2.0f)),
+                          Bright(0.8f), 0.0f, 0, S(1.5f));
+        }
+        const char* label = view.question == 1 ? (is_yes ? T("With the team", "Всей командой") : T("Alone", "Одному"))
+                                               : (is_yes ? T("Yes", "Да") : T("No", "Нет"));
+        ts = ImGui::CalcTextSize(label);
+        draw->AddText(ImVec2(a.x + (bw - ts.x) * 0.5f, a.y + (bh - ts.y) * 0.5f), focused ? Bright() : Plain(), label);
+    }
+    ImGui::PopFont();
+    if (choose || cancel) {
+        bbcoop_team_travel_answer(choose && yes ? 1 : 0);
+        view.question = 0; // until the next read
+    }
+}
+
+} // namespace TeamTravel
+
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1
 /// (map: M, the map screen; circle, square, triangle), consumed when the file appears (it is removed), one
 /// key press per frame.
@@ -6585,6 +6785,8 @@ bool Visible() {
     const bool pings = initialized && Pings::Read(); // before the compass, which shows them too
     const bool compass = initialized && Compass::Read();
     const bool skip_vote = initialized && SkipVote::Read();
+    const bool rot = initialized && Party::ReadRot();
+    const bool team_travel = initialized && TeamTravel::Read();
     const bool was_team = Team::open;
     Team::open = initialized && bbcoop_team_screen() != 0 && bbcoop_lobby_view(&Team::lobby) != 0;
     Joining::open = initialized && bbcoop_team_load_view(&Joining::load) != 0;
@@ -6607,7 +6809,8 @@ bool Visible() {
         Team::focus.fresh = true;
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party || compass ||
-                           pings || skip_vote || Team::open || Joining::open || Map::open || ScriptedKeysWaiting());
+                           pings || skip_vote || rot || team_travel || Team::open || Joining::open || Map::open ||
+                           ScriptedKeysWaiting());
 }
 
 bool MenuOpen() {
@@ -6616,7 +6819,8 @@ bool MenuOpen() {
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || quit_open || prompt_active || Team::open || Joining::open || Map::open;
+    return menu_open || quit_open || prompt_active || Team::open || Joining::open || Map::open ||
+           TeamTravel::Asking();
 }
 
 void Tick() {
@@ -6755,6 +6959,10 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         Party::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                        float(game.extent.height)};
         Party::Draw();
+    } else if (Party::rot_shown && !menu_open && !Team::open && !Joining::open && !Map::open) {
+        Party::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                       float(game.extent.height)};
+        Party::RotLine(ImGui::GetBackgroundDrawList()); // alone: under the player's own bars
     }
     if (Compass::shown && !menu_open && !quit_open && !Team::open && !Joining::open && !Map::open) {
         Compass::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
@@ -6779,6 +6987,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     }
     if (Map::open && !menu_open && !Team::open && !Joining::open) {
         Map::Screen();
+    }
+    if (TeamTravel::shown && !menu_open && !quit_open && !Team::open && !Joining::open && !Map::open) {
+        TeamTravel::Draw(ImGui::GetIO().DisplaySize);
     }
     if (menu_open) {
         Menu();

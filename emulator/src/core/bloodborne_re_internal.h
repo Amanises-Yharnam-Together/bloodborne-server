@@ -11,6 +11,7 @@
 #include "coop.pb.h"
 #include "core/bloodborne_altar.h"
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_host_rules.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_team.h"
@@ -623,6 +624,42 @@ void TurnOffMultiplayerWalls(bool in_session);
 u64 FindLoadedParam(std::string_view type);
 void KeepGuestFullHp();
 void MakeEnemiesHarder();
+// Kaniel 2026-10-25, the host rules (bloodborne_host_rules.h): this launcher's own, and the ones
+// this game plays by (its team's while in one, else its own).
+const HostRules& OwnHostRules();
+HostRules ActiveHostRules();
+// The hunters on this player's map (1 alone, or when the party's map board is old).
+std::size_t HuntersOnMyMap();
+// The server's rot for this player once its lobby said it (taken once), and this player's rot
+// to the server (in a team only).
+std::optional<std::vector<u32>> TakeKeptRot();
+void ReportRot(std::span<const u32> rot);
+// The game thread's host rules step (bloodborne_host_rules_game.cpp): the scaling, the rot.
+void TickHostRules();
+// From the hit hooks: an enemy's hit on this player (its handle), and this player's kill.
+void NoteHitOnMe(u32 attacker);
+void NoteOwnKill(u32 enemy);
+// For the party HUD: the rot this player has (RotKind numbers, the oldest first).
+struct RotView {
+    bool on = false;
+    std::vector<u32> kinds;
+    std::string text;
+};
+RotView ReadRotView();
+// Kaniel 2026-10-25, the travel together rule: this player's lamp or headstone trip to `point`
+// (the trip hook, the game thread): true when the question takes it over (the game's own trip is
+// not made then). The server's news, the overlay's answer and view, the game thread's step.
+bool OfferTeamTravel(s32 point);
+void TakeTeamTravelNews(const bbcoop::TeamTravel& travel);
+void SendTeamTravel(const bbcoop::TeamTravel& travel);
+void AnswerTeamTravel(bool yes);
+std::optional<TeamTravelView> ReadTeamTravel();
+void TickTeamTravel();
+// A team trip to `point` for this player, made by the map screen's step when nothing stops it (a
+// boss fight, a down, a load).
+void RequestTeamTrip(s32 point);
+// The loaded SpEffectParam, all of it writable, or none.
+std::optional<std::span<u8>> WritableSpEffects(u64 table);
 void PolishMultiplayerUi();
 void InstallNoLevelSyncInParty(u64 base, u64 image_size);
 void InstallSolidNpcsInParty(u64 base, u64 image_size);

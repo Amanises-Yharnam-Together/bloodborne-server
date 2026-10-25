@@ -3139,6 +3139,39 @@ std::size_t RemoveCoopBossHpBonus(std::span<u8> sp_effect_param) {
     return changed;
 }
 
+std::vector<std::pair<s32, float>> CoopBossHpRates(std::span<const u8> sp_effect_param) {
+    std::vector<std::pair<s32, float>> rates;
+    if (!IsParamOfType(sp_effect_param, "SP_EFFECT_PARAM_ST")) {
+        return rates;
+    }
+    for (const s32 effect : CoopBossHpEffects) {
+        const auto row = FindParamRow(sp_effect_param, effect);
+        if (!row || *row > sp_effect_param.size() ||
+            sp_effect_param.size() - *row < SpEffectMaxHpRateOffset + sizeof(float)) {
+            continue;
+        }
+        float rate = 0.0f;
+        std::memcpy(&rate, sp_effect_param.data() + *row + SpEffectMaxHpRateOffset, sizeof(rate));
+        rates.emplace_back(effect, rate);
+    }
+    return rates;
+}
+
+void SetCoopBossHpRates(std::span<u8> sp_effect_param,
+                        std::span<const std::pair<s32, float>> rates) {
+    if (!IsParamOfType(sp_effect_param, "SP_EFFECT_PARAM_ST")) {
+        return;
+    }
+    for (const auto& [effect, rate] : rates) {
+        const auto row = FindParamRow(sp_effect_param, effect);
+        if (!row || *row > sp_effect_param.size() ||
+            sp_effect_param.size() - *row < SpEffectMaxHpRateOffset + sizeof(float)) {
+            continue;
+        }
+        std::memcpy(sp_effect_param.data() + *row + SpEffectMaxHpRateOffset, &rate, sizeof(rate));
+    }
+}
+
 std::size_t MakeNpcAttacksHarder(std::span<u8> param, float damage) {
     if (!FindParamRow(param, NpcAttackMarkerRow)) {
         return 0;

@@ -48,7 +48,9 @@ DEFAULTS = {'game': '', 'update': '', 'role': 'guest', 'host_ip': '', 'account':
             # '1' once the player pressed Done in the launcher's co-op settings (they open by themselves until then).
             'confirmed': '',
             # The PC the player id was made on (this_machine()): a copied install makes its own id.
-            'machine': ''}
+            'machine': '',
+            # Kaniel 2026-10-25: the host rules ('1' on, all off by default): the leader's are its team's.
+            'rule_rot': '', 'rule_travel': '', 'rule_vote': '', 'rule_scale': ''}
 HARDER_ON = '3,1.5,3'  # the kit's harder enemies: HP, damage and poise multipliers
 HARDER_BIT, HARDER_MUCH = '1.5,1.25,1.5', '5,2,5'
 # What the game takes for each multiplier (ParseHarderEnemies in the emulator); all 1 is the normal game.
@@ -197,6 +199,17 @@ def with_own_player_id(settings, machine):
     if machine:
         settings['machine'] = machine
     return settings
+
+
+def host_rules_value(settings):
+    """The game's SHADPS4_BLOODBORNE_HOST_RULES (ParseHostRules): the rules turned on, 'off' for none. The
+    vote is a part of travelling together."""
+    on = lambda key: str(settings.get(key, '')) == '1'
+    words = [word for word, key in (('rot', 'rule_rot'), ('travel', 'rule_travel'), ('scale', 'rule_scale'))
+             if on(key)]
+    if on('rule_travel') and on('rule_vote'):
+        words.insert(words.index('travel') + 1, 'vote')
+    return ','.join(words) or 'off'
 
 
 def settings_path(install):
@@ -691,8 +704,10 @@ def game_environment(env, settings, install, root):
     else:
         env.pop('BB_FPS_LIMIT', None)
     for key in ('SHADPS4_P2P_PORT', 'SHADPS4_BLOODBORNE_HARDER_ENEMIES', 'SHADPS4_BLOODBORNE_PARTY_DEATH',
-                'BB_COMMUNITY_SERVER'):
+                'BB_COMMUNITY_SERVER', 'SHADPS4_BLOODBORNE_HOST_RULES'):
         env.pop(key, None)
+    if (rules := host_rules_value(settings)) != 'off':
+        env['SHADPS4_BLOODBORNE_HOST_RULES'] = rules
     port = str(settings.get('p2p_port', 'auto'))
     if port not in ('auto', '', '51610', '51611'):
         env['SHADPS4_P2P_PORT'] = port

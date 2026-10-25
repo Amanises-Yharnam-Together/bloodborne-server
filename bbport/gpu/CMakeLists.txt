@@ -239,6 +239,8 @@ set(BBCOOP_SOURCES ${BBCOOP_SOURCES}
     ${BB_EMULATOR_SRC}/core/bloodborne_altar.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_compass.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_pings.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_host_rules.cpp
+    ${BB_EMULATOR_SRC}/core/bloodborne_host_rules_game.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_pings_game.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map.cpp
     ${BB_EMULATOR_SRC}/core/bloodborne_map_screen.cpp
