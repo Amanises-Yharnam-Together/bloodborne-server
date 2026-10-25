@@ -174,18 +174,18 @@ int main(int argc, char** argv) {
     assert(image == reinterpret_cast<void*>(ImageBase));
     // "crowded": something else (on a player's PC, 2026-10-25: NVIDIA's driver with DLSS frame
     // generation) holds the gigabyte below the image, where the detour stubs used to go only.
+    // All of the reachable space below is taken here, so the stubs must go above the image.
     if (crowded) {
-        constexpr u64 Crowd = (1ull << 30) + (16ull << 20);
+        // In 16 MiB pieces: a piece something else already holds is taken anyway.
+        constexpr u64 Crowd = 0x71000000ull, Piece = 16ull << 20;
+        for (u64 at = ImageBase - Crowd; at < ImageBase; at += Piece) {
 #ifdef _WIN32
-        void* below = VirtualAlloc(reinterpret_cast<void*>(ImageBase - Crowd), Crowd, MEM_RESERVE, PAGE_NOACCESS);
+            VirtualAlloc(reinterpret_cast<void*>(at), Piece, MEM_RESERVE, PAGE_NOACCESS);
 #else
-        void* below = mmap(reinterpret_cast<void*>(ImageBase - Crowd), Crowd, PROT_NONE,
-                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
-        if (below == MAP_FAILED) {
-            below = nullptr;
-        }
+            mmap(reinterpret_cast<void*>(at), Piece, PROT_NONE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
 #endif
-        assert(below == reinterpret_cast<void*>(ImageBase - Crowd));
+        }
     }
 
     static u64 next[2] = {0, 0x5000 + 0x3000};
