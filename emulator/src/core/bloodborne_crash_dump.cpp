@@ -14,6 +14,7 @@
 
 #include <fmt/format.h>
 
+#include "common/logging/log.h"
 #include "common/path_util.h"
 #include "core/bloodborne_party.h"
 
@@ -121,6 +122,9 @@ void WriteCrashReport(void* exception_pointers) {
                            .count();
     const auto folder = Common::FS::GetUserPath(Common::FS::PathType::LogDir);
     WriteFileText((folder / fmt::format("crash-{}.txt", stamp)).wstring(), text);
+    // The log's last lines before the dump, which can take seconds (the port's log writes on a
+    // thread of its own; Flush's waits are bounded).
+    Common::Log::Flush();
 
     const HANDLE dump =
         CreateFileW((folder / fmt::format("crash-{}.dmp", stamp)).c_str(), GENERIC_WRITE, 0,
@@ -181,6 +185,7 @@ void WriteFreezeReport(u32 thread_id, s64 stalled_ms) {
                            .count();
     const auto folder = Common::FS::GetUserPath(Common::FS::PathType::LogDir);
     WriteFileText((folder / fmt::format("freeze-{}.txt", stamp)).wstring(), text);
+    Common::Log::Flush();
     const HANDLE dump =
         CreateFileW((folder / fmt::format("freeze-{}.dmp", stamp)).c_str(), GENERIC_WRITE, 0,
                     nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);

@@ -282,11 +282,24 @@ def find_executable(name):
     return None
 
 
-def main():
-    args = sys.argv[1:]
+def split_restart(args):
+    """`--after PID` (the in-game restart) and the arguments after it: (PID or None, the rest)."""
     if len(args) >= 2 and args[0] == '--after':
-        wait_for(int(args[1]))
-        args = args[2:]
+        return int(args[1]), args[2:]
+    return None, args
+
+
+def log_append(after):
+    """BB_LOG_APPEND: an in-game restart keeps the log the run before it wrote (BB_LOG_FILE, the
+    co-op shad_log.txt); its lines go on below. A new start writes a fresh one."""
+    return '0' if after is None else '1'
+
+
+def main():
+    after, args = split_restart(sys.argv[1:])
+    if after is not None:
+        wait_for(after)
+    os.environ['BB_LOG_APPEND'] = log_append(after)
     # As run.sh: relative paths (BB_GAME_DIR, BB_DATA_DIR, fsr4_shaders/) are from the port.
     os.chdir(PORT)
     env = os.environ

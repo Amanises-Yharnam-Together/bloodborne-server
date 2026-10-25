@@ -27,7 +27,9 @@ using Level = spdlog::level;
 bool ShouldLog(Level level);
 void Write(std::string_view log_class, Level level, const char* file, int line, const char* function,
            std::string&& message);
-inline void Flush() {}
+// Writes out every line still waiting for the log's writer thread (see log.cpp): the crash and
+// freeze reports and the loader's exits call it. Bounded waits, so a crash handler may call it.
+void Flush();
 } // namespace Common::Log
 
 #define LOG_GENERIC(log_class, log_level, fmt_str, ...)                                             \

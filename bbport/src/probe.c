@@ -133,6 +133,7 @@ static ABI __attribute__((noreturn)) void unresolved(uint32_t id, uintptr_t argu
     runtime_report();
     puts(entered_game ? "Original guest entry instructions executed; game initialization is incomplete." :
                         "Native libc initialization is incomplete; game entry has not run.");
+    bbgpu_log_flush();
     fflush(NULL);
     _exit(20); /* no destructors: GPU, audio and guest threads are still running */
 }
@@ -161,6 +162,7 @@ static void describe_address(char *out, size_t size, uintptr_t address) {
 static int fatal_reported;
 static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
+    bbgpu_log_flush(); /* the lines before the fault come first, in shad_log.txt and here */
     const EXCEPTION_RECORD *record=info->ExceptionRecord;
     const CONTEXT *c=info->ContextRecord;
     char where[MAX_PATH+64];
@@ -226,6 +228,7 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
         describe_address(where,sizeof(where),(uintptr_t)unwound[i]);
         fprintf(stderr,"  @%u %s\n",(unsigned)i,where);
     }
+    bbgpu_log_flush();
     fflush(NULL);
     TerminateProcess(GetCurrentProcess(),3);
     return EXCEPTION_CONTINUE_SEARCH;
@@ -467,6 +470,7 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
  * released before the new process opens its own. */
 volatile int runtime_restarting;
 void runtime_restart(void) {
+    bbgpu_log_flush(); /* the log's queued lines: the new launch appends to the file (BB_LOG_APPEND) */
     fflush(NULL);
     /* The GPU threads still run until exec (Linux) or TerminateProcess (Windows): their Vulkan
      * calls fail once the device goes away, and an assertion there must not end the process
@@ -492,6 +496,7 @@ void runtime_restart(void) {
     TerminateProcess(GetCurrentProcess(),0);
 #else
     puts("Runtime: restarting through run.sh");
+    setenv("BB_LOG_APPEND","1",1); /* the new launch keeps this run's log (run.py's log_append) */
     /* The GPU threads still run until exec: their Vulkan calls fail once the device fd is
      * closed below, and an assertion there must not end the process (exit 23) before exec. */
     runtime_restarting = 1;
