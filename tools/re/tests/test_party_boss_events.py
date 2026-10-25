@@ -359,6 +359,49 @@ class GuestsOpenChaliceBossDoors(unittest.TestCase):
         self.assertEqual(tool.patch_host_door_effect(original), (original, 0))
 
 
+class GuestsKeepTheWanderingNightmares(unittest.TestCase):
+    """Kaniel 2026-10-24 (player Fran): the Wandering Nightmares went missing. Each one's event
+    (m24_00 12400200, a slot per Nightmare) ends once an alive player has its drop's flag, and its
+    slot flag then switches it off at every load; a client skipped the flag check (1003:5 1 1), so
+    a party guest, alive after a trip, ended them all with no kill. The skip never matches."""
+
+    NIGHTMARE = [(1003, 101, struct.pack('<BBBxi', 0, 0, 2, 0)),
+                 (2004, 5, struct.pack('<iB3x', 0, 0)),
+                 (1000, 4, struct.pack('<B3x', 0)),
+                 (1014, 0, b''),
+                 (4, 3, struct.pack('<bxxxiBxxx', 1, 10000, 0)),
+                 (1003, 5, struct.pack('<BBxx', 1, 1)),
+                 flag_condition(1, 0),
+                 (0, 0, struct.pack('<bBbx', 0, 1, 1)),
+                 (1001, 0, struct.pack('<f', 0.0))]
+
+    def test_a_guest_needs_the_drop_too(self):
+        edits = []
+        patched, count = tool.keep_one_time_drop_checks(build_emevd({12400200: self.NIGHTMARE}),
+                                                        edits)
+        self.assertEqual(count, 1)
+        self.assertEqual(read_events(patched)[12400200][5][2][:2], bytes([1, tool.NEVER]))
+        self.assertEqual([edit['instruction'] for edit in edits], [5])
+
+    def test_old_yharnams_hide_too(self):
+        hidden = list(self.NIGHTMARE)
+        hidden[1] = (2004, 29, struct.pack('<iB3x', 0, 1))
+        _, count = tool.keep_one_time_drop_checks(build_emevd({12300220: hidden}))
+        self.assertEqual(count, 1)
+
+    def test_not_another_events_client_skip(self):
+        # The same skip with no own-slot start (a boss fog's): left as it is.
+        other = self.NIGHTMARE[3:]
+        original = build_emevd({12404840: other})
+        self.assertEqual(tool.keep_one_time_drop_checks(original), (original, 0))
+
+    def test_not_a_skip_in_another_group(self):
+        other = list(self.NIGHTMARE)
+        other[6] = flag_condition(2, 0)
+        original = build_emevd({12400200: other})
+        self.assertEqual(tool.keep_one_time_drop_checks(original), (original, 0))
+
+
 class GuestsTakeTheChaliceBossReward(unittest.TestCase):
     """Kaniel 2026-10-20: a Pthumeru Root dungeon's last boss dropped nothing extra. Its reward
     event (m29 12901693, started by the layer's own event file with the lots as parameters) skips

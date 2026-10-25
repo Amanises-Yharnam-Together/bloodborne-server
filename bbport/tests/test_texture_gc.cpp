@@ -13,7 +13,10 @@ using VideoCore::GcActionFor;
 using VideoCore::GcImageState;
 using VideoCore::HeapUse;
 using VideoCore::ArenaReserveBytes;
+using VideoCore::ArenaSpillsOutsideVram;
+using VideoCore::ObjectMotionFitsVram;
 using VideoCore::SystemMemoryTypesNearVramLimit;
+using VideoCore::TexturesPreferHost;
 using VideoCore::VramPlacement;
 using VideoCore::VramPlacementFrom;
 
@@ -30,12 +33,32 @@ int main() {
     assert(VramPlacementFrom("", std::string("system")) == VramPlacement::System);
     // The reserve: 512 MiB, an eighth of smaller heaps, on discrete GPUs only, block aligned.
     constexpr std::uint64_t MB = 1ull << 20;
-    assert(ArenaReserveBytes(true, 12288 * MB, 64 * 1024) == 512 * MB);
-    assert(ArenaReserveBytes(true, 4096 * MB, 64 * 1024) == 512 * MB);
-    assert(ArenaReserveBytes(true, 2048 * MB, 64 * 1024) == 256 * MB);
-    assert(ArenaReserveBytes(true, 2048 * MB + 100, 64 * 1024) == 256 * MB);
-    assert(ArenaReserveBytes(false, 12288 * MB, 64 * 1024) == 0);
-    assert(ArenaReserveBytes(true, 0, 64 * 1024) == 0);
+    assert(ArenaReserveBytes(true, false, 12288 * MB, 64 * 1024) == 512 * MB);
+    assert(ArenaReserveBytes(true, false, 4096 * MB, 64 * 1024) == 512 * MB);
+    assert(ArenaReserveBytes(true, false, 2048 * MB, 64 * 1024) == 256 * MB);
+    assert(ArenaReserveBytes(true, false, 2048 * MB + 100, 64 * 1024) == 256 * MB);
+    assert(ArenaReserveBytes(false, false, 12288 * MB, 64 * 1024) == 0);
+    assert(ArenaReserveBytes(true, false, 0, 64 * 1024) == 0);
+    // Only where the game's memory cannot spill outside VRAM (NVIDIA, Supermedo 859f9e4): AMD and
+    // Intel take system memory for it first, and the RX 6500 XT report kept 478 MiB of its 4 GB
+    // as a reserve the whole session, 0 used.
+    assert(ArenaReserveBytes(true, true, 4096 * MB, 64 * 1024) == 0);
+    {
+        // NVIDIA: the arena binds to the VRAM types only (heap 0).
+        const std::uint32_t heaps[] = {1, 0, 0, 1, 1};
+        assert(!ArenaSpillsOutsideVram(0b00110, heaps, 0));
+        // AMD: also to a host-visible type of heap 1.
+        assert(ArenaSpillsOutsideVram(0b01010, heaps, 0));
+        // Bits past the type count are ignored.
+        assert(!ArenaSpillsOutsideVram(0b100010, heaps, 0));
+    }
+    // Object motion under 6 GB of VRAM (Supermedo d257021): its ~225 MiB go to textures on
+    // discrete GPUs, unless BB_OBJECT_MOTION=1 asks for it.
+    assert(ObjectMotionFitsVram(true, 8192 * MB, false));
+    assert(ObjectMotionFitsVram(true, 6144 * MB - 200 * MB, false)); // a 6 GB card as reported
+    assert(!ObjectMotionFitsVram(true, 4096 * MB, false));
+    assert(ObjectMotionFitsVram(true, 4096 * MB, true));
+    assert(ObjectMotionFitsVram(false, 2048 * MB, false)); // integrated: shared memory
 
     // Uploaded from guest memory only: rebuilt the same from it.
     assert(GcActionFor({}, false) == GcAction::Evict);
@@ -86,5 +109,24 @@ int main() {
                               .budget = 3100 * MiB},
                              full[1]};
     assert(SystemMemoryTypesNearVramLimit(true, small, type_heaps) == 0);
+
+    // Supermedo a1235ee: a Ryzen 5600H (Radeon Vega, 15 GB RAM) reports the BIOS's 256 MiB frame
+    // buffer as its only device-local heap, the rest is shared system memory. Textures filled the
+    // small heap and a render target failed later (ErrorOutOfDeviceMemory). There textures prefer
+    // the shared heap; discrete GPUs and bigger heaps are unchanged.
+    const HeapUse apu[] = {{.size = 256 * MiB, .device_local = true}, {.size = 7800 * MiB}};
+    assert(TexturesPreferHost(nullptr, apu));
+    const HeapUse apu_512[] = {{.size = 512 * MiB, .device_local = true}, {.size = 7800 * MiB}};
+    assert(TexturesPreferHost(nullptr, apu_512));
+    const HeapUse one_gib[] = {{.size = 1024 * MiB, .device_local = true}, {.size = 7800 * MiB}};
+    assert(!TexturesPreferHost(nullptr, one_gib));
+    assert(!TexturesPreferHost(nullptr, full));
+    // No shared heap beside it: nowhere else to go.
+    const HeapUse local_only[] = {{.size = 256 * MiB, .device_local = true}};
+    assert(!TexturesPreferHost(nullptr, local_only));
+    // BB_IMAGES_PREFER_HOST=1 or 0 forces the rule; empty leaves it.
+    assert(TexturesPreferHost("1", full));
+    assert(!TexturesPreferHost("0", apu));
+    assert(TexturesPreferHost("", apu));
     return 0;
 }

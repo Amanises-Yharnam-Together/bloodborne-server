@@ -108,6 +108,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.compass = i != 0;
     } else if (key == "bloodstains") {
         v.bloodstains = i != 0;
+    } else if (key == "team_pings") {
+        v.team_pings = i != 0;
+    } else if (key == "ping_key") {
+        for (int k = 0; k < PingKeyCount; ++k) {
+            if (value == PingKeyNames[k]) {
+                v.ping_key = k;
+            }
+        }
     } else if (key == "map_3d") {
         v.map_3d = std::clamp(i, 0, Map3dCount - 1);
     } else if (key == "screen_lighting") {
@@ -171,11 +179,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
     } else if (key == "output_res") {
-        for (int r = 0; r < OutputCount; ++r) {
-            if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
-                v.output_res = r;
-            }
+        if (const auto size = BbOutputSizes::Parse(value)) {
+            v.output_res = BbOutputSizes::Pack(*size);
         }
+    } else if (key == "aspect_ratio") {
+        // deadinside28's values (4:3, 21:9, ...) follow the output, as auto does.
+        v.aspect = Trimmed(value) == "16:9" ? Aspect16x9 : AspectAuto;
     } else {
         for (int e = 0; e < EffectCount; ++e) {
             if (key == Effects[e].key) {
@@ -302,6 +311,8 @@ void Load() {
     bool file_window_mode = false;
     v.fps_limit = 0;
     v.window_mode = Windowed;
+    v.output_res = 0;
+    v.aspect = AspectAuto;
     v.dlss_model = 0;
     {
         std::scoped_lock lock{lines_mutex};
@@ -370,7 +381,13 @@ void Load() {
     v.startup_model_lod = v.model_lod;
     v.startup_fast_shader_math = v.fast_shader_math;
     v.startup_fov = v.fov;
-    v.startup_output_res = v.output_res;
+    // The startup patch's output (run.py: BB_OUTPUT_RES with BB_RENDER_RES); else the chosen one.
+    v.startup_output = ChosenOutput();
+    if (const char* env = std::getenv("BB_OUTPUT_RES"); env && FixedRenderSession()) {
+        if (const auto size = BbOutputSizes::Parse(env)) {
+            v.startup_output = *size;
+        }
+    }
     v.startup_live_resolution = v.live_resolution;
     if (v.menu_language_auto) {
         v.menu_language = GameLanguage();
@@ -513,6 +530,74 @@ float HdrPeak() {
     return std::max(PeakBeforeWhite(), HdrPaperWhite());
 }
 
+namespace {
+std::mutex display_mutex;
+std::vector<OutputSize> display_modes;
+std::atomic<std::uint32_t> display_desktop{0}; // BbOutputSizes::Pack, 0 while unknown
+} // namespace
+
+void SetDisplay(std::vector<OutputSize> modes, OutputSize desktop) {
+    {
+        std::scoped_lock lock{display_mutex};
+        display_modes = std::move(modes);
+    }
+    display_desktop.store(desktop.Valid() ? BbOutputSizes::Pack(desktop) : 0, std::memory_order_relaxed);
+}
+
+OutputSize Desktop() {
+    return BbOutputSizes::Unpack(display_desktop.load(std::memory_order_relaxed));
+}
+
+std::vector<OutputSize> OutputChoices() {
+    std::scoped_lock lock{display_mutex};
+    return BbOutputSizes::Choices(display_modes, Desktop());
+}
+
+OutputSize ChosenOutput() {
+    const OutputSize chosen = BbOutputSizes::Unpack(Get().output_res.load(std::memory_order_relaxed));
+    return chosen.Valid() ? chosen : BbOutputSizes::DefaultOutput(Desktop());
+}
+
+OutputSize ResolveOutput(OutputSize chosen, int aspect, int window_mode, OutputSize desktop) {
+    OutputSize size = chosen.Valid() ? chosen : BbOutputSizes::Game;
+    if (window_mode == Borderless) {
+        size = BbOutputSizes::FitWindow(size, desktop);
+    }
+    return aspect == Aspect16x9 ? BbOutputSizes::Fit16x9(size) : size;
+}
+
+OutputSize CurrentOutput() {
+    const auto& v = Get();
+    return ResolveOutput(ChosenOutput(), v.aspect.load(std::memory_order_relaxed),
+                         v.window_mode.load(std::memory_order_relaxed), Desktop());
+}
+
+void ChooseOutput(OutputSize size) {
+    auto& v = Get();
+    if (v.window_mode == Borderless) {
+        size = BbOutputSizes::FitWindow(size, Desktop());
+    }
+    if (size.Valid()) {
+        v.output_res = BbOutputSizes::Pack(size);
+    }
+}
+
+void FitChosenOutputToDesktop() {
+    auto& v = Get();
+    const OutputSize chosen = BbOutputSizes::Unpack(v.output_res.load());
+    if (v.window_mode != Borderless || !chosen.Valid()) {
+        return;
+    }
+    const OutputSize fitted = BbOutputSizes::FitWindow(chosen, Desktop());
+    if (fitted != chosen) {
+        std::printf("Output: %s for the borderless window (%s chosen, desktop %s)\n",
+                    BbOutputSizes::Text(fitted).c_str(), BbOutputSizes::Text(chosen).c_str(),
+                    BbOutputSizes::Text(Desktop()).c_str());
+        v.output_res = BbOutputSizes::Pack(fitted);
+        Save();
+    }
+}
+
 bool FixedRenderSession() {
     const char* size = std::getenv("BB_RENDER_RES");
     return size && size[0];
@@ -528,7 +613,7 @@ bool ResolutionNeedsRestart() {
     const auto& v = Get();
     // TAA needs the live path (native guest targets): run.sh selects it on restart.
     return FixedRenderSession() &&
-        (v.preset != v.startup_preset || v.output_res != v.startup_output_res ||
+        (v.preset != v.startup_preset || CurrentOutput() != v.startup_output ||
          (v.upscaler == UpscalerOff) != (v.startup_upscaler == UpscalerOff) ||
          (v.upscaler == UpscalerTaa) != (v.startup_upscaler == UpscalerTaa));
 }
@@ -568,6 +653,8 @@ void Save() {
     put("fov", std::to_string(std::clamp(v.fov.load(), FovMin, FovMax)));
     put("compass", flag(v.compass));
     put("bloodstains", flag(v.bloodstains));
+    put("team_pings", flag(v.team_pings));
+    put("ping_key", PingKeyNames[std::clamp(v.ping_key.load(), 0, PingKeyCount - 1)]);
     put("compass_position",
         CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);
     put("map_3d", std::to_string(std::clamp(v.map_3d.load(), 0, Map3dCount - 1)));
@@ -593,8 +680,8 @@ void Save() {
         put(Effects[e].key, flag(v.effects[e]));
     }
     put("model_lod", std::to_string(v.model_lod.load()));
-    put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +
-                          std::to_string(OutputHeights[v.output_res]));
+    put("output_res", BbOutputSizes::Text(ChosenOutput()));
+    put("aspect_ratio", AspectModeNames[std::clamp(v.aspect.load(), 0, AspectModeCount - 1)]);
     // Read by run.sh at start.
     put("live_resolution", v.live_resolution < 0 ? "auto" : flag(v.live_resolution != 0));
     if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {

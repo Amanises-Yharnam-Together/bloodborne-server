@@ -1301,10 +1301,13 @@ void PS4_SYSV_ABI TraceEntry(u64 tag, const GuestRegisterSnapshot* registers) {
     }
     if (deferred_summon_reload_hook_installed && site.offset == SosStatusUpdateOffset) {
         const auto started = std::chrono::steady_clock::now();
-        RefreshSeamlessLocalPlacement();
-        ApplyPreMatchCrossMapGuestWarp();
-        ApplyDeferredSummonReload();
-        ResumePreMatchCrossMapResponder();
+        {
+            const TickPartTimer part{"placement and summons"};
+            RefreshSeamlessLocalPlacement();
+            ApplyPreMatchCrossMapGuestWarp();
+            ApplyDeferredSummonReload();
+            ResumePreMatchCrossMapResponder();
+        }
         TickPartyController();
         const s64 now_ms = SteadyMilliseconds();
         coop_time.Add("co-op tick",

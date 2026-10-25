@@ -4,7 +4,10 @@
 // Phase 5: the title's load held for the team (TeamGate) and a party controller that waits for
 // the team to say its role.
 #include <algorithm>
+#include <array>
 #include <set>
+
+#include <thread>
 
 #include <gtest/gtest.h>
 
@@ -370,6 +373,64 @@ TEST(TeamWorld, AGuestFollowsTheStoryStepsTheHostChanged) {
     EXPECT_TRUE(TeamStoryToFollow(before, other).empty());
 }
 
+// Kaniel's playtest 2026-10-24: the team world's sync set the host's current altar view
+// (92900000-92905999) on a guest ("-92900000 ..." in krolebord's log), which read as a ritual
+// there and went to the team as an altar record. The view is each game's own: not captured into
+// the team world, not set from it, never followed; the altars' own records (94k) are the world's.
+TEST(TeamWorld, TheCurrentAltarIsNoTeamWorlds) {
+    constexpr u32 PerBlock = 1000;
+    std::array<u8, PerBlock / 8> view{};
+    view[0] = 0x1D;
+    std::array<u8, PerBlock / 8> altar{};
+    altar[0] = 0x1D;
+    const std::array blocks{FlagBlockBits{92900, view}, FlagBlockBits{94600, altar}};
+    const WorldFlags world = CaptureWorldFlags(PerBlock, blocks);
+    EXPECT_EQ(world.on, (std::vector<s32>{94600003, 94600004, 94600005, 94600007}));
+    // An older team world that holds the host's view: nothing of it goes in.
+    WorldFlags team = world;
+    team.on.insert(team.on.begin(), {92900000, 92900001});
+    std::array<u8, PerBlock / 8> empty_view{};
+    const std::array guest{FlagBlockBits{92900, empty_view}, FlagBlockBits{94600, altar}};
+    EXPECT_TRUE(WorldFlagChanges(PerBlock, guest, team).empty());
+    WorldFlags before = team;
+    before.on = {94600003};
+    EXPECT_EQ(TeamStoryToFollow(before, team), (std::vector<std::pair<s32, bool>>{}));
+}
+
+// The 2026-10-23 gestures case (rig gesture-own): the host learned Alfred's Pray (flag 6749), and
+// a guest following the host's story steps took 6749, so its own talk skipped the gesture. A
+// gesture's flag is each player's own; a flag next to them without a row stays a story step.
+TEST(TeamWorld, AGuestKeepsItsOwnGestureFlags) {
+    WorldFlags before;
+    before.blocks = {1, 6, 70000};
+    before.on = {1100};
+    WorldFlags after = before;
+    after.on = {1100, 6744, 6748, 6749, 6770, 70000007};
+    EXPECT_EQ(TeamStoryToFollow(before, after), (std::vector<std::pair<s32, bool>>{{6748, true}}));
+    EXPECT_EQ(TeamStoryToFollow(after, before), (std::vector<std::pair<s32, bool>>{{6748, false}}));
+}
+
+// Kaniel's playtest 2026-10-22: a guest alone on a map saw NPCs the team's world has gone past (or
+// not reached). Each trip's load put its own game's story steps of the session over the team's
+// world while the map placed its characters; the arrival set the team's back only after. A kept
+// story step yields to the team's world once a report of it had time to carry it.
+TEST(TeamWorld, AKeptStoryStepYieldsToTheTeamsWorld) {
+    const std::vector<u32> blocks = {1, 7, 9, 1240};
+    constexpr s64 Now = 100'000;
+    EXPECT_TRUE(KeptChangeYieldsToTeam(7240, Now - 30'000, Now, blocks, 1000));
+    EXPECT_TRUE(KeptChangeYieldsToTeam(1205, std::nullopt, Now, blocks, 1000))
+        << "kept before this game started: older than any report";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(7240, Now - 5'000, Now, blocks, 1000))
+        << "newer than the reports: the host's may not have it yet";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(12404003, std::nullopt, Now, blocks, 1000))
+        << "a map's flag (bosses, doors): not a story step";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(52800170, std::nullopt, Now, blocks, 1000))
+        << "a pickup is the character's own";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(3500, std::nullopt, Now, blocks, 1000))
+        << "a block the team's world does not cover";
+    EXPECT_FALSE(KeptChangeYieldsToTeam(1205, std::nullopt, Now, blocks, 0));
+}
+
 // Kaniel's playtest 2026-10-20: Lisara's game took the host's "light the Witch's Abode lamp"
 // request (72200201) as a story step, and her own lamp never lit. A lamp's light request is each
 // player's own; the lit lamp reaches the party by its active flags and the lamp lists.
@@ -523,6 +584,26 @@ TEST(PhantomKeyItems, TheGuestsOwnKeyItemsGoInThePhantomsList) {
         last_look.push_back(put);
     }
     EXPECT_TRUE(PhantomKeyItemsToGiveBack(phantom, last_look, own).empty());
+}
+
+// Kaniel 2026-10-23: a joining guest's own key items went into the phantom's list each with the
+// game's "item received" popup ("Oedon Tomb Key 1 / OK"), one after another. Those grants show
+// none: the popup's queue push is skipped while a SilentItemGets lives on this thread.
+TEST(SilentItemGets, OnlyWhileOneLivesOnThisThread) {
+    EXPECT_FALSE(ItemGetsSilent()) << "a pickup or trade: the popup";
+    {
+        const SilentItemGets silent;
+        EXPECT_TRUE(ItemGetsSilent());
+        {
+            const SilentItemGets nested;
+            EXPECT_TRUE(ItemGetsSilent());
+        }
+        EXPECT_TRUE(ItemGetsSilent()) << "the outer one still lives";
+        bool other_thread = true;
+        std::thread{[&] { other_thread = ItemGetsSilent(); }}.join();
+        EXPECT_FALSE(other_thread) << "another thread's gives keep their popup";
+    }
+    EXPECT_FALSE(ItemGetsSilent());
 }
 
 // Rig 2026-10-14 (host-crash-apart, team-world): the host's game gone, the guest's game set 4047
@@ -876,6 +957,22 @@ TEST(TeamLobby, ARefusedLinkIsShownOnTheTeamScreen) {
     EXPECT_EQ(notice, "The co-op server refused this game: another build: everyone needs the same "
                       "release");
     EXPECT_LT(notice.size(), 96u);
+}
+
+// Build check on join: the server's refusal starts with the screen's line (what differs, both
+// values), then the whole reason for the log.
+TEST(TeamLobby, ABuildRefusalShowsWhatDiffers) {
+    const std::string refusal =
+        "Co-op refused: your harder enemies are HP x3 damage x1.5 poise x3, the others use off\n"
+        "another build: your harder-enemies setting is HP x3 damage x1.5 poise x3, the games "
+        "here use off: change it in the launcher's co-op settings";
+    EXPECT_EQ(LinkRefusalNotice(refusal),
+              "Co-op refused: your harder enemies are HP x3 damage x1.5 poise x3, the others use "
+              "off");
+    // Never longer than the screen's line, whatever the server sent.
+    const std::string notice = LinkRefusalNotice(std::string(200, 'x') + "\nreason");
+    EXPECT_LE(notice.size(), BloodborneCoop::RefusalNoticeMax);
+    EXPECT_TRUE(notice.ends_with("...")) << notice;
 }
 
 namespace {

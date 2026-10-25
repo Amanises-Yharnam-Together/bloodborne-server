@@ -432,14 +432,13 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
     dst->flags &= ~VideoCore::ImageFlagBits::Dirty;
 }
 
-void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
-                                  const VideoCore::Buffer* buffer, u64 offset) {
+/// bbport: the copies of every shared mip through a buffer at `offset` (CopyImageWithBuffer), and
+/// the bytes they span from there.
+static SmallVector<vk::BufferImageCopy, 8> BufferCopiesFor(const VideoCore::Image* src,
+                                                           const VideoCore::Image* dst, u64 offset,
+                                                           u64& copy_size) {
     const u32 num_mips = std::min(src->info.resources.levels, dst->info.resources.levels);
     const u32 num_layers = std::min(src->info.resources.layers, dst->info.resources.layers);
-
-    SetBackingSamples(dst, dst->info.num_samples, false);
-    SetBackingSamples(src, src->info.num_samples);
-
     vk::BufferImageCopy buffer_copy = {
         .bufferOffset = offset,
         .bufferRowLength = 0,
@@ -453,7 +452,7 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
         .imageOffset = {0, 0, 0},
         .imageExtent = {src->info.size.width, src->info.size.height, src->info.size.depth},
     };
-    u64 copy_size = BufferImageCopySize(buffer_copy, src->info.pixel_format);
+    copy_size = BufferImageCopySize(buffer_copy, src->info.pixel_format);
     SmallVector<vk::BufferImageCopy, 8> buffer_copies;
     buffer_copies.push_back(buffer_copy);
     for (u32 mip = 1; mip < num_mips; ++mip) {
@@ -467,6 +466,16 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
             mip_copy.bufferOffset - offset + BufferImageCopySize(mip_copy, src->info.pixel_format);
         buffer_copies.push_back(mip_copy);
     }
+    return buffer_copies;
+}
+
+void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
+                                  const VideoCore::Buffer* buffer, u64 offset) {
+    SetBackingSamples(dst, dst->info.num_samples, false);
+    SetBackingSamples(src, src->info.num_samples);
+
+    u64 copy_size = 0;
+    const auto buffer_copies = BufferCopiesFor(src, dst, offset, copy_size);
 
     scheduler.EndRendering();
 
@@ -577,9 +586,12 @@ void Runtime::CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst) {
             CopyImage(src, dst);
         } else {
             // Perform depth from/to color copy using the intermediate copy buffer.
-            static constexpr size_t COPY_BUFFER_SIZE = 128_MB;
-            const auto copy_ref =
-                staging_pool.Request(COPY_BUFFER_SIZE, VideoCore::MemoryType::DeviceLocal);
+            // bbport: sized for these images instead of 128 MiB, which then stayed in VRAM in
+            // the staging pool for a minute (Supermedo 859f9e4).
+            u64 copy_size = 0;
+            BufferCopiesFor(src, dst, 0, copy_size);
+            const auto copy_ref = staging_pool.Request(Common::AlignUp(copy_size, 1_MB),
+                                                       VideoCore::MemoryType::DeviceLocal);
             CopyImageWithBuffer(src, dst, copy_ref.buffer, copy_ref.offset);
         }
     } else if (src->info.num_samples == 1 && dst->info.num_samples > 1 &&

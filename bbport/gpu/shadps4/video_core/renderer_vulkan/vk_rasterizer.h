@@ -320,6 +320,7 @@ private:
         RenderState state;
         u32 scene_size = 0;
         std::array<float, 2> target_scale{};
+        std::array<float, 2> ui_edges{};
     } begin_memo;
     u64 begin_memo_hits = 0, begin_memo_misses = 0;
     void Resolve();
@@ -464,6 +465,13 @@ private:
     std::unique_ptr<ScreenLighting> screen_lighting; // bbport: screen-space AO + indirect light
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
+    /// bbport: a UI pass on an output of another aspect ratio: where the game's 16:9 screen ends in it
+    /// (UiComposition::ScreenEdges), {0, 0} otherwise. Its draws' vertex shaders stretch the
+    /// full-screen fills to the output's edges (UiEdgeParam, EmitUiEdgeStretch).
+    std::array<float, 2> ui_edges{};
+    /// The push constant motion_param of a draw whose vertex shader has no motion vectors: the UI
+    /// edge stretch's parameter, or 0.
+    u32 UiEdgeParam(const GraphicsPipeline* pipeline) const;
     const bool host_markers_enabled;
     const bool guest_markers_enabled;
 

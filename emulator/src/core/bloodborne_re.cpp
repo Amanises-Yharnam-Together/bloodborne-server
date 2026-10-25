@@ -455,14 +455,29 @@ std::mutex flag_board_mutex;
 std::vector<std::pair<s32, bool>> flags_to_post;
 
 void PostWorldChanges(const FlagChanges& changes) {
-    const bool altar_changed = std::ranges::any_of(changes.set, IsCurrentAltarFlag) ||
-                               std::ranges::any_of(changes.cleared, IsCurrentAltarFlag);
-    const std::optional<s32> altar = altar_changed ? CurrentRitualAltar() : std::nullopt;
-    if (altar_changed) {
-        LOG_INFO(Debug, "Bloodborne party: the current altar's flags changed (altar {})",
-                 altar ? fmt::to_string(*altar) : std::string{"unknown"});
+    // A ritual altar's record goes whole on its own (ShareRitualAltarRecord), never here.
+    auto shared = FlagsToShare(changes);
+    // A guest running its map without the host (two guests there both do, each in its own copy):
+    // its game ran the map's story, so the team takes the map's steps it made, all but its loads'
+    // own (LoneGuestShares).
+    // Every guest's loads teach the map's load flags, alone or not yet known to be.
+    static LoneGuestShares lone_shares;
+    const auto map_steps =
+        IsPartyGuestRole()
+            ? lone_shares.Take(changes, PlayingMap(), SteadyMilliseconds() - world_loaded_ms.load())
+            : std::vector<std::pair<s32, bool>>{};
+    if (CurrentEnemyRole() == EnemyRole::Owner || HostAwayFromThisMap()) {
+        if (!map_steps.empty()) {
+            std::string which;
+            for (const auto& [flag, on] : map_steps) {
+                which += fmt::format(" {}{}", on ? "" : "-", flag);
+            }
+            LOG_INFO(Debug,
+                     "Bloodborne party: this lone guest's map steps go to the team (-off):{}",
+                     which);
+            shared.insert(shared.end(), map_steps.begin(), map_steps.end());
+        }
     }
-    const auto shared = FlagsToShare(altar_changed ? AsAltarFlags(changes, altar) : changes);
     if (shared.empty() || TakeFlagsForTheLog(shared)) {
         return;
     }
@@ -699,6 +714,7 @@ void ReconcileMemberPresence() {
     static std::unordered_set<u64> hidden;
     static std::unordered_map<u64, s64> first_seen;
     static std::unordered_set<u64> stale_hidden;
+    static std::unordered_map<u64, FadeBack> fade_back;
     using SetDisabled = void PS4_SYSV_ABI (*)(u64, bool);
     const auto set_disabled =
         reinterpret_cast<SetDisabled>(image_base + SetCharacterDisabledOffset);
@@ -713,6 +729,7 @@ void ReconcileMemberPresence() {
                   [&](const auto& entry) { return !present.contains(entry.first); });
     std::erase_if(first_seen, [&](const auto& entry) { return !present.contains(entry.first); });
     std::erase_if(stale_hidden, [&](u64 character) { return !present.contains(character); });
+    std::erase_if(fade_back, [&](const auto& entry) { return !present.contains(entry.first); });
     // Kaniel's playtest 2026-10-19: two copies of one member take his packets off one queue on two
     // threads (a double free in everyone's game when he joined back). All but his newest copy
     // stay hidden (a hidden copy's update, the one that takes them, does not run).
@@ -774,13 +791,29 @@ void ReconcileMemberPresence() {
     for (const OtherPlayer& other : others) {
         positions.push_back(other.at);
     }
-    const std::vector<bool> shown = ShownOtherPlayers(positions, board, self, map);
+    const std::vector<std::optional<size_t>> vouching =
+        VouchingMembers(positions, board, self, map);
+    const bool someone_died = std::ranges::any_of(board, [&](const MemberVitals& member) {
+        return member.member != self && member.map == map && member.vital == Vital::Dead;
+    });
     for (size_t i = 0; i < others.size(); ++i) {
         const u64 character = others[i].character;
         if (stale_hidden.contains(character)) {
             continue;
         }
-        if (shown[i]) {
+        const std::optional<size_t> member = vouching[i];
+        if (fade_back[character].Tick(CharacterFade(character), someone_died,
+                                      member ? std::optional{board[*member].vital}
+                                             : std::nullopt) &&
+            HasMemoryAccess(character + CharacterFadeOffset, sizeof(float), MemoryProt::CpuWrite)) {
+            WriteValue(character, CharacterFadeOffset, 1.0f);
+            LOG_INFO(Debug,
+                     "Bloodborne presence: player {:#x} faded out (a fall into the void) and its "
+                     "member {} is up again: faded back in",
+                     ReadValue<u32>(character, 0x08), board[*member].member);
+        }
+        const bool shown = !others[i].at || member.has_value();
+        if (shown) {
             unmatched_since.erase(character);
             if (hidden.erase(character) > 0 && IsCharacterDisabled(character)) {
                 set_disabled(character, false);
@@ -849,6 +882,13 @@ u64 MemberIdentityOf(u64 character) {
 bool IsCharacterDisabled(u64 character) {
     const u64 control = ReadValue<u64>(character, 0x18);
     return control >= 0x10000 && (ReadValue<u8>(control, 0x20) & 1) != 0;
+}
+
+float CharacterFade(u64 character) {
+    return character >= 0x10000 && HasMemoryAccess(character + CharacterFadeOffset, sizeof(float),
+                                                   MemoryProt::CpuRead)
+               ? ReadValue<float>(character, CharacterFadeOffset)
+               : 1.0f;
 }
 
 bool CharacterHitsOff(u64 character) {
@@ -961,40 +1001,62 @@ bool InSessionWorld() {
 namespace Coop {
 
 CoopTimeMeter coop_time{30'000};
+CoopTimeMeter coop_tick_parts{30'000};
+
+TickPartTimer::~TickPartTimer() {
+    coop_tick_parts.Add(name,
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - started)
+                            .count(),
+                        SteadyMilliseconds());
+}
 
 void ReportCoopTime(s64 now_ms) {
     // A warning, so the port's console shows it beside its Perf lines.
     if (const auto line = coop_time.Report(now_ms)) {
         LOG_WARNING(Debug, "Co-op time: {}", *line);
     }
+    if (const auto line = coop_tick_parts.Report(now_ms, 4)) {
+        LOG_WARNING(Debug, "Co-op tick slowest parts: {}", *line);
+    }
 }
 
+namespace {
+
+template <typename Part>
+void TimeTickPart(std::string_view name, Part&& part) {
+    const TickPartTimer timer{name};
+    part();
+}
+
+} // namespace
+
 void TickPartyController() {
-    NoteGameThreadTick();
-    TickPlace();
-    TickAutoplay();
-    TickPartyTrip();
-    TickPlayersOnThisMap();
-    TickMapScreen();
-    CheckAutoplayWatch();
-    LogJoinTaskChanges();
-    WatchSummonJoin();
-    KeepGuestBloodstainMark();
-    ShowGuestBloodstain();
-    LogBloodstainStateChanges();
-    LogMapChanges();
-    LogLocalEffectChanges();
+    TimeTickPart("NoteGameThreadTick", NoteGameThreadTick);
+    TimeTickPart("TickPlace", TickPlace);
+    TimeTickPart("TickAutoplay", TickAutoplay);
+    TimeTickPart("TickPartyTrip", TickPartyTrip);
+    TimeTickPart("TickPlayersOnThisMap", TickPlayersOnThisMap);
+    TimeTickPart("TickMapScreen", TickMapScreen);
+    TimeTickPart("CheckAutoplayWatch", CheckAutoplayWatch);
+    TimeTickPart("LogJoinTaskChanges", LogJoinTaskChanges);
+    TimeTickPart("WatchSummonJoin", WatchSummonJoin);
+    TimeTickPart("KeepGuestBloodstainMark", KeepGuestBloodstainMark);
+    TimeTickPart("ShowGuestBloodstain", ShowGuestBloodstain);
+    TimeTickPart("LogBloodstainStateChanges", LogBloodstainStateChanges);
+    TimeTickPart("LogMapChanges", LogMapChanges);
+    TimeTickPart("LogLocalEffectChanges", LogLocalEffectChanges);
     if (party_controller) {
-        LogActionBlockingState();
-        KeepBossHpInStep();
-        LogNearbyEnemyControl();
-        LogEnemyTargets();
-        LogJoinTasksOnChange();
-        ReconcileMemberPresence();
-        LogUnsharedNearbyCharacters();
+        TimeTickPart("LogActionBlockingState", LogActionBlockingState);
+        TimeTickPart("KeepBossHpInStep", KeepBossHpInStep);
+        TimeTickPart("LogNearbyEnemyControl", LogNearbyEnemyControl);
+        TimeTickPart("LogEnemyTargets", LogEnemyTargets);
+        TimeTickPart("LogJoinTasksOnChange", LogJoinTasksOnChange);
+        TimeTickPart("ReconcileMemberPresence", ReconcileMemberPresence);
+        TimeTickPart("LogUnsharedNearbyCharacters", LogUnsharedNearbyCharacters);
     }
-    LogOtherPlayersChanges();
-    ObserveLocalAliveState();
+    TimeTickPart("LogOtherPlayersChanges", LogOtherPlayersChanges);
+    TimeTickPart("ObserveLocalAliveState", ObserveLocalAliveState);
     {
         const auto started = std::chrono::steady_clock::now();
         TickPartyDeath();
@@ -1004,10 +1066,20 @@ void TickPartyController() {
                           .count(),
                       SteadyMilliseconds());
     }
-    TickLampRest();
+    {
+        const auto started = std::chrono::steady_clock::now();
+        TimeTickPart("TickPings", TickPings);
+        coop_time.Add("pings",
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                      SteadyMilliseconds());
+    }
+    TimeTickPart("TickLampRest", TickLampRest);
     if (!party_controller) {
         return;
     }
+    const TickPartTimer party_controller_part{"party controller"};
     ReopenClosedPartySession();
     const u64 player = GetLocalPlayer();
     const PartyObservation observation = ObserveParty(player, party_controller->SearchEffectId());
@@ -1092,16 +1164,24 @@ void TickPartyController() {
 
 } // namespace Coop
 
-void SetBuildIdentity(std::string_view revision, u64 event_files) {
+void SetBuildIdentity(std::string_view revision, u64 event_files, u64 eboot, u64 patches_bin) {
+    const std::string build = BloodborneCoop::EncodeBuildFingerprint(
+        CoopBuildFingerprint(BuildIdentity{.revision = std::string{revision},
+                                           .eboot = eboot,
+                                           .event_files = event_files,
+                                           .patches_bin = patches_bin},
+                             [](const char* name) -> const char* { return std::getenv(name); }));
+    LOG_INFO(Debug, "Co-op: build fingerprint {}", build);
     {
         std::scoped_lock lock{peer_hello_mutex};
         own_hello = PeerHello{.revision = std::string{revision},
                               .event_files = event_files,
-                              .features = WorldLogSwitchOn() ? WorldLogFeature : u8{0}};
+                              .features = WorldLogSwitchOn() ? WorldLogFeature : u8{0},
+                              .build = build};
     }
-    // The server link's hello: shadNet takes one build only (see PeerHello).
-    Libraries::Net::SetServerLinkBuild(
-        fmt::format("{} events {:x} protocol {}", revision, event_files, CoopProtocolVersion));
+    // The server link's hello: shadNet takes one build only, its own release's (build check on
+    // join), and refuses another naming what differs.
+    Libraries::Net::SetServerLinkBuild(build);
     Libraries::Net::SetServerLinkObserver([](std::string_view event, std::string_view detail) {
         Trace("link", {{"event", std::string{event}}, {"detail", std::string{detail}}});
     });

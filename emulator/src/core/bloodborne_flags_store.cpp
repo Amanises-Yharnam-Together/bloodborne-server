@@ -4,6 +4,7 @@
 // The flag store and progression: event flags, guest progress, pickups, world changes, trophies.
 // Split from bloodborne_re.cpp; the shared declarations are in bloodborne_re_internal.h.
 
+#include "core/bloodborne_altar.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
@@ -229,6 +230,158 @@ void GiveAltarChalice(s32 altar) {
              "Bloodborne team altar: altar {} has the team's dungeon; given its chalice "
              "(goods {}) to open it",
              altar, *goods);
+}
+
+namespace {
+
+// When this game last wrote an altar record itself (a teammate's, a repair): the view its altar's
+// reload rewrites is no ritual of this player's (SharesAltarRecord).
+std::atomic<s64> altar_written_ms{-1'000'000'000};
+// Chalices a cleared altar's record named, to give back once the player's items read.
+std::mutex altar_chalices_mutex;
+std::vector<u32> altar_chalices_owed;
+
+std::optional<AltarRecord> ReadAltarFlags(s32 base) {
+    AltarRecord record{};
+    for (size_t byte = 0; byte < record.size(); ++byte) {
+        const auto bits = EventFlagBits(base + static_cast<s32>(byte * 8), 8);
+        if (!bits) {
+            return std::nullopt;
+        }
+        record[byte] = static_cast<u8>(*bits);
+    }
+    return record;
+}
+
+void WriteAltarFlags(s32 base, const AltarRecord& record) {
+    using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
+    for (size_t byte = 0; byte < record.size(); ++byte) {
+        for (u32 bit = 0; bit < 8; ++bit) {
+            reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(
+                0, base + static_cast<s32>(byte * 8 + bit), (record[byte] & (0x80 >> bit)) != 0);
+        }
+    }
+    altar_written_ms.store(SteadyMilliseconds());
+}
+
+std::string RecordName(const AltarRecord& record) {
+    return fmt::format(
+        "{:02X} {:02X} {:02X} {:02X}, channel {}", record[0], record[1], record[2], record[3],
+        u32{record[4]} << 24 | u32{record[5]} << 16 | u32{record[6]} << 8 | record[7]);
+}
+
+void GiveBackAltarChalices() {
+    std::vector<u32> owed;
+    {
+        std::scoped_lock lock{altar_chalices_mutex};
+        if (altar_chalices_owed.empty() || !PlayerItemsReadable() || !TradeItemsCanBeAdded()) {
+            return;
+        }
+        owed.swap(altar_chalices_owed);
+    }
+    for (const u32 goods : owed) {
+        const TradeItem chalice{BloodborneCoop::TradeItemKind::Goods, goods, 1};
+        if (TradeHeld(chalice) > 0) {
+            LOG_INFO(Debug, "Bloodborne team altar: chalice {} of a cleared altar is held already",
+                     goods);
+            continue;
+        }
+        AddTradeItems(std::span{&chalice, 1});
+        LOG_INFO(Debug, "Bloodborne team altar: chalice {} of a cleared altar given back", goods);
+    }
+}
+
+} // namespace
+
+void RepairRitualAltars() {
+    const auto repair = [](s32 base, std::string_view which) {
+        const auto record = ReadAltarFlags(base);
+        if (!record) {
+            return;
+        }
+        const AltarRepair repair = RepairAltarRecord(*record);
+        if (repair.action == AltarRepair::Action::None) {
+            return;
+        }
+        WriteAltarFlags(base, repair.record);
+        LOG_WARNING(Debug, "Bloodborne team altar: {} named no dungeon ({}): {} ({})", which,
+                    RecordName(*record),
+                    repair.action == AltarRepair::Action::Rebuild ? "made again" : "cleared",
+                    RecordName(repair.record));
+        if (repair.chalice) {
+            std::scoped_lock lock{altar_chalices_mutex};
+            altar_chalices_owed.push_back(*repair.chalice);
+        }
+    };
+    for (s32 altar = 0; altar < RitualAltarCount; ++altar) {
+        repair(AltarFlagBase(altar), fmt::format("altar {}", altar));
+    }
+    repair(CurrentAltarView, "the current altar");
+}
+
+void KeepRitualAltarsWhole() {
+    // The rig's chalice-enter-broken: the game names a dungeon's files as its load starts, before
+    // any load hook of ours, so a broken record is repaired as soon as it is seen (each record's
+    // first two words, every second): a save's in the Dream before its altar is used.
+    static s64 checked_ms = 0;
+    const s64 now_ms = SteadyMilliseconds();
+    if (now_ms - checked_ms < 1'000) {
+        return;
+    }
+    checked_ms = now_ms;
+    const auto broken = [](s32 base) {
+        std::array<u8, 8> head{};
+        for (size_t byte = 0; byte < head.size(); ++byte) {
+            const auto bits = EventFlagBits(base + static_cast<s32>(byte * 8), 8);
+            if (!bits) {
+                return false;
+            }
+            head[byte] = static_cast<u8>(*bits);
+        }
+        return ClassifyAltarRecord(head) == AltarRecordKind::Broken;
+    };
+    bool any = broken(CurrentAltarView);
+    for (s32 altar = 0; altar < RitualAltarCount && !any; ++altar) {
+        any = broken(AltarFlagBase(altar));
+    }
+    if (any) {
+        RepairRitualAltars();
+    }
+}
+
+void ShareRitualAltarRecord(size_t changed) {
+    const Place place = CurrentPlace();
+    const s64 now_ms = SteadyMilliseconds();
+    const AltarShareFrame frame{.playing = place.state == PlaceState::Playing,
+                                .map = place.map,
+                                .since_place_ms = now_ms - place.since_ms,
+                                .since_own_write_ms = now_ms - altar_written_ms.load()};
+    if (!SharesAltarRecord(frame)) {
+        LOG_INFO(Debug,
+                 "Bloodborne team altar: the current altar changed ({} flags) on map {:#x} "
+                 "({}, {} s there, {} s since this game wrote one): no ritual, kept here",
+                 changed, place.map, frame.playing ? "playing" : "not playing",
+                 frame.since_place_ms / 1000, frame.since_own_write_ms / 1000);
+        return;
+    }
+    const auto altar = CurrentRitualAltar();
+    const auto record = altar ? ReadAltarFlags(AltarFlagBase(*altar)) : std::nullopt;
+    if (!record) {
+        LOG_INFO(Debug,
+                 "Bloodborne team altar: the current altar changed ({} flags); its altar "
+                 "is not known",
+                 changed);
+        return;
+    }
+    if (ClassifyAltarRecord(*record) != AltarRecordKind::Dungeon) {
+        LOG_WARNING(Debug,
+                    "Bloodborne team altar: altar {}'s record names no dungeon ({}); not shared",
+                    *altar, RecordName(*record));
+        return;
+    }
+    SendAltarRecord(*altar, *record);
+    LOG_INFO(Debug, "Bloodborne team altar: altar {}'s record ({}) goes to the team whole", *altar,
+             RecordName(*record));
 }
 
 std::optional<s32> CurrentRitualAltar() {
@@ -516,6 +669,7 @@ void ClearLightRequestsThatLitNothing() {
 
 void SetGuestPickupsBeforeMapItems() {
     ApplyTeamWorldOnLoad();
+    RepairRitualAltars();
     ClearLightRequestsThatLitNothing();
     static std::chrono::steady_clock::time_point last{};
     static OncePerTrip trip_load;
@@ -647,6 +801,8 @@ namespace {
 std::mutex guest_world_mutex;
 std::optional<std::map<s32, bool>> guest_world;
 int guest_world_slot = -1;
+// When this game kept each change (KeptChangeYieldsToTeam); none for the file's.
+std::map<s32, s64> guest_world_kept_ms;
 
 std::filesystem::path GuestWorldFile() {
     return Common::FS::GetUserPath(Common::FS::PathType::UserDir) /
@@ -679,6 +835,12 @@ void KeepWorldChanges(const FlagChanges& changes) {
     auto& world = GuestWorldChanges();
     const size_t before = world.size();
     RecordWorldChanges(world, changes);
+    const s64 now_ms = SteadyMilliseconds();
+    for (const auto& flags : {changes.set, changes.cleared}) {
+        for (const s32 flag : flags) {
+            guest_world_kept_ms[flag] = now_ms;
+        }
+    }
     SaveGuestWorldChanges();
     LOG_INFO(Debug, "Bloodborne party: guest's world keeps {} changes ({} new)", world.size(),
              world.size() - before);
@@ -694,7 +856,30 @@ size_t SetGuestWorldChanges(bool keep) {
     auto& world = GuestWorldChanges();
     using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
     size_t set = 0;
+    // A team guest's story steps the team's world has had time to carry are the team's: its world
+    // went in first (ApplyTeamWorldOnLoad), these never go over it.
+    const std::vector<u32> team_blocks = TeamWorldBlocksForGuest();
+    static u32 flags_per_block = 0;
+    if (!team_blocks.empty() && flags_per_block == 0) {
+        flags_per_block = ReadFlagStore().flags_per_block;
+    }
+    const s64 now_ms = SteadyMilliseconds();
+    std::string yielded;
+    size_t yielded_count = 0;
     for (auto it = world.begin(); it != world.end();) {
+        const auto kept = guest_world_kept_ms.find(it->first);
+        if (!team_blocks.empty() && KeptChangeYieldsToTeam(it->first,
+                                                           kept != guest_world_kept_ms.end()
+                                                               ? std::optional<s64>{kept->second}
+                                                               : std::nullopt,
+                                                           now_ms, team_blocks, flags_per_block)) {
+            if (yielded.size() < 300) {
+                yielded += fmt::format(" {}{}", it->second ? "" : "-", it->first);
+            }
+            ++yielded_count;
+            it = keep ? std::next(it) : world.erase(it);
+            continue;
+        }
         reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, it->first,
                                                                              it->second);
         if (EventFlagOn(it->first) == it->second) {
@@ -705,6 +890,12 @@ size_t SetGuestWorldChanges(bool keep) {
         }
     }
     SaveGuestWorldChanges();
+    if (yielded_count > 0) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: {} of the session's story steps left to the team's world "
+                 "(-off):{}",
+                 yielded_count, yielded);
+    }
     return set;
 }
 
@@ -1295,6 +1486,12 @@ void LogFlagChangesInSession(bool sharing) {
             LOG_INFO(Debug, "Bloodborne flags in session: set{} | cleared{}", list(set),
                      list(cleared));
             AddLampsLitInSession(set);
+            // A ritual or a join writes the current altar's view (a load into a dungeon and the
+            // altar's own reload do too: ShareRitualAltarRecord tells them apart).
+            if (std::ranges::any_of(set, IsCurrentAltarFlag) ||
+                std::ranges::any_of(cleared, IsCurrentAltarFlag)) {
+                ShareRitualAltarRecord(set.size() + cleared.size());
+            }
             if (!IsPartyGuestRole()) {
                 for (const s32 flag : set) {
                     WatchLampFlag(flag, current);
@@ -1306,16 +1503,6 @@ void LogFlagChangesInSession(bool sharing) {
                          "Bloodborne party: {} flags changed at once (a load), not kept or "
                          "shared",
                          set.size() + cleared.size());
-                // A ritual or a join writes a whole altar record at once: that is shared.
-                FlagChanges altar;
-                std::ranges::copy_if(set, std::back_inserter(altar.set), IsCurrentAltarFlag);
-                std::ranges::copy_if(cleared, std::back_inserter(altar.cleared),
-                                     IsCurrentAltarFlag);
-                if (!altar.set.empty() || !altar.cleared.empty()) {
-                    LOG_INFO(Debug, "Bloodborne party: an altar record ({} flags) goes to the team",
-                             altar.set.size() + altar.cleared.size());
-                    PostWorldChanges(altar);
-                }
             } else {
                 const FlagChanges changes{std::move(set), std::move(cleared)};
                 if (IsPartyGuestRole()) {
@@ -1415,8 +1602,30 @@ constexpr auto AltarRecordSettle = std::chrono::seconds{3};
 void SetPartyWorldChanges(bool sharing) {
     party_host_role.store(party_controller.has_value() &&
                           party_controller->SearchEffectId() != SmallResonantBellEffect);
+    GiveBackAltarChalices();
     if (sharing) {
         const auto now = std::chrono::steady_clock::now();
+        // A teammate's ritual: its record goes in whole, and the altar loads it.
+        for (const AltarRecordNews& news : TakeAltarRecords()) {
+            const s32 base = AltarFlagBase(news.altar);
+            if (news.altar < 0 || news.altar >= RitualAltarCount ||
+                ClassifyAltarRecord(news.record) != AltarRecordKind::Dungeon) {
+                LOG_WARNING(Debug,
+                            "Bloodborne team altar: {}'s record for altar {} names no dungeon "
+                            "({}); left out",
+                            news.member, news.altar, RecordName(news.record));
+                continue;
+            }
+            if (ReadAltarFlags(base) == news.record) {
+                LOG_INFO(Debug, "Bloodborne team altar: {}'s record for altar {} is this one's",
+                         news.member, news.altar);
+                continue;
+            }
+            WriteAltarFlags(base, news.record);
+            altar_reloads[news.altar] = now + AltarRecordSettle;
+            LOG_INFO(Debug, "Bloodborne team altar: altar {} has {}'s record ({})", news.altar,
+                     news.member, RecordName(news.record));
+        }
         for (auto it = altar_reloads.begin(); it != altar_reloads.end();) {
             if (now >= it->second) {
                 ReloadRitualAltar(it->first);
@@ -1444,7 +1653,6 @@ void SetPartyWorldChanges(bool sharing) {
     using SetFlag = void PS4_SYSV_ABI (*)(u64, s32, bool);
     size_t set = 0;
     for (const auto& [flag, on] : pending) {
-        // An altar this save has no record for reads as all set: its flags are always written.
         if (SharesClearsWithParty(flag) || EventFlagOn(flag) != on) {
             reinterpret_cast<SetFlag>(image_base + PartyGhostSetEventFlagOffset)(0, flag, on);
             ++set;
@@ -1452,13 +1660,6 @@ void SetPartyWorldChanges(bool sharing) {
     }
     LOG_INFO(Debug, "Bloodborne party: set {} of {} shared flags from the party", set,
              pending.size());
-    // An altar record comes in several frames: its altar loads again once it is all there.
-    for (const auto& [flag, on] : pending) {
-        if (SharesClearsWithParty(flag)) {
-            altar_reloads[(flag - 94000000) / 100000] =
-                std::chrono::steady_clock::now() + AltarRecordSettle;
-        }
-    }
     const FlagStore store = ReadFlagStore();
     for (const auto& [flag, on] : pending) {
         if (on) {

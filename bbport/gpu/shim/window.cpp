@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iterator>
 #include <string>
+#include <vector>
 #include <SDL3/SDL.h>
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -70,6 +71,66 @@ SDL_DisplayID ChooseDisplay() {
     return display;
 }
 
+// Kaniel 2026-10-24: the resolutions the menus offer are the display's own: its modes in pixels
+// (each size once) and its desktop size (BbSettings::SetDisplay). Logged when the display changes.
+void TellDisplay(SDL_DisplayID display) {
+    std::vector<BbSettings::OutputSize> modes;
+    int count = 0;
+    if (SDL_DisplayMode** list = SDL_GetFullscreenDisplayModes(display, &count)) {
+        for (int i = 0; i < count; ++i) {
+            const SDL_DisplayMode* m = list[i];
+            const float density = m->pixel_density > 0.0f ? m->pixel_density : 1.0f;
+            modes.push_back({int(m->w * density + 0.5f), int(m->h * density + 0.5f)});
+        }
+        SDL_free(list);
+    }
+    BbSettings::OutputSize desktop{};
+    if (const SDL_DisplayMode* d = SDL_GetDesktopDisplayMode(display)) {
+        const float density = d->pixel_density > 0.0f ? d->pixel_density : 1.0f;
+        desktop = {int(d->w * density + 0.5f), int(d->h * density + 0.5f)};
+    }
+    BbSettings::SetDisplay(modes, desktop);
+    static SDL_DisplayID told = 0;
+    if (told != display) {
+        told = display;
+        std::string sizes;
+        for (const auto& s : BbSettings::OutputChoices()) {
+            sizes += (sizes.empty() ? "" : ", ") + BbOutputSizes::Text(s);
+        }
+        std::printf("Display: desktop %dx%d (%s), resolutions: %s\n", desktop.width, desktop.height,
+                    BbOutputSizes::AspectName(desktop), sizes.c_str());
+    }
+}
+
+// Exclusive fullscreen's display mode for `size` (pixels): that size at the desktop's refresh
+// rate (the nearest rate the display has for it), else the closest mode SDL finds.
+bool ExclusiveMode(SDL_DisplayID display, BbSettings::OutputSize size, SDL_DisplayMode& out) {
+    const SDL_DisplayMode* desktop = SDL_GetDesktopDisplayMode(display);
+    const float refresh = desktop ? desktop->refresh_rate : 0.0f;
+    bool found = false;
+    int count = 0;
+    if (SDL_DisplayMode** list = SDL_GetFullscreenDisplayModes(display, &count)) {
+        for (int i = 0; i < count; ++i) {
+            const SDL_DisplayMode* m = list[i];
+            const float density = m->pixel_density > 0.0f ? m->pixel_density : 1.0f;
+            if (int(m->w * density + 0.5f) != size.width || int(m->h * density + 0.5f) != size.height) {
+                continue;
+            }
+            if (!found || std::abs(m->refresh_rate - refresh) < std::abs(out.refresh_rate - refresh)) {
+                out = *m;
+                found = true;
+            }
+        }
+        SDL_free(list);
+    }
+    if (found) {
+        return true;
+    }
+    const float density = desktop && desktop->pixel_density > 0.0f ? desktop->pixel_density : 1.0f;
+    return SDL_GetClosestFullscreenDisplayMode(display, int(size.width / density + 0.5f),
+                                               int(size.height / density + 0.5f), refresh, true, &out);
+}
+
 } // namespace
 
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
@@ -83,15 +144,17 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     const bool full = BbSettings::Get().window_mode.load() != BbSettings::Windowed;
+    TellDisplay(display);
     // bbport: in a window, an output above the game's 1920x1080 (bbport.ini output_res) used to be
     // rendered at that size and then shrunk into a 1920x1080 window. The window takes the output
-    // size instead, or fills the display's usable area (maximized) when that size does not fit.
+    // size instead (any size and shape, Kaniel 2026-10-24), or fills the display's usable area
+    // (maximized) when that size does not fit.
     s32 want_w = width_, want_h = height_;
     bool maximize = false;
-    const int output = BbSettings::Get().output_res.load();
-    if (!full && output >= 0 && output < int(std::size(BbSettings::OutputWidths))) {
-        const s32 ow = BbSettings::OutputWidths[output], oh = BbSettings::OutputHeights[output];
-        if (ow > want_w && oh > want_h) {
+    const BbSettings::OutputSize output = BbSettings::CurrentOutput();
+    if (!full && output.Valid()) {
+        const s32 ow = output.width, oh = output.height;
+        if (ow != want_w || oh != want_h) {
             want_w = ow;
             want_h = oh;
             SDL_Rect usable{};
@@ -135,6 +198,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
         UNREACHABLE_MSG("Unsupported SDL video driver {}", driver ? driver : "(none)");
     }
     ApplyWindowMode(BbSettings::Get().window_mode.load());
+    applied_output = BbOutputSizes::Pack(BbSettings::CurrentOutput());
     UpdateHdrState();
     int w = 0, h = 0;
     SDL_GetWindowSizeInPixels(window, &w, &h);
@@ -157,11 +221,13 @@ void WindowSDL::ApplyWindowMode(int mode) {
         const SDL_DisplayMode* exclusive = nullptr;
         SDL_DisplayMode closest{};
         if (mode == BbSettings::ExclusiveFullscreen) {
+            // The display switches to the chosen resolution (Kaniel 2026-10-24), at the
+            // desktop's refresh rate.
             const SDL_DisplayID display = SDL_GetDisplayForWindow(window);
-            const SDL_DisplayMode* desktop = SDL_GetDesktopDisplayMode(display);
-            if (desktop && SDL_GetClosestFullscreenDisplayMode(display, desktop->w, desktop->h,
-                                                               desktop->refresh_rate, true, &closest)) {
+            if (ExclusiveMode(display, BbSettings::ChosenOutput(), closest)) {
                 exclusive = &closest;
+                std::printf("Window: exclusive fullscreen at %dx%d %.2f Hz\n", closest.w, closest.h,
+                            double(closest.refresh_rate));
             }
         }
         if (!SDL_SetWindowFullscreenMode(window, exclusive)) {
@@ -173,6 +239,39 @@ void WindowSDL::ApplyWindowMode(int mode) {
     }
     SDL_SyncWindow(window);
     std::printf("Window: %s\n", BbSettings::WindowModeNames[mode]);
+    // Borderless shows the desktop's shape: a chosen output of another shape is refitted (saved,
+    // so the next start's resolution patch has it too).
+    BbSettings::FitChosenOutputToDesktop();
+    applied_output = BbOutputSizes::Pack(BbSettings::CurrentOutput());
+}
+
+// Another output chosen in a menu: a window takes its size (maximized when it does not fit the
+// screen), exclusive fullscreen its display mode. Borderless keeps the desktop.
+void WindowSDL::ApplyOutputSize() {
+    const BbSettings::OutputSize output = BbSettings::CurrentOutput();
+    const u32 packed = BbOutputSizes::Pack(output);
+    if (packed == applied_output) {
+        return;
+    }
+    applied_output = packed;
+    if (applied_window_mode == BbSettings::ExclusiveFullscreen) {
+        ApplyWindowMode(applied_window_mode);
+        return;
+    }
+    if (applied_window_mode != BbSettings::Windowed || !output.Valid()) {
+        return;
+    }
+    SDL_Rect usable{};
+    const bool known = SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &usable);
+    if (!known || output.width > usable.w || output.height > usable.h) {
+        SDL_MaximizeWindow(window);
+    } else {
+        SDL_RestoreWindow(window);
+        SDL_SetWindowSize(window, output.width, output.height);
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED_DISPLAY(SDL_GetDisplayForWindow(window)),
+                              SDL_WINDOWPOS_CENTERED_DISPLAY(SDL_GetDisplayForWindow(window)));
+    }
+    std::printf("Window: sized for the %dx%d output\n", output.width, output.height);
 }
 
 void WindowSDL::UpdateHdrState() {
@@ -411,6 +510,7 @@ bool WindowSDL::PollEvents() {
 #endif
         case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
             UpdateHdrState();
+            TellDisplay(SDL_GetDisplayForWindow(window));
             break;
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -423,6 +523,7 @@ bool WindowSDL::PollEvents() {
     if (const int mode = BbSettings::Get().window_mode.load(); mode != applied_window_mode) {
         ApplyWindowMode(mode);
     }
+    ApplyOutputSize();
     UpdateCursor();
     return is_open;
 }

@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "Resolução, upscaler, nitidez e detalhe dos modelos (bbport)",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "Resolução da cena: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "RCAS após o upscaler: 0 desligado, 10 o mais forte",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "Quadro final: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
  "Frame rate in the top right corner": "Taxa de quadros no canto superior direito",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "Após reiniciar: 0-1 máximo, 2-4 padrão do jogo, 5-7 menor, 8-10 mínimo",
  "Highest": "Máximo",
@@ -383,5 +382,17 @@
  "Team code": "Código da equipe",
  "Invite by name": "Convidar pelo nome",
  "New code": "Novo código",
- "Join by code": "Entrar com código"
+ "Join by code": "Entrar com código",
+ "Auto (the output's)": "Auto (o da saída)",
+ "16:9 (bars)": "16:9 (barras)",
+ "Aspect ratio": "Proporção",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: uma tela mais larga (21:9, 32:9) mostra mais dos lados, uma mais alta (16:10, 4:3) mais em cima e embaixo; a interface vai para as bordas da tela. 16:9: a imagem do jogo com barras pretas. Aplica-se após reiniciar o jogo.",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: uma tela mais larga (21:9, 32:9) mostra mais dos lados, uma mais alta (16:10, 4:3) mais em cima e embaixo; a interface vai para as bordas da tela. 16:9: a imagem do jogo com barras pretas. Muda a partir do próximo quadro.",
+ "Final frame": "Imagem final",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: uma tela mais larga ou mais alta mostra mais do mundo. 16:9: a imagem do jogo, barras pretas",
+ "Team pings": "Marcações de equipe",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Marque um local para sua equipe por 20 segundos: toque duas vezes no touchpad ou pressione a tecla de marcação onde você mira (no inimigo travado), {Square} no mapa. Sua equipe vê no mundo, na bússola e no mapa.",
+ "Ping key": "Tecla de marcação",
+ "The keyboard key that pings where you aim.": "A tecla que marca onde você mira.",
+ "Ping": "Marcar"
 }

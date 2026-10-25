@@ -43,10 +43,11 @@ and the item flags) as the host's world reports reach it, between loads (`TeamSt
 | 12105030-12105034 | Per player | none | a Dream headstone's "a lamp of mine is lit" (its talk reads it): each game takes it from its own lamps (`DreamHeadstones`), both when the other player's value arrives and once a second, since the game's own set arrives only over the flag message in a session |
 | 12105040-12105041 | Per player | none | the shop messengers in the bath: 12105041 is on while this player's shop menu is open, and event 12105040 (each game's own since the event patch) rises and sinks them by it. In step, another player's end of the event restarted it, so they rose and played their tune again and again (Kaniel 2026-10-21) |
 | 12204000-12204008 | Shared | carried home, host's map value | the Hemwick woods' mist ambush (m22_00 event 12204000, a slot per enemy): its slot's done flag. The host's copy also rises when it turns on, so an enemy a guest woke rises in the host's game too (Kaniel 2026-10-20) |
-| 21 boss fog "host entered" flags (12414700 Gascoigne, ...) | Shared | | a guest's fog event sets it to start the boss; holds for one map visit |
+| 21 boss fog "host entered" flags (12414700 Gascoigne, ...) | Shared | reset on load | a guest's fog event sets it to start the boss; holds for one map visit |
 | the flag after each of those | Session | | "a phantom entered" (local music) |
 | the maps' door flags (`DoorFlags`, 390: each object act's flag, its event's "done" flag, the flags it sets on; listed by `tools/re/door_flags.py`) | Shared | carried home, host's map value | the game only syncs an object act (a door, gate, lever, kicked ladder) to players on the same map: a door a teammate opened elsewhere stayed shut (Kaniel 2026-10-19) |
 | a lamp's active flag and the one after (10007810 + map x 10000 + lamp x 20, maps 210-399) | Shared | carried home, host's map value | the game does not sync a lamp lit by another player |
+| each map's 4xxx and 5xxx flags (1AAB4xxx, 1AAB5xxx) | Host | reset on load | a boss fight's progress and other events of one visit: every load of the map puts them off, so they are no world flags (the team's world set Darkbeast Paarl's fight going again after a wipe, Kaniel's playtest 2026-10-22) |
 | 12000000-13999999 (the rest) | Host | carried home, host's map value | the maps' flags: switches, bosses, enemies |
 | 50000000-52899999, 53000000-53999999 | Host | the guest's own pickup list | map item pickups (kept in their own file, not carried with the rest; never in a team's world: each character keeps its own, as it keeps the items) |
 | 52900000-52999999 | Host | carried home | chalice dungeon item flags: not pickups |
@@ -55,7 +56,8 @@ and the item flags) as the host's world reports reach it, between loads (`TeamSt
 | 72102000-72103999 | Session | headstone trip | a Dream headstone's "travel to <lamp>": a request, not progress |
 | 7MMM02LL, map codes 211-399, lamps 0-19 | Per player | carried home | a lamp's "light it" request (common event 7100 lights the lamp once, and ends at once on a load with it on): each player's own; the lit lamp reaches the party by its active flags. One set while the Witch of Hemwick lived broke her lamp for the whole party (2026-10-20); a load of the lamp's map clears a request whose lamp is not lit |
 | 7MMM01LL, map codes 211-399 | Session | lamp trip | a lamp's "travel to the Hunter's Dream": a request, not progress |
-| 94k00000-94k05999, altars k 0-9 | Shared | carried home; clears shared too | a ritual altar's dungeon record: a ritual or a join at one member's altar puts the dungeon on every member's (team altars) |
+| 92900000-92905999 | Session | | the current altar: the game's view of the altar the player talks to and of the dungeon a chalice map loads, each game's own (shared as diffs it merged the records into ones naming no dungeon, playtest 2026-10-24) |
+| 94k00000-94k05999, altars k 0-9 | Host | carried home | a ritual altar's dungeon record: a ritual or a join at one member's altar puts the dungeon on every member's (team altars), the record whole in an AltarRecord message, never flag by flag; repaired as soon as it names no dungeon (bloodborne_altar.h) |
 
 Rows are looked up in order, most specific first: a flag takes the first row that holds it. Two
 rows only overlap when the later one holds the earlier one whole (the maps' flags hold the boss

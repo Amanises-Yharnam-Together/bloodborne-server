@@ -41,6 +41,11 @@ Enemies that rise out of the mist as a player comes near (AMBUSH_EVENTS: the woo
 into Hemwick and four more) woke only for an alive player in its own world, the host; a guest's
 approach wakes them too.
 
+One-time enemies (keep_one_time_drop_checks: the Wandering Nightmares) leave for good once their
+event ends, which waits for an alive player with the enemy's drop flag; a client skipped the flag
+check, and a party guest reads alive, so the guest's game ended them all with no kill. The skip no
+longer matches.
+
 Events are kept in step between the players of a session unless they start with 2000:2 (network
 sync) 0, as the first visit does. The Hunter's Dream messengers' gift events (m21_00
 12101020-12101028) get that instruction, so one player's gift pick no longer finishes the other's
@@ -259,6 +264,59 @@ def patch_host_door_effect(emevd: bytes, edits: list | None = None,
                   data[at + 2] in alive_groups):
                 data[at] = 0
                 note(edits, event, k, bank, ident, 'host door effect for a phantom too')
+                patched += 1
+    return bytes(data), patched
+
+
+# A one-time enemy (the Wandering Nightmares: m24_00 12400200, m23 12300220, m28 12800500 and
+# the like, a slot per enemy with its drop's flag as a parameter) goes for good once its event ends:
+# the event's own slot flag then switches it off (2004:5) or hides it (2004:29) at every load. The
+# event ends when an alive player (4:3 10000 0) has the drop's flag on (3:0), but a client skips
+# that flag check (1003:5 lines 1, state 1). A phantom never reads alive, a party guest does (after
+# a trip it is type 0), so the guest's game ended every one of them on the map with no kill, and
+# the session's sync and the team's world took them off for everybody (rig nightmare-flags
+# 2026-10-24: all six of Cathedral Ward's slot flags on, no drop flag, in both games; Fran's and
+# Kaniel's report). The skip never matches: the drop's flag counts for every player.
+ONE_TIME_ENEMY_HIDES = {(2004, 5), (2004, 29)}
+GOTO_IF_EVENT_FLAG = (1003, 101)
+IF_EVENT_FLAG = (3, 0)
+OWN_SLOT_FLAG = 2  # 1003:101's flag type: the event's id plus its slot
+
+
+def keep_one_time_drop_checks(emevd: bytes, edits: list | None = None) -> tuple[bytes, int]:
+    data = bytearray(emevd)
+    fields = struct.unpack_from('<16q', data, 16)
+    event_count, event_offset, instruction_offset, args_offset = (fields[0], fields[1], fields[3],
+                                                                  fields[13])
+    patched = 0
+    for index in range(event_count):
+        event, count, first, _, _, _, _ = struct.unpack_from('<qqqqqii', data,
+                                                             event_offset + index * 48)
+        records = [struct.unpack_from('<iiqqq', data, instruction_offset + first + k * 32)
+                   for k in range(count)]
+        if count < 5:
+            continue
+        bank, ident, length, offset, _ = records[0]
+        at = args_offset + offset
+        if ((bank, ident) != GOTO_IF_EVENT_FLAG or length < 4 or data[at + 1] != 0 or
+                data[at + 2] != OWN_SLOT_FLAG or (records[1][0], records[1][1])
+                not in ONE_TIME_ENEMY_HIDES):
+            continue
+        for k in range(1, count - 1):
+            bank, ident, length, offset, _ = records[k]
+            before, after = records[k - 1], records[k + 1]
+            at = args_offset + offset
+            if (bank, ident) != SKIP_IF_MULTIPLAYER_STATE or length < 2 or data[at:at + 2] != \
+                    bytes([1, 1]):
+                continue
+            alive = ((before[0], before[1]) == (4, 3) and before[2] >= 9 and
+                     struct.unpack_from('<i', data, args_offset + before[3] + 4)[0] ==
+                     LOCAL_PLAYER and data[args_offset + before[3] + 8] == ALIVE)
+            drop = (after[0], after[1]) == IF_EVENT_FLAG and after[2] >= 8
+            if (alive and drop and data[args_offset + before[3]] ==
+                    data[args_offset + after[3]]):
+                data[at + 1] = NEVER
+                note(edits, event, k, bank, ident, "one-time enemy's drop check for a client too")
                 patched += 1
     return bytes(data), patched
 
@@ -844,12 +902,13 @@ def patch_file(name: str, original: bytes) -> tuple[bytes | None, list, dict]:
     counts = {'boss event checks': 0, 'boss fog checks': 0, 'insight event checks': 0,
               'client event ends': 0, 'local events': 0, 'chalice wall checks': 0,
               'item pickup checks': 0, 'host door effects': 0, 'ambush checks': 0,
-              'chalice reward checks': 0}
+              'chalice reward checks': 0, 'one-time enemy checks': 0}
     try:
         if name.startswith('m'):
             emevd, counts['boss event checks'] = patch_events(emevd, edits)
             emevd, counts['boss fog checks'] = open_boss_fog_for_guests(emevd, edits)
             emevd, counts['insight event checks'] = let_guests_earn_insight(emevd, edits)
+            emevd, counts['one-time enemy checks'] = keep_one_time_drop_checks(emevd, edits)
         if name in CLIENT_EVENTS:
             emevd, counts['client event ends'] = patch_client_events(emevd, CLIENT_EVENTS[name],
                                                                      edits)
