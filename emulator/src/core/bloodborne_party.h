@@ -3342,6 +3342,19 @@ private:
     std::optional<s64> up_since;
 };
 
+// The lethal hits IsNoDead's hook caught (its running count), as party death takes them: a catch
+// puts a standing player down. The hook also catches the checks on the body while a real death
+// plays out (0 HP, Kaniel 2026-10-25: up at the lamp after giving up, then straight down), and
+// those are dropped, not kept for the first tick up again.
+class LethalCatches {
+public:
+    // The hook's count now and this player's state: true when a new catch puts it down.
+    bool Take(u32 count, Vital vital);
+
+private:
+    u32 seen = 0;
+};
+
 // Holding a button for `hold_ms` (giving up): fires once per hold.
 class HoldToConfirm {
 public:

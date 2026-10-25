@@ -2969,6 +2969,32 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"reset=true"]},
         "timeout": 600,
     },
+    "give-up-by-enemy": {
+        "about": "party death: the guest goes down next to an enemy and gives up; it wakes at its "
+                 "lamp standing, not downed (Kaniel 2026-10-25: the hook's catches on the dying "
+                 "body waited for the first tick up and put it straight down at the lamp)",
+        "settings": PARTY_DEATH,
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital down 150",
+                     "wait-member-vital dead 30", "wait-member-vital up 90", "wait 15",
+                     "snapshot", "expect-session 2"],
+            # Full HP: at 1 HP the owner-run enemy never strikes (suites.py, rig 2026-10-15).
+            "guest": [START, "wait-session 2 300", "wait 15", f"approach {ENEMY}",
+                      "wait-vital down 150", "wait 2", "press circle 3600", "wait-vital dead 15",
+                      "wait-vital up 90", "wait 10", "shot woke", "snapshot",
+                      "expect-hp self > 1", "expect-session 2"],
+        },
+        "expect": {
+            "guest": [r"party death: down \d+ on map 0x18010000",
+                      r"party death: giving up ends down \d+; dies \(reset=false",
+                      r"party death: up again after a real death"],
+        },
+        "forbid": {"host": SESSION_HOLDS,
+                   "guest": SESSION_HOLDS + [
+                       r"party death: up again after a real death(?:\n.*){0,400}?\n"
+                       r".*party death: down \d+"]},
+        "timeout": 300,
+    },
     "wipe": {
         "about": "party death: the guest goes down, then the host falls with nobody left "
                  "standing; both die (the guest by the server's wipe) and wake at their lamps "
