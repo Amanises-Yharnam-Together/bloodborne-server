@@ -53,6 +53,7 @@ RECENT = {
     "build-check-same": "10-24 games on the same settings still link (#381)",
     "altar-record-capture": "10-24 the chalice dungeon crash: whole altar records (#391)",
     "chalice-enter-broken": "10-24 entering a dungeon with a broken altar record crashed (#391)",
+    "guest-death-target": "10-25 Logarius went for the host only: a dead guest's mark stayed",
 }
 
 # Single scenarios that do not fit the budget (their own boot plus fixed waits over 30 s, or

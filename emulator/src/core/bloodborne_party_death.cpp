@@ -2426,6 +2426,43 @@ void LogEnemyTargets() {
     }
 }
 
+void ClearStaleDeathMarks() {
+    static StaleDeathMarks marks;
+    if (!InPartyHere()) {
+        marks.Tick({}, SteadyMilliseconds());
+        return;
+    }
+    const std::vector<OtherPlayer> players = OtherPlayers();
+    const std::vector<u32> invaders = InvaderHandles();
+    std::vector<StaleDeathMarks::Body> bodies;
+    std::vector<u64> infos;
+    for (const OtherPlayer& other : players) {
+        const u64 control = ReadValue<u64>(other.character, 0x18);
+        const u64 info = control >= 0x10000 ? ReadValue<u64>(control, 0x30) : 0;
+        if (info < 0x10000 || !HasMemoryAccess(info + 0x18, 1, MemoryProt::CpuWrite)) {
+            continue;
+        }
+        const u32 handle = ReadValue<u32>(other.character, 0x08);
+        bodies.push_back(StaleDeathMarks::Body{
+            .handle = handle,
+            .marked = (ReadValue<u8>(info, 0x18) & 1) != 0,
+            .dead = (other.dead_flags & 0x05) != 0,
+            .downed = ReadValue<s32>(other.character, CharacterTeamOffset) == DownedTeams::Hostile,
+            .invader = std::ranges::contains(invaders, handle),
+        });
+        infos.push_back(info);
+    }
+    for (const u32 handle : marks.Tick(bodies, SteadyMilliseconds())) {
+        const auto body = std::ranges::find(bodies, handle, &StaleDeathMarks::Body::handle);
+        const u64 info = infos[static_cast<size_t>(body - bodies.begin())];
+        WriteValue(info, 0x18, static_cast<u8>(ReadValue<u8>(info, 0x18) & ~u8{1}));
+        LOG_INFO(Debug,
+                 "Bloodborne party: body {:#x} is up but kept its death mark; cleared, the enemies "
+                 "take it as a target again (map {:#x})",
+                 handle, CurrentPlace().map);
+    }
+}
+
 } // namespace Coop
 
 } // namespace Core::Bloodborne

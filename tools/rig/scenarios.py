@@ -1363,6 +1363,24 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 600,
     },
+    "guest-death-target": {
+        "about": "the guest dies for real (goes down and gives up) and gets up in the host's world; "
+                 "its body on the host's game loses the death mark, so the enemies there take it "
+                 "as a target again (Kaniel 2026-10-25: Logarius went for the host only)",
+        "settings": PARTY_DEATH,
+        "roles": {
+            # The mark goes HoldMs (3 s) after the guest's body is up again on the host's game.
+            "host": [START, "godmode", "wait-session 2 300", "wait-member-vital dead 180",
+                     "wait-member-vital up 60", "wait 10", "snapshot", "expect-session 2"],
+            "guest": [START, "wait-session 2 300", "wait 15", *GIVE_UP, "wait-vital up 60",
+                      "wait 15", "snapshot", "expect-session 2"],
+        },
+        "expect": {"host": [r"body 0x[0-9a-f]+ is up but kept its death mark; cleared"],
+                   "guest": [r"party death: giving up ends down \d+; dies \(reset=false",
+                             r"party guest died; revived"]},
+        "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+        "timeout": 300,
+    },
     "host-crash": {
         "about": "the host's game crashes (the GPU's device lost does that in play); the guest "
                  "stays where it is, and they join again once the host is back",

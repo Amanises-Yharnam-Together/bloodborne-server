@@ -530,6 +530,9 @@ u64 EnemyFrameSerial();
 void LogNearbyEnemyControl();
 // Which other players the enemies' AI can take as targets, and whom the enemies near hold.
 void LogEnemyTargets();
+// The death mark a teammate's body here kept after it got up again on its own game, cleared so
+// the enemies take it as a target again (StaleDeathMarks).
+void ClearStaleDeathMarks();
 void LogJoinTasksOnChange();
 void ReconcileMemberPresence();
 // The object a character's physics ([[+0x3B0]+0x68]) holds as the one it stands on (read at
