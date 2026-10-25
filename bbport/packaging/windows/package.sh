@@ -131,6 +131,8 @@ cp -r scripts patches "$dest/"
 mkdir -p "$dest/tools" && cp tools/legacy-cpu-plan.json "$dest/tools/"
 cp run.py LICENSE README.md packaging/windows/README-Windows.txt "$dest/"
 if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; fi
+# Shader packs (scripts/shader_pack.py): a first start with a matching graphics card preloads them.
+if [[ -d shader_packs ]]; then cp -r shader_packs "$dest/"; fi
 # DLSS (NVIDIA RTX): the MSVC-built bridge and NVIDIA's runtime, next to bb-probe.exe
 # (packaging/windows/build_dlss.sh). Without them the DLSS option stays unavailable.
 if [[ -f out/bbport_dlss.dll && -f out/nvngx_dlss.dll ]]; then

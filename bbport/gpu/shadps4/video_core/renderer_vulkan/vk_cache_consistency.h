@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstring>
 #include <span>
+#include <string_view>
 #include "common/types.h"
 #include "shader_recompiler/backend/bindings.h"
 
@@ -57,6 +58,53 @@ inline bool HeaderMatches(std::span<const u8> blob, std::span<const u32> version
     const size_t header = versions.size_bytes();
     return blob.size() == header + profile_size &&
            std::memcmp(blob.data(), versions.data(), header) == 0;
+}
+
+/// A shader pack (shader_packs/*.zip: a cache built by us for one GPU profile, see
+/// tools/shader_pack.py) may hold the profile blob and the cache's own blobs only, under the names
+/// the cache gives them, with no folder: "profile.bin", "<hash>.meta", "<hash>_<index>.spv",
+/// "g_<hash>.key" and "c_<hash>.key", <hash> being 0x and 16 lower-case hex digits. Anything else
+/// (the driver's cache, a half-written .tmp, a path) is not installed.
+inline bool IsPackEntryName(std::string_view name) {
+    if (name == "profile.bin") {
+        return true;
+    }
+    const auto hash_at = [&](size_t pos) {
+        if (name.size() < pos + 18 || name[pos] != '0' || name[pos + 1] != 'x') {
+            return false;
+        }
+        for (size_t i = pos + 2; i < pos + 18; ++i) {
+            const char c = name[i];
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (name.ends_with(".key")) {
+        return (name.starts_with("g_") || name.starts_with("c_")) && name.size() == 2 + 18 + 4 &&
+               hash_at(2);
+    }
+    if (name.ends_with(".meta")) {
+        return name.size() == 18 + 5 && hash_at(0);
+    }
+    if (name.ends_with(".spv")) {
+        // <hash>_<index>.spv, the index a decimal of 1 to 4 digits.
+        if (!hash_at(0) || name.size() < 18 + 1 + 1 + 4 || name[18] != '_') {
+            return false;
+        }
+        const auto index = name.substr(19, name.size() - 19 - 4);
+        if (index.size() > 4) {
+            return false;
+        }
+        for (const char c : index) {
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 } // namespace Vulkan::CacheCheck

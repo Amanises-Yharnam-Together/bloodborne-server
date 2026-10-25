@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <functional>
+#include <span>
 #include <cstdio>
 #include <string>
 #include "common/serdes.h"
@@ -400,6 +405,52 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage,
     return true;
 }
 
+namespace {
+
+/// bbport: where the port's shader packs are (BB_SHADER_PACKS, "0" for none; default shader_packs
+/// in the working directory, the port's folder, like fsr4_shaders).
+std::filesystem::path ShaderPackDir() {
+    const char* env = std::getenv("BB_SHADER_PACKS");
+    if (env && env[0] == '0' && env[1] == 0) {
+        return {};
+    }
+    return env && env[0] ? std::filesystem::path{env} : std::filesystem::path{"shader_packs"};
+}
+
+/// The first pack in the folder that is for this profile becomes the cache; packs for other
+/// GPUs or builds are left out by InstallPack.
+bool InstallShaderPack(const std::function<bool(std::span<const u8>)>& fits) {
+    const auto dir = ShaderPackDir();
+    std::error_code ec;
+    if (dir.empty() || !std::filesystem::is_directory(dir, ec)) {
+        return false;
+    }
+    std::vector<std::filesystem::path> packs;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (entry.path().extension() == ".zip" && entry.is_regular_file(ec)) {
+            packs.push_back(entry.path());
+        }
+    }
+    std::ranges::sort(packs);
+    for (const auto& pack : packs) {
+        const auto start = std::chrono::steady_clock::now();
+        if (const u32 blobs = Storage::DataBase::Instance().InstallPack(pack, fits)) {
+            LOG_INFO(Render, "Shader pack {} installed ({} blobs)", pack.filename().string(), blobs);
+            std::printf("GPU: shader pack %s installed (%u blobs) in %lld ms\n",
+                        pack.filename().string().c_str(), blobs,
+                        static_cast<long long>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - start)
+                                .count()));
+            return true;
+        }
+    }
+    LOG_INFO(Render, "No shader pack for this GPU among {} in {}", packs.size(), dir.string());
+    return false;
+}
+
+} // namespace
+
 void PipelineCache::WarmUp() {
     if (!EmulatorSettings.IsPipelineCacheEnabled()) {
         return;
@@ -423,10 +474,31 @@ void PipelineCache::WarmUp() {
         Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
                                            std::move(current));
     };
+    // A profile blob of this build and GPU (the profile compared field by field: its padding is
+    // whatever the writer's memory held).
+    const auto fits = [&](std::span<const u8> blob) {
+        if (!CacheCheck::HeaderMatches(blob, cache_versions, sizeof(Shader::Profile))) {
+            return false;
+        }
+        Shader::Profile stored{};
+        std::memcpy(&stored, blob.data() + header_size, sizeof(stored));
+        return stored == profile;
+    };
 
     // Check if cache is compatible
     std::vector<u8> profile_data{};
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
+
+    // bbport: a cache that would start empty (none yet, another build or GPU, no pipeline in it)
+    // starts from a shader pack of ours for this profile when the port ships one.
+    if (!fits(profile_data) ||
+        !Storage::DataBase::Instance().HasBlobs(Storage::BlobType::PipelineKey)) {
+        if (InstallShaderPack(fits)) {
+            profile_data.clear();
+            Storage::DataBase::Instance().Load(Storage::BlobType::ShaderProfile, "profile",
+                                               profile_data);
+        }
+    }
     if (profile_data.empty()) {
         // Blobs without a profile have unknown origin.
         Storage::DataBase::Instance().Clear();

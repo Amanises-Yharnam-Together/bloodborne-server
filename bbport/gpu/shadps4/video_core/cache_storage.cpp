@@ -8,11 +8,13 @@
 #include "core/emulator_settings.h"
 
 #include "video_core/cache_storage.h"
+#include "video_core/renderer_vulkan/vk_cache_consistency.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 
 #include <miniz.h>
 
+#include <array>
 #include <condition_variable>
 #include <functional>
 #include <future>
@@ -324,6 +326,115 @@ void DataBase::Clear() {
         LOG_WARNING(Render, "Pipeline cache cleared ({} files): it is rebuilt for this build",
                     removed);
     }
+}
+
+bool DataBase::HasBlobs(BlobType type) const {
+    if (!opened || EmulatorSettings.IsPipelineCacheArchived()) {
+        return false;
+    }
+    const auto ext = "." + GetBlobFileExtension(type);
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(cache_path, ec)) {
+        if (entry.path().extension().string() == ext && entry.is_regular_file(ec)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+namespace {
+
+/// One blob written under a temporary name and renamed into place, as WriteVector does.
+bool WriteFileAtomic(const std::filesystem::path& path, std::span<const u8> data) {
+    using namespace Common::FS;
+    auto temp = path;
+    temp += ".tmp";
+    bool written = false;
+    {
+        const auto file = IOFile{temp, FileAccessMode::Create};
+        written = file.IsOpen() && file.WriteRaw<u8>(data.data(), data.size()) == data.size();
+    }
+    std::error_code ec;
+    if (written) {
+        std::filesystem::rename(temp, path, ec);
+    }
+    if (!written || ec) {
+        std::filesystem::remove(temp, ec);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+u32 DataBase::InstallPack(const std::filesystem::path& pack,
+                          const std::function<bool(std::span<const u8> profile)>& matches) {
+    if (!opened || EmulatorSettings.IsPipelineCacheArchived()) {
+        return 0;
+    }
+    mz_zip_archive zip{};
+    mz_zip_zero_struct(&zip);
+    if (!mz_zip_reader_init_file(&zip, pack.string().c_str(), 0)) {
+        LOG_WARNING(Render, "Shader pack {} is not a zip", pack.string());
+        return 0;
+    }
+    const auto extract = [&](int index, std::vector<u8>& data) {
+        mz_zip_archive_file_stat stat{};
+        if (!mz_zip_reader_file_stat(&zip, index, &stat) || stat.m_is_directory ||
+            stat.m_uncomp_size > (u64{256} << 20)) {
+            return false;
+        }
+        data.resize(stat.m_uncomp_size);
+        return mz_zip_reader_extract_to_mem(&zip, index, data.data(), data.size(), 0) != 0;
+    };
+
+    // The profile first: a pack for another GPU, setting or build is left alone.
+    std::vector<u8> pack_profile;
+    const int profile_index = mz_zip_reader_locate_file(&zip, "profile.bin", nullptr, 0);
+    if (profile_index < 0 || !extract(profile_index, pack_profile) ||
+        !matches(pack_profile)) {
+        mz_zip_reader_end(&zip);
+        return 0;
+    }
+
+    Clear();
+    u32 written = 0;
+    u32 skipped = 0;
+    bool damaged = false;
+    std::vector<u8> data;
+    const auto num_files = static_cast<int>(mz_zip_reader_get_num_files(&zip));
+    for (int index = 0; index < num_files && !damaged; ++index) {
+        std::array<char, MZ_ZIP_MAX_ARCHIVE_FILENAME_SIZE> file_name{};
+        mz_zip_reader_get_filename(&zip, index, file_name.data(), file_name.size());
+        const std::string name{file_name.data()};
+        if (name == "profile.bin" || !Vulkan::CacheCheck::IsPackEntryName(name)) {
+            skipped += name == "profile.bin" ? 0 : 1;
+            continue;
+        }
+        if (!extract(index, data) || !WriteFileAtomic(cache_path / name, data)) {
+            damaged = true;
+            break;
+        }
+        ++written;
+    }
+    mz_zip_reader_end(&zip);
+    if (damaged) {
+        // Half a pack is not a cache of one generation: start empty instead.
+        LOG_WARNING(Render, "Shader pack {} could not be installed: the cache starts empty",
+                    pack.string());
+        Clear();
+        return 0;
+    }
+    // The profile last: a pack cut short by a crash reads as no cache (it is rebuilt).
+    if (!WriteFileAtomic(cache_path / "profile.bin", pack_profile)) {
+        Clear();
+        return 0;
+    }
+    if (skipped) {
+        LOG_WARNING(Render, "Shader pack {}: {} entries that are no cache blobs were left out",
+                    pack.string(), skipped);
+    }
+    return written + 1;
 }
 
 std::filesystem::path DataBase::DriverCachePath() const {
