@@ -1573,6 +1573,25 @@ SCENARIOS = {
         "expect": {"guest": [r"party trip: arrived map=0x18010000"]},
         "timeout": 300,
     },
+    # Kaniel's playtest 2026-10-24: krolebord teleported to the Grand Cathedral where Lisara (a guest)
+    # ran the map, and saw Eileen there until the host came. Each guest without the host on its map
+    # switches off what its story hid, the one following the other guest's game too. Here both
+    # guests come back from the Dream to the clinic, the host stays in the Dream.
+    "dog-alone3": {
+        "about": "the clinic's dog stays unseen for both guests that come back to it without the "
+                 "host, the one that runs the map and the one that follows it",
+        "roles": {
+            "host": [START, "wait-session 3 300", "wait 10", f"travel {HUNTERS_DREAM}", "wait 30",
+                     "wait 30", "wait 30", "done"],
+            "guest": [START, "wait-session 3 300", "wait 15", f"travel {HUNTERS_DREAM}",
+                      "wait 15", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15", "census 60",
+                      f"expect-disabled {CLINIC_DOG} 1", "wait 20", "done"],
+            "guest2": [START, "wait-session 3 300", "wait 15", f"travel {HUNTERS_DREAM}",
+                       "wait 18", f"travel {CENTRAL_YHARNAM_LAMP}", "wait 15", "census 60",
+                       f"expect-disabled {CLINIC_DOG} 1", "wait 20", "done"],
+        },
+        "timeout": 300,
+    },
     # Kaniel's test 2026-10-23: a guest alone in Cathedral Ward killed the hag and opened its door;
     # the host who came later found her alive and the door shut. A lone guest's game runs its map's
     # story; its changes to the map's flags go to the team (LoneGuestFlagsToShare). Here the host
