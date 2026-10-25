@@ -1275,6 +1275,16 @@ void GiveDueNpcGifts(std::chrono::steady_clock::time_point now) {
             LOG_ERROR(Debug, "Bloodborne party: no item man for NPC gift item lot {}", gift.lot);
             continue;
         }
+        // The lot gives nothing while its flag is on: the host's, from the team world (Valtr's
+        // rune, Kaniel's playtest 2026-10-25), is not this guest's.
+        const s32 lot_flag = ItemLotFlag(gift.lot);
+        if (ClearsNpcGiftLotFlag(lot_flag, lot_flag > 0 && EventFlagOn(lot_flag))) {
+            set_flag(0, lot_flag, false);
+            LOG_INFO(Debug,
+                     "Bloodborne party: NPC gift item lot {}: its flag {} was the host's; cleared "
+                     "for the guest's own",
+                     gift.lot, lot_flag);
+        }
         giving_deferred_item_lot = true;
         reinterpret_cast<AwardItemLot>(image_base + AwardItemLotOffset)(item_man, gift.lot, 0);
         giving_deferred_item_lot = false;

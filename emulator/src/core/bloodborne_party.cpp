@@ -1038,6 +1038,21 @@ std::optional<bool> GestureFlagFix(bool party_configured, bool flag_on, bool lea
     return false;
 }
 
+std::optional<bool> GiftTalkFlagFix(bool party_configured, bool flag_on, bool holds) {
+    if (!party_configured || !flag_on || holds) {
+        return std::nullopt;
+    }
+    return false;
+}
+
+bool ClearsNpcGiftLotFlag(s32 lot_flag, bool flag_on) {
+    if (lot_flag <= 0 || !flag_on) {
+        return false;
+    }
+    const FlagRule rule = RuleFor(lot_flag);
+    return rule.owner == FlagOwner::Host && !rule.Has(FlagMapPickup);
+}
+
 std::optional<GestureSlot> DecodeGestureSlot(u32 entry) {
     // 0x02042B01: above 0xFFFEFFFF, or 0xFFFE / 0xFFFF in the low half, is no gesture.
     if (entry > 0xFFFEFFFF || (entry & 0xFFFE) == 0xFFFE) {

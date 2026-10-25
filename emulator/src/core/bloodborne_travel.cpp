@@ -1715,6 +1715,30 @@ void KeepGestureFlagsOwn() {
     }
 }
 
+// See GiftTalkFlagFix: every second, a Tonsil Stone giver's first-talk flag goes off while this
+// player holds no Tonsil Stone, so the giver's talk gives this player its own (a save that took
+// the host's flag from a team world).
+void KeepGiftTalkFlagsOwn() {
+    static s64 checked_ms = 0;
+    const s64 now_ms = SteadyMilliseconds();
+    if (!party_controller || now_ms - checked_ms < 1'000 || GetLocalPlayer() < 0x10000 ||
+        !PlayerItemsReadable()) {
+        return;
+    }
+    checked_ms = now_ms;
+    for (const GiftTalkFlag& talk : GiftTalkFlags) {
+        const bool holds = TradeHeld({BloodborneCoop::TradeItemKind::Goods, talk.goods, 0}) > 0;
+        const auto fix = GiftTalkFlagFix(true, EventFlagOn(talk.flag), holds);
+        if (!fix) {
+            continue;
+        }
+        reinterpret_cast<bool PS4_SYSV_ABI (*)(u64, s32, bool)>(
+            image_base + PartyGhostSetEventFlagOffset)(0, talk.flag, *fix);
+        LOG_INFO(Debug, "Bloodborne party: gift talk flag {} cleared: this player has no goods {}",
+                 talk.flag, talk.goods);
+    }
+}
+
 // See OwnedWeaponFlagFix: every second in a loaded world, an owned-weapon flag comes on once this
 // player holds the weapon; once per save slot (a file marks it done), those of weapons it does not
 // hold go off, so the Bath shop sells this character's own weapons only. 5500-5521 go off at any
@@ -1843,6 +1867,7 @@ void TickPlayersOnThisMap() {
     GiveBackPhantomKeyItems();
     KeepHeldItemFlagsOwn();
     KeepGestureFlagsOwn();
+    KeepGiftTalkFlagsOwn();
     KeepOwnedWeaponFlagsOwn();
     KeepHeadstoneFlagsOwn();
     static RecreateAfterJoin recreate_after_join;

@@ -852,6 +852,15 @@ std::optional<bool> HeldItemFlagFix(bool party_configured, bool flag_on, bool ho
 // gesture (a save that took the host's value from a team world never got it from the NPC's talk);
 // nothing else (a learned gesture's flag stays off: another talk may give it by its own flag).
 std::optional<bool> GestureFlagFix(bool party_configured, bool flag_on, bool learned);
+// A Tonsil Stone giver's first-talk flag (GiftTalkFlags) in a party goes off while this player
+// holds no Tonsil Stone (a save that took the host's value from a team world got the "talked
+// before" line and never the stone); nothing else.
+std::optional<bool> GiftTalkFlagFix(bool party_configured, bool flag_on, bool holds);
+// Whether a guest's own NPC gift clears its item lot's flag (ItemLotParam getItemFlagId, its
+// "taken") before the lot is given: while that flag is on as the host's world (Valtr's rune lot
+// 43120 by 6676: the host's came over from the team world and the lot gave the guest nothing).
+// A flag of the guest's own (a map pickup, a per-player flag) stays.
+bool ClearsNpcGiftLotFlag(s32 lot_flag, bool flag_on);
 // A slot of the player's gesture list (PlayerGameData +0x5B8, 30 u32 at +0x10), as talk command
 // 66 reads it: bit 0 learned, bits 1-15 the gesture's row in the game's table (0x014EC980,
 // gesture + 1); none for an empty slot.
