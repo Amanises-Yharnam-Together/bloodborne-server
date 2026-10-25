@@ -4525,3 +4525,21 @@ SCENARIOS["aspect-hud-16x9"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 300,
 }
+
+# Audit 2026-10-25 (Kaniel: "everyone is moved but only the host sees the cutscene"): Cainhurst's
+# arrival cutscene (m25_00 event 12500000, cutscene 25000000) ended for a client before it
+# played: the host's cutscene player went Init, Prologue, Update, Epilog, the guest's stayed at
+# Init. Its own flag off, both arrive and both see it.
+CAINHURST_LAMP = 2502950
+CAINHURST_ARRIVAL = 12500000
+SCENARIOS["guest-cutscene-cainhurst"] = {
+    "about": "both arrive in Cainhurst with its arrival cutscene unseen: the guest sees it too",
+    "roles": {
+        role: [START, "godmode", f"set-flag {CAINHURST_ARRIVAL} 0", "wait-session 2 240",
+               "wait 20", f"travel {CAINHURST_LAMP}", "wait 30", "expect-session 2"]
+        for role in ("host", "guest")
+    },
+    "expect": {role: [r"cutscene player's step is Update"] for role in ("host", "guest")},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
+}

@@ -167,6 +167,7 @@ class GuestsEnterBossFogFirst(unittest.TestCase):
         self.assertEqual((again, count), (self.patched, 0))
 
 
+
 def init_insight(amount: int) -> tuple[int, int, bytes]:
     return 2000, 0, struct.pack('<iii', 0, tool.INSIGHT_EVENT, amount)
 
@@ -504,6 +505,30 @@ class GuestsSeeTheNightFall(unittest.TestCase):
         # Only the host's press starts it: a guest's own press must not (its alive check stays).
         self.assertEqual(events[7], before[7])
         self.assertEqual(events[:6] + events[7:], before[:6] + before[7:])
+
+
+class GuestsSeeStoryCutscenes(unittest.TestCase):
+    """Audit 2026-10-25 (Kaniel: everyone is moved but only the host sees the cutscene): story
+    cutscenes whose events end for a client (1003:6 state 1) before the cutscene: Cainhurst's
+    arrival (m25_00 12500000), the Hypogean Gaol's arrival after a kidnapping (common 9422, also
+    a point of insight) and the one after the Nightmare of Mensis' boss (m26_00 12601854). The
+    Dream's endings (m21_00 12100000, 12100002, 12100180: they start the next playthrough) stay
+    the host's."""
+
+    def test_the_story_cutscenes_play_for_a_client(self):
+        for name, event in (('m25_00_00_00.emevd.dcx', 12500000), ('common.emevd.dcx', 9422),
+                            ('m26_00_00_00.emevd.dcx', 12601854)):
+            arrival = [(1003, 2, struct.pack('<BBBxi', 0, 1, 1, 0)),
+                       (1003, 6, struct.pack('<BBxx', 0, 1)),
+                       (2002, 3, struct.pack('<iii', 25000000, 8, 10000))]
+            original = build_emevd({event: arrival})
+            patched, count = tool.patch_client_events(original, tool.CLIENT_EVENTS.get(name, set()))
+            self.assertEqual(read_events(patched)[event][1][2][:2], bytes([0, tool.NEVER]), name)
+            self.assertEqual(count, 1, name)
+
+    def test_the_endings_stay_the_hosts(self):
+        dream = tool.CLIENT_EVENTS['m21_00_00_00.emevd.dcx']
+        self.assertFalse(dream & {12100000, 12100002, 12100180})
 
 
 class GuestsPickUpGlowingItems(unittest.TestCase):

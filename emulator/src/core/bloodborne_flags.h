@@ -315,6 +315,12 @@ inline constexpr std::array FirstRows{
           "an NPC's gesture given (GestureFlags)"),
     Range(6770, 6770, FlagOwner::PerPlayer, FlagCarriesHome,
           "an NPC's gesture given (GestureFlags)"),
+    Range(6780, 6816, FlagOwner::PerPlayer, FlagCarriesHome,
+          "the League's covenant: common events 6788 and 6789 count this player's goods 1700 "
+          "under SpEffect 6141 or 6143 (6780-6787, 6790-6797), 6800-6808 sum them, 6809 sets the "
+          "ranks 6810-6812 Valtr's talk reads; 6813 joined in the Forbidden Woods (m27_00 "
+          "12700902), 6814 by Valtr's talk; as the host's, a guest's rank and membership followed "
+          "the host's (audit 2026-10-25)"),
     Range(9180, 9199, FlagOwner::Session, 0,
           "the bell's bookkeeping (common events 9181-9198), not progress; kept for the "
           "guest's world it gave Insight again"),
