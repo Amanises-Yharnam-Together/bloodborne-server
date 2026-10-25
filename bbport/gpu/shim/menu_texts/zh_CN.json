@@ -388,5 +388,16 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "为队伍标记一个地点，持续20秒：在瞄准处（锁定时为该敌人）连按两下触摸板或按标记键，地图上按{Square}。队伍可在世界、罗盘和地图上看到。",
  "Ping key": "标记键",
  "The keyboard key that pings where you aim.": "在瞄准处放置标记的键盘按键。",
- "Ping": "标记"
+ "Ping": "标记",
+ "Duel": "决斗",
+ "End the duel": "结束决斗",
+ "The duel begins in %d": "决斗将在 %d 秒后开始",
+ "Defeated: the duel goes on without you": "落败：决斗将在没有你的情况下继续",
+ "%s challenges you to a duel. Accept?": "%s 向你发起决斗。接受吗？",
+ "A duel is already under way.": "已有决斗正在进行。",
+ "Nobody else of your team is here to duel.": "这里没有其他队友可以决斗。",
+ "Nobody accepted the duel.": "没有人接受决斗。",
+ "%s ended the duel.": "%s 结束了决斗。",
+ "%s is gone: the duel is over.": "%s 已离开：决斗结束。",
+ "%s left the area: the duel is over.": "%s 离开了此区域：决斗结束。"
 }

@@ -6,6 +6,7 @@
 
 #include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_duel.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_pings.h"
 #include "core/bloodborne_re.h"
@@ -171,6 +172,28 @@ std::optional<AutoplayCharacter> FindAutoplayCharacter(u32 handle) {
         handle = autoplay_marked.load();
         if (handle == 0) {
             return std::nullopt;
+        }
+    }
+    // Other players are not among the world's characters: the nearest one shown, by its body.
+    if (handle == AutoplayPlayer || (handle != 0 && handle != AutoplaySelf)) {
+        const auto me = LocalPlayerPosition();
+        std::optional<AutoplayCharacter> nearest;
+        for (const OtherPlayer& other : OtherPlayers()) {
+            const u64 modules = ReadValue<u64>(other.character, 0x3B0);
+            const u64 data = modules >= 0x10000 ? ReadValue<u64>(modules, 0x20) : 0;
+            if (!me || !other.at || data < 0x10000 ||
+                (handle != AutoplayPlayer && ReadValue<u32>(other.character, 0x08) != handle) ||
+                (handle == AutoplayPlayer && ReadValue<s32>(data, 0xF8) <= 0)) {
+                continue;
+            }
+            const float distance = std::hypot((*other.at)[0] - (*me)[0], (*other.at)[1] - (*me)[1],
+                                              (*other.at)[2] - (*me)[2]);
+            if (!nearest || distance < nearest->distance) {
+                nearest = AutoplayCharacter{other.character, data, distance};
+            }
+        }
+        if (nearest || handle == AutoplayPlayer) {
+            return nearest;
         }
     }
     if (handle == AutoplaySelf) {
@@ -2094,6 +2117,67 @@ bool AutoplayExpectGesture(const AutoplayStep& step) {
     return false;
 }
 
+// Kaniel 2026-10-25, team duels: duel-propose and duel-cancel (the team screen's buttons),
+// duel-answer <yes|no> [<timeout>] (the question's box, once it is asked), wait-duel <part>
+// [<timeout>] (this player's part: none, asked, answered, countdown, fighting or out),
+// duel-strike (below).
+bool AutoplayDuelPropose(const AutoplayStep&) {
+    ProposeDuel();
+    return true;
+}
+
+bool AutoplayDuelCancel(const AutoplayStep&) {
+    CancelDuel();
+    return true;
+}
+
+bool AutoplayDuelAnswer(const AutoplayStep& step) {
+    if (const auto ask = DuelAsk()) {
+        AnswerDuel(ask->first, step.Arg(0) == "yes");
+        LOG_INFO(Debug, "Bloodborne autoplay: duel {} from {} answered {}", ask->first, ask->second,
+                 step.Arg(0));
+        return true;
+    }
+    return step.WaitedOut(step.Number(1, 30));
+}
+
+// duel-strike [<timeout>]: light attacks on the nearest other player from each side in turn
+// until this player fights no more (its foe out, or itself).
+bool AutoplayDuelStrike(const AutoplayStep& step) {
+    if (ReadDuel().part != DuelPart::Fighting) {
+        autoplay_buttons.store(0);
+        LOG_INFO(Debug, "Bloodborne autoplay: duel strikes done after {:.1f} s", step.elapsed);
+        return true;
+    }
+    if (const auto found = FindAutoplayCharacter(AutoplayPlayer)) {
+        AutoplayAttackCycle(*found, step.elapsed, false);
+    }
+    if (step.elapsed > step.Number(0, 60)) {
+        autoplay_buttons.store(0);
+        step.failure = fmt::format("still fighting after {:.0f} s", step.elapsed);
+    }
+    return false;
+}
+
+bool AutoplayWaitDuel(const AutoplayStep& step) {
+    static constexpr std::array<std::string_view, 6> Parts{"none",      "asked",    "answered",
+                                                           "countdown", "fighting", "out"};
+    const auto wanted = std::ranges::find(Parts, step.Arg(0));
+    if (wanted == Parts.end()) {
+        step.failure = "no such duel part";
+        return false;
+    }
+    const DuelPart part = ReadDuel().part;
+    if (static_cast<size_t>(part) == static_cast<size_t>(wanted - Parts.begin())) {
+        return true;
+    }
+    if (step.WaitedOut(step.Number(1, 60))) {
+        step.failure =
+            fmt::format("this player's duel part is {}", Parts[static_cast<size_t>(part)]);
+    }
+    return false;
+}
+
 // The script's verbs (tools/rig/tests/test_rig.py keeps the same list for the scenarios).
 using AutoplayVerb = bool (*)(const AutoplayStep& step);
 constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, AutoplayVerb>>({
@@ -2127,6 +2211,11 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-flag", AutoplayExpectOrWaitFlag},
     {"talk-gesture", AutoplayTalkGesture},
     {"expect-gesture", AutoplayExpectGesture},
+    {"duel-propose", AutoplayDuelPropose},
+    {"duel-cancel", AutoplayDuelCancel},
+    {"duel-answer", AutoplayDuelAnswer},
+    {"wait-duel", AutoplayWaitDuel},
+    {"duel-strike", AutoplayDuelStrike},
     {"wait-flag", AutoplayExpectOrWaitFlag},
     {"flags", AutoplayLogFlags},
     {"altar-record", AutoplayAltarRecord},

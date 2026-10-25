@@ -388,5 +388,16 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Takımın için bir yeri 20 saniye işaretle: nişan aldığın yere (kilitlendiğin düşmana) dokunmatik yüzeye iki kez dokun ya da işaret tuşuna bas, haritada {Square}. Takımın işareti dünyada, pusulada ve haritada görür.",
  "Ping key": "İşaret tuşu",
  "The keyboard key that pings where you aim.": "Nişan aldığın yeri işaretleyen klavye tuşu.",
- "Ping": "İşaretle"
+ "Ping": "İşaretle",
+ "Duel": "Düello",
+ "End the duel": "Düelloyu bitir",
+ "The duel begins in %d": "Düello %d içinde başlıyor",
+ "Defeated: the duel goes on without you": "Yenildin: düello sensiz sürüyor",
+ "%s challenges you to a duel. Accept?": "%s seni düelloya davet ediyor. Kabul et?",
+ "A duel is already under way.": "Zaten bir düello sürüyor.",
+ "Nobody else of your team is here to duel.": "Takımından burada düello yapacak başka kimse yok.",
+ "Nobody accepted the duel.": "Kimse düelloyu kabul etmedi.",
+ "%s ended the duel.": "%s düelloyu bitirdi.",
+ "%s is gone: the duel is over.": "%s ayrıldı: düello bitti.",
+ "%s left the area: the duel is over.": "%s bölgeden ayrıldı: düello bitti."
 }

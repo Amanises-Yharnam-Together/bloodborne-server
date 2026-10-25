@@ -19,8 +19,8 @@ enum Protocol {
     PROTOCOL_NONE = 0;
     // 2: phase 4's enemy owners; 3: phase 5's teams; 4: phase 6's team sessions; 5: a team's
     // worlds (the leader picks one); 6: the server's worlds, apart from its teams; 7: a world's
-    // name, birth and hunters, and the pick before a team
-    PROTOCOL_CURRENT = 7;
+    // name, birth and hunters, and the pick before a team; 8: team duels
+    PROTOCOL_CURRENT = 8;
 }
 
 // game -> server: the first message of the stream, and again whenever the stream starts over (the
@@ -417,7 +417,69 @@ message Envelope {
         ResumeAt resume_at = 40;
         Ping ping = 41;
         AltarRecord altar_record = 42;
+        DuelRequest duel_request = 43;
+        DuelState duel_state = 44;
     }
+}
+
+// Kaniel 2026-10-25: team duels (coop/duel.h). A member proposes a duel from the team screen; the
+// members on its map are asked, and those who accept fight until one side stands. The server keeps
+// the duel (who is in, their sides, who is out, the score) and every game follows its DuelState: a
+// duelist's defeat puts it out (no party death), the end gives everyone back what the duel took.
+// The hits themselves are the game's own: a foe's body on the invaders' team takes them, and the
+// struck duelist's game applies them as any hit.
+
+// game -> server.
+message DuelRequest {
+    enum Action {
+        ACTION_NONE = 0;
+        PROPOSE = 1;  // a new duel to the members on `map`
+        ACCEPT = 2;   // duel `duel`'s question answered
+        DECLINE = 3;
+        CANCEL = 4;   // a duelist ends duel `duel` for everyone
+        DEFEATED = 5; // this duelist's lethal hit in duel `duel`: out
+    }
+    Action action = 1;
+    uint32 duel = 2;
+    uint32 map = 3;
+}
+
+message Duelist {
+    string member = 1;
+    uint32 side = 2;   // free for all: each its own (1, 2, ...); teams later share one
+    uint32 answer = 3; // 0 not yet, 1 accepted, 2 declined
+    bool out = 4;      // defeated in this duel
+    uint32 wins = 5;   // duels won while the server ran
+}
+
+// server -> every member of the party, on every change (and after a hello).
+message DuelState {
+    enum Stage {
+        STAGE_NONE = 0;
+        ASKING = 1;    // waiting for the answers (DuelAskMs)
+        COUNTDOWN = 2; // accepted: the fight starts in left_ms
+        FIGHTING = 3;
+        OVER = 4;
+    }
+    enum End {
+        END_NONE = 0;
+        WON = 1;       // one side stands (`winner`)
+        CANCELLED = 2; // a duelist cancelled (`ended_by`)
+        LEFT = 3;      // a duelist's game went (`ended_by`)
+        MAP = 4;       // a duelist left the duel's map (`ended_by`)
+        DECLINED = 5;  // fewer than two accepted
+        NO_ANSWER = 6; // the question timed out with fewer than two in
+    }
+    uint32 duel = 1; // counts up per party; 0 none yet
+    Stage stage = 2;
+    string proposer = 3;
+    uint32 map = 4;
+    repeated Duelist duelists = 5;
+    string winner = 6;
+    End end = 7;
+    string ended_by = 8;
+    uint32 left_ms = 9;
+    string refused = 10; // only to a member whose request was refused: why
 }
 
 // Team altars (Kaniel's playtest 2026-10-24, emulator bloodborne_altar.h): game -> server ->

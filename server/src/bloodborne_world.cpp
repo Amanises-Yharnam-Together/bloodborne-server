@@ -528,6 +528,12 @@ void Service::OnHello(Member& member, const bbcoop::Hello& hello, qint64 now_ms,
     }
     // What its trades owe it: grants not yet added, offers waiting for its answer.
     Deliver(world, world.trades.Resume(member.name, now_ms), now_ms, result);
+    // The party's last duel (a game coming back mid-duel follows it).
+    if (const bbcoop::DuelState duel = world.duels.State(now_ms); duel.duel() != 0) {
+        bbcoop::Envelope envelope;
+        *envelope.mutable_duel_state() = duel;
+        SendTo(member, envelope, now_ms);
+    }
     world.team = world.team || team;
     if (world.team) {
         SendTeamWorld(world, member, now_ms);
@@ -767,6 +773,9 @@ void Service::Take(Member& member, const bbcoop::Envelope& envelope, qint64 now_
     case bbcoop::Envelope::kTradeCancel:
     case bbcoop::Envelope::kTradeGranted:
         TakeTrade(member, world, envelope, now_ms, result);
+        break;
+    case bbcoop::Envelope::kDuelRequest:
+        TakeDuel(member, world, envelope, now_ms, result);
         break;
     case bbcoop::Envelope::kSnapshotRequest: {
         bbcoop::Envelope snapshot;
@@ -1059,6 +1068,50 @@ void Service::Deliver(PartyWorld& world, TradeDesk::Result trades, qint64 now_ms
     }
 }
 
+std::vector<DuelMember> Service::DuelMembers(const PartyWorld& world) const {
+    std::vector<DuelMember> online;
+    for (const auto& [key, member] : members) {
+        if (member.party == world.name) {
+            online.push_back(DuelMember{member.name, member.map});
+        }
+    }
+    return online;
+}
+
+void Service::TakeDuel(Member& member, PartyWorld& world, const bbcoop::Envelope& envelope,
+                       qint64 now_ms, Result& result) {
+    const DuelReferee::Result duel =
+        world.duels.Request(member.name, envelope.duel_request(), DuelMembers(world), now_ms);
+    if (!duel.refused.empty()) {
+        bbcoop::Envelope refused;
+        *refused.mutable_duel_state() = world.duels.State(now_ms);
+        refused.mutable_duel_state()->set_refused(duel.refused);
+        SendTo(member, refused, now_ms);
+        result.log.append(QStringLiteral("party world %1: %2's duel request refused: %3")
+                              .arg(world.name, QString::fromStdString(member.name),
+                                   QString::fromStdString(duel.refused)));
+    }
+    SettleDuel(world, duel, now_ms, result);
+}
+
+void Service::SettleDuel(PartyWorld& world, const DuelReferee::Result& duel, qint64 now_ms,
+                         Result& result) {
+    for (const std::string& line : duel.log) {
+        result.log.append(
+            QStringLiteral("party world %1: %2").arg(world.name, QString::fromStdString(line)));
+    }
+    if (!duel.changed) {
+        return;
+    }
+    bbcoop::Envelope state;
+    *state.mutable_duel_state() = world.duels.State(now_ms);
+    for (auto& [key, member] : members) {
+        if (member.party == world.name) {
+            SendTo(member, state, now_ms);
+        }
+    }
+}
+
 void Service::SendToOthers(PartyWorld& world, const Member& from, const bbcoop::Envelope& envelope,
                            qint64 now_ms) {
     for (auto& [key, member] : members) {
@@ -1126,6 +1179,7 @@ Service::Result Service::Tick(qint64 now_ms) {
             SendOwners(world, now_ms, result);
         }
         Deliver(world, world.trades.Expire(now_ms), now_ms, result);
+        SettleDuel(world, world.duels.Tick(DuelMembers(world), now_ms), now_ms, result);
     }
     Flush(now_ms, result);
     return result;

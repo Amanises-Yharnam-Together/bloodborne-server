@@ -388,5 +388,16 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Segnala un punto alla tua squadra per 20 secondi: tocca due volte il touchpad o premi il tasto segnale dove miri (sul nemico agganciato), {Square} sulla mappa. La squadra lo vede nel mondo, sulla bussola e sulla mappa.",
  "Ping key": "Tasto segnale",
  "The keyboard key that pings where you aim.": "Il tasto che mette un segnale dove miri.",
- "Ping": "Segnala"
+ "Ping": "Segnala",
+ "Duel": "Duello",
+ "End the duel": "Termina il duello",
+ "The duel begins in %d": "Il duello inizia tra %d",
+ "Defeated: the duel goes on without you": "Sconfitto: il duello continua senza di te",
+ "%s challenges you to a duel. Accept?": "%s ti sfida a duello. Accetti?",
+ "A duel is already under way.": "C'è già un duello in corso.",
+ "Nobody else of your team is here to duel.": "Nessun altro della tua squadra è qui per un duello.",
+ "Nobody accepted the duel.": "Nessuno ha accettato il duello.",
+ "%s ended the duel.": "%s ha concluso il duello.",
+ "%s is gone: the duel is over.": "%s se n'è andato: il duello è finito.",
+ "%s left the area: the duel is over.": "%s ha lasciato la zona: il duello è finito."
 }

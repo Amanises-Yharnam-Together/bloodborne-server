@@ -388,5 +388,16 @@
  "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "20초 동안 팀에게 위치를 알립니다. 조준한 곳(록온 중이면 그 적)에 터치패드를 두 번 누르거나 핑 키를 누르고, 맵에서는 {Square}. 팀은 월드, 나침반, 맵에서 봅니다.",
  "Ping key": "핑 키",
  "The keyboard key that pings where you aim.": "조준한 곳에 핑을 찍는 키보드 키.",
- "Ping": "핑"
+ "Ping": "핑",
+ "Duel": "결투",
+ "End the duel": "결투 끝내기",
+ "The duel begins in %d": "%d초 후 결투 시작",
+ "Defeated: the duel goes on without you": "패배: 결투는 당신 없이 계속됩니다",
+ "%s challenges you to a duel. Accept?": "%s 님이 결투를 신청했습니다. 수락하시겠습니까?",
+ "A duel is already under way.": "이미 결투가 진행 중입니다.",
+ "Nobody else of your team is here to duel.": "이곳에 결투할 팀원이 없습니다.",
+ "Nobody accepted the duel.": "아무도 결투를 수락하지 않았습니다.",
+ "%s ended the duel.": "%s 님이 결투를 끝냈습니다.",
+ "%s is gone: the duel is over.": "%s 님이 떠났습니다: 결투가 끝났습니다.",
+ "%s left the area: the duel is over.": "%s 님이 지역을 떠났습니다: 결투가 끝났습니다."
 }

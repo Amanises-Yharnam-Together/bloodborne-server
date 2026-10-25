@@ -177,6 +177,8 @@ struct Game {
       altar_records.push_back(envelope.altar_record());
     } else if (envelope.has_ping()) {
       pings.push_back(envelope.ping());
+    } else if (envelope.has_duel_state()) {
+      duels.push_back(envelope.duel_state());
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -246,6 +248,15 @@ struct Game {
   std::vector<bbcoop::EnemyHit> hits;
   std::vector<bbcoop::AltarRecord> altar_records;
   std::vector<bbcoop::Ping> pings;
+  std::vector<bbcoop::DuelState> duels;
+  void Duel(bbcoop::DuelRequest::Action action, u32 duel, qint64 now_ms,
+            u32 map = 0x18010000) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_duel_request()->set_action(action);
+    envelope.mutable_duel_request()->set_duel(duel);
+    envelope.mutable_duel_request()->set_map(map);
+    Send(envelope, now_ms);
+  }
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -1255,6 +1266,76 @@ int APingReachesTheTeamAtOnce() {
   late.Hello(now + 20);
   Pump(service, {&host, &guest, &other, &late}, now + 20);
   CHECK(late.pings.empty());
+  return 0;
+}
+
+// Kaniel 2026-10-25: team duels are the server's. A proposal asks the members
+// on the proposer's map; every member hears every change of the duel's state;
+// a second proposal is refused to its sender only; a defeat ends it with the
+// winner; a duelist's game going ends the next one; a late game hears the last.
+int ADuelIsTheServers() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  const std::vector<Game *> games{&host, &guest, &other};
+  qint64 now = 1'000'000;
+  for (Game *game : games) {
+    game->Hello(now);
+  }
+  Pump(service, games, now);
+  host.Map(0x18010000, now);
+  guest.Map(0x18010000, now);
+  other.Map(0x17000000, now);
+  Pump(service, games, now);
+
+  host.Duel(bbcoop::DuelRequest::PROPOSE, 0, now + 10);
+  Pump(service, games, now + 10);
+  for (Game *game : games) {
+    CHECK(game->duels.size() == 1);
+    CHECK(game->duels.back().duel() == 1u);
+    CHECK(game->duels.back().stage() == bbcoop::DuelState::ASKING);
+    CHECK(game->duels.back().proposer() == "host");
+    CHECK(game->duels.back().duelists_size() == 2); // not "other"
+  }
+  guest.Duel(bbcoop::DuelRequest::PROPOSE, 0, now + 20);
+  Pump(service, games, now + 20);
+  CHECK(guest.duels.size() == 2 && !guest.duels.back().refused().empty());
+  CHECK(host.duels.size() == 1);
+
+  guest.Duel(bbcoop::DuelRequest::ACCEPT, 1, now + 30);
+  Pump(service, games, now + 30);
+  CHECK(host.duels.back().stage() == bbcoop::DuelState::COUNTDOWN);
+  Pump(service, games, now + 30 + DuelCountdownMs);
+  for (Game *game : games) {
+    CHECK(game->duels.back().stage() == bbcoop::DuelState::FIGHTING);
+  }
+
+  guest.Duel(bbcoop::DuelRequest::DEFEATED, 1, now + 6'000);
+  Pump(service, games, now + 6'000);
+  for (Game *game : games) {
+    CHECK(game->duels.back().stage() == bbcoop::DuelState::OVER);
+    CHECK(game->duels.back().end() == bbcoop::DuelState::WON);
+    CHECK(game->duels.back().winner() == "host");
+  }
+
+  // The next one ends when a duelist's game goes.
+  guest.Duel(bbcoop::DuelRequest::PROPOSE, 0, now + 7'000);
+  Pump(service, games, now + 7'000);
+  host.Duel(bbcoop::DuelRequest::ACCEPT, 2, now + 7'000);
+  Pump(service, games, now + 7'000);
+  CHECK(host.duels.back().duel() == 2u);
+  CHECK(host.duels.back().stage() == bbcoop::DuelState::COUNTDOWN);
+  service.Forget(guest.endpoint);
+  Pump(service, {&host, &other}, now + 7'500);
+  CHECK(host.duels.back().stage() == bbcoop::DuelState::OVER);
+  CHECK(host.duels.back().end() == bbcoop::DuelState::LEFT);
+  CHECK(host.duels.back().ended_by() == "guest");
+
+  Game late{1004, "late", 15};
+  late.Hello(now + 8'000);
+  Pump(service, {&host, &other, &late}, now + 8'000);
+  CHECK(!late.duels.empty() && late.duels.back().duel() == 2u);
   return 0;
 }
 
@@ -2300,6 +2381,7 @@ int main() {
       {"AnAltarRecordReachesTheOthersWhole",
        AnAltarRecordReachesTheOthersWhole},
       {"APingReachesTheTeamAtOnce", APingReachesTheTeamAtOnce},
+      {"ADuelIsTheServers", ADuelIsTheServers},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"GamePacketsGoByMapAndOwner", GamePacketsGoByMapAndOwner},

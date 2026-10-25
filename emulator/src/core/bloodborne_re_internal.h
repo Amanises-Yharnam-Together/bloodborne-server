@@ -509,6 +509,10 @@ std::vector<AltarRecordNews> TakeAltarRecords();
 // team's as they came.
 void SendTeamPing(const BloodborneCoop::TeamPing& ping);
 std::vector<BloodborneCoop::TeamPing> TakeTeamPings();
+// Kaniel 2026-10-25: this player's duel requests to the server, and the duel's states as they
+// came (bloodborne_duel_game.cpp).
+void SendDuelRequest(bbcoop::DuelRequest::Action action, u32 duel, u32 map);
+std::vector<bbcoop::DuelState> TakeDuelStates();
 // Phase 8: the owner's activation pass wakes the groups around the other players too (its entry
 // adds their groups to its block's record, its end puts the record back; see WithOthersGroups).
 void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers);
@@ -549,6 +553,8 @@ void CheckAutoplayWatch();
 void TickPartyDeath();
 // Kaniel 2026-10-24: team pings (bloodborne_pings_game.cpp), each game tick.
 void TickPings();
+// Kaniel 2026-10-25: team duels (bloodborne_duel_game.cpp), each game tick after party death.
+void TickDuel();
 
 void ReopenClosedPartySession();
 void WatchSummonJoin();

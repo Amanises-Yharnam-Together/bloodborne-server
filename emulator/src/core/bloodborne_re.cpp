@@ -1066,6 +1066,7 @@ void TickPartyController() {
                           .count(),
                       SteadyMilliseconds());
     }
+    TimeTickPart("TickDuel", TickDuel);
     {
         const auto started = std::chrono::steady_clock::now();
         TimeTickPart("TickPings", TickPings);

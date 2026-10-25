@@ -6,6 +6,7 @@
 
 #include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
+#include "core/bloodborne_duel.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_portrait.h"
 #include "core/bloodborne_re.h"
@@ -957,6 +958,15 @@ void PS4_SYSV_ABI KeepPartyMemberUp(u64, GuestRegisterSnapshot* registers) {
         party_death_void_fall.store(true, std::memory_order_relaxed);
     }
     const bool answer = (registers->r14 & 0xFF) != 0;
+    // Kaniel 2026-10-25: in a duel a lethal hit puts the player out of it (TickDuel), never down
+    // or dead: no party death, wipe or map reset.
+    if (check == NoDeadCheck::Lethal && Coop::DuelCatchesLethal()) {
+        if (!answer) {
+            registers->r14 = (registers->r14 & ~u64{0xFF}) | 1;
+            Coop::NoteDuelCatch();
+        }
+        return;
+    }
     const bool down = party_death_down.load(std::memory_order_relaxed);
     if (answer ||
         !KeepsPlayerAlive(check, party_death_armed.load(std::memory_order_relaxed), down, answer)) {

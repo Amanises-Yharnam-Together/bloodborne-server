@@ -4776,6 +4776,9 @@ std::optional<u32> ParseAutoplayTarget(std::string_view text) {
     if (text == "marked") {
         return AutoplayMarked;
     }
+    if (text == "player") {
+        return AutoplayPlayer;
+    }
     if (text.starts_with("0x")) {
         text.remove_prefix(2);
     }

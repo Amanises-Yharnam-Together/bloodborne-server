@@ -2974,9 +2974,11 @@ const std::vector<DeathFlagSite>& DeathFlagSites();
 constexpr s32 DeathTraceMinMaxHp = 1500;
 bool TracesDeathOf(s32 max_hp);
 // A target: "nearest" (0), "self" (AutoplaySelf, the player), "marked" (AutoplayMarked, the one
-// the last mark command picked) or a character handle in hex.
+// the last mark command picked), "player" (AutoplayPlayer, the nearest other player: a duel's
+// foe) or a character handle in hex.
 constexpr u32 AutoplaySelf = 0xFFFFFFFF;
 constexpr u32 AutoplayMarked = 0xFFFFFFFE;
+constexpr u32 AutoplayPlayer = 0xFFFFFFFD;
 std::optional<u32> ParseAutoplayTarget(std::string_view text);
 // `value <op> limit` for op <, <=, ==, !=, >=, >; nothing for another op.
 std::optional<bool> CompareAutoplay(s64 value, std::string_view op, s64 limit);

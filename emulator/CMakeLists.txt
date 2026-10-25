@@ -976,6 +976,9 @@ if (ARCHITECTURE STREQUAL "x86_64")
              src/core/bloodborne_pings.cpp
              src/core/bloodborne_pings.h
              src/core/bloodborne_pings_game.cpp
+             src/core/bloodborne_duel.cpp
+             src/core/bloodborne_duel.h
+             src/core/bloodborne_duel_game.cpp
              src/core/bloodborne_map.cpp
              src/core/bloodborne_map.h
              src/core/bloodborne_map_screen.cpp
@@ -1287,6 +1290,7 @@ set(SHADNET src/shadnet/client.cpp
             "${SHADNET_PROTO_OUT}/coop.pb.cc"
             ${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/coop_messages.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/trade.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../server/coop/duel.cpp
 )
 if (APPLE)
     list(APPEND EMULATOR src/sdl_window_apple.mm)
