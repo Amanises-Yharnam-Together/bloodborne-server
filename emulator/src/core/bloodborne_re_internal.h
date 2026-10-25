@@ -9,6 +9,7 @@
 #pragma once
 
 #include "coop.pb.h"
+#include "core/bloodborne_altar.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
 #include "core/bloodborne_re.h"
@@ -67,6 +68,10 @@
 
 #include <httplib.h>
 #include "core/bloodborne_re_sites.h"
+
+namespace BloodborneCoop {
+struct TeamPing; // coop/coop_messages.h
+}
 
 namespace Core::Bloodborne {
 namespace Coop {
@@ -314,10 +319,18 @@ std::optional<std::chrono::steady_clock::time_point> LastSummonSearchPost();
 bool EventFlagOn(s32 flag);
 // `bits` bits of event flags from `flag` (the game's own read), or nothing without the manager.
 std::optional<u32> EventFlagBits(s32 flag, u32 bits);
-// The ritual altar the player talks to (see AsAltarFlags), if its record is there.
+// The ritual altar the player talks to (its record the current altar's view), if it is there.
 std::optional<s32> CurrentRitualAltar();
 // Ritual altar `altar` (0-6) loads its dungeon again from its flags.
 void ReloadRitualAltar(s32 altar);
+// Team altars (bloodborne_altar.h): the current altar's view changed (`changed` flags); a ritual's
+// or a join's record goes to the team whole (SharesAltarRecord), anything else stays here.
+void ShareRitualAltarRecord(size_t changed);
+// As a save or a map loads: every altar record (and the view) that names no dungeon is repaired
+// (RepairAltarRecord), before the map's events and items read them.
+void RepairRitualAltars();
+// Every second: RepairRitualAltars as soon as any record's first words name no dungeon.
+void KeepRitualAltarsWhole();
 void LogBloodstainStateChanges();
 // Kaniel 2026-10-20 (bloodstains on the compass and map): this player's bloodstain as the game
 // keeps it (BloodstainOf), nothing in a load.
@@ -441,6 +454,10 @@ void ForEachWorldCharacter(u64 world, Visit&& visit) {
     }
 }
 bool IsCharacterDisabled(u64 character);
+// A character's fade (float at +0x20C, 1.0 while shown): a fall into the void fades it out to 0.0,
+// which only a map load puts back (rig 2026-10-22). 1.0 if it is no character.
+constexpr u64 CharacterFadeOffset = 0x20C;
+float CharacterFade(u64 character);
 // The character's enable switch as event command 2004:5 sets it; false if it is no character.
 bool SetCharacterDisabled(u64 character, bool disabled);
 // A character's hits switch: bit 1 (2) of its model's flags ([+0x58]+0x114), set = no hits.
@@ -479,6 +496,19 @@ struct EnemyHitNews {
 };
 void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max);
 std::vector<EnemyHitNews> TakeEnemyHits();
+// Team altars: a ritual's record to the others through the server (relayed as it is), and the
+// others' as they came (taken once).
+struct AltarRecordNews {
+    s32 altar = 0;
+    AltarRecord record{};
+    std::string member;
+};
+void SendAltarRecord(s32 altar, const AltarRecord& record);
+std::vector<AltarRecordNews> TakeAltarRecords();
+// Kaniel 2026-10-24: this player's team ping to the server (it sends it on to the team), and the
+// team's as they came.
+void SendTeamPing(const BloodborneCoop::TeamPing& ping);
+std::vector<BloodborneCoop::TeamPing> TakeTeamPings();
 // Phase 8: the owner's activation pass wakes the groups around the other players too (its entry
 // adds their groups to its block's record, its end puts the record back; see WithOthersGroups).
 void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers);
@@ -517,6 +547,8 @@ void TickAutoplay();
 // The rig's watch-unseen check (bloodborne_autoplay.cpp), after the co-op tick.
 void CheckAutoplayWatch();
 void TickPartyDeath();
+// Kaniel 2026-10-24: team pings (bloodborne_pings_game.cpp), each game tick.
+void TickPings();
 
 void ReopenClosedPartySession();
 void WatchSummonJoin();
@@ -720,6 +752,8 @@ void TickEnemyOwner(bool in_session, u32 map);
 // This member's role and the owner it follows (its board name), as the last tick found them: for
 // the hooks (any thread).
 EnemyRole CurrentEnemyRole();
+// In a party session with the host away from this game's map (the map board fresh).
+bool HostAwayFromThisMap();
 std::string CurrentEnemyOwner();
 // The owner got another member's hit (0x15): the enemy step runs on the next frames, so the HP
 // it takes goes to the log at once.
@@ -871,6 +905,8 @@ void ApplyTeamWorldOnLoad(bool trip = false);
 // A team guest's copy of the team's world: its flags on (none for the team's host, or with no
 // world yet).
 std::vector<s32> TeamWorldFlagsOnForGuest();
+// The blocks the team's world covers, for a team guest (none otherwise).
+std::vector<u32> TeamWorldBlocksForGuest();
 // Puts lamps (entities, LampOfActiveFlag) on this character's lamp list, so they stay lit for it.
 void ListLamps(std::span<const s32> lamps);
 void TickTeamWorld(s64 now_ms);
@@ -1028,6 +1064,21 @@ struct PartyDeathRun {
 extern PartyDeathRun party_death_run;
 // Co-op work on the game's threads, logged next to the port's Perf lines (see CoopTimeMeter).
 extern CoopTimeMeter coop_time;
+// The co-op tick's parts, the slowest few logged after the Co-op time line.
+extern CoopTimeMeter coop_tick_parts;
+// One part of the co-op tick, into coop_tick_parts (AtiniirSpectre 2026-10-23: the tick grew
+// after a death and the log could not say which part), until the end of the scope.
+class TickPartTimer {
+public:
+    explicit TickPartTimer(std::string_view name) : name{name} {}
+    TickPartTimer(const TickPartTimer&) = delete;
+    TickPartTimer& operator=(const TickPartTimer&) = delete;
+    ~TickPartTimer();
+
+private:
+    std::string_view name;
+    std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+};
 void ReportCoopTime(s64 now_ms);
 void InstallPartyDeath(u64 base, u64 image_size);
 void ApplyHealingFountainHostAvailability(const GuestRegisterSnapshot& registers);

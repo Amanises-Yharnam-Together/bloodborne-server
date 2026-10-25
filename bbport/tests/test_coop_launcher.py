@@ -5,6 +5,7 @@ import os
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -97,6 +98,29 @@ class AnswersTests(unittest.TestCase):
             self.assertTrue(coop.valid_name(made['account']), 'a new install has its id at once')
             self.assertEqual(coop.load_settings(install)['account'], made['account'], 'saved')
 
+    def test_a_copied_install_makes_its_own_player_id(self):
+        # Player report 2026-10-24: a friend's install copied with its user\\coop.json gave two PCs one
+        # id; their games took the server's link from each other and a new team left at once.
+        made = coop.with_own_player_id(dict(coop.DEFAULTS), 'pc-a')
+        self.assertEqual(made['machine'], 'pc-a')
+        self.assertEqual(coop.with_own_player_id(dict(made), 'pc-a'), made, 'kept on its own PC')
+        copied = coop.with_own_player_id(dict(made, host_ip='26.1.2.3'), 'pc-b')
+        self.assertNotEqual(copied['account'], made['account'])
+        self.assertNotEqual(copied['password'], made['password'])
+        self.assertEqual((copied['machine'], copied['host_ip']), ('pc-b', '26.1.2.3'), 'other answers stay')
+        # An install from before the PC was noted keeps its id (its teams and worlds) and notes the PC.
+        old = coop.with_own_player_id(dict(coop.DEFAULTS, account='kaniel', password='pw'), 'pc-a')
+        self.assertEqual((old['account'], old['password'], old['machine']), ('kaniel', 'pw', 'pc-a'))
+        # No fingerprint (it could not be read): nothing changes.
+        self.assertEqual(coop.with_own_player_id(dict(made), ''), made)
+        with tempfile.TemporaryDirectory() as folder:
+            install = Path(folder)
+            coop.save_settings(install, dict(made, machine='another-pc'))
+            loaded = coop.load_settings(install)
+            if coop.this_machine():
+                self.assertNotEqual(loaded['account'], made['account'])
+                self.assertEqual(coop.load_settings(install)['account'], loaded['account'], 'saved')
+
     def test_the_old_settings_bat_carries_over(self):
         with tempfile.TemporaryDirectory() as folder:
             bat = Path(folder) / 'settings.bat'
@@ -115,7 +139,7 @@ class AnswersTests(unittest.TestCase):
     def test_settings_are_kept_in_the_user_folder(self):
         with tempfile.TemporaryDirectory() as folder:
             install = Path(folder)
-            self.assertEqual(dict(coop.load_settings(install), account='', password=''), coop.DEFAULTS)
+            self.assertEqual(dict(coop.load_settings(install), account='', password='', machine=''), coop.DEFAULTS)
             coop.save_settings(install, dict(coop.DEFAULTS, account='Lisara', password='pw'))
             self.assertEqual(json.loads((install / 'user' / 'coop.json').read_text('utf-8'))['account'], 'Lisara')
             self.assertEqual(coop.load_settings(install)['account'], 'Lisara')
@@ -659,6 +683,35 @@ class UpdateTests(unittest.TestCase):
     def test_the_setup_starts_the_launcher_again_after_a_silent_update(self):
         iss = (Path(__file__).resolve().parents[2] / 'tools' / 'release' / 'setup.iss').read_text(encoding='utf-8')
         self.assertRegex(iss, r'Filename: "\{app\}\\BLauncher\.exe";[^\n]*Flags: nowait skipifnotsilent')
+
+
+class LogRotationTests(unittest.TestCase):
+    """Kaniel's playtest 2026-10-22: two starts after the host's stuck rejoin, its .prev logs were
+    another run's. The last few runs' logs stay in user\\log\\older, named by when each ended."""
+
+    def test_the_last_runs_logs_are_kept_by_their_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'user' / 'log'
+            log.mkdir(parents=True)
+            for run in range(coop.KEPT_RUN_LOGS + 2):
+                for name in ('shad_log', 'console'):
+                    path = log / f'{name}.txt'
+                    path.write_text(f'{name} run {run}', encoding='utf-8')
+                    os.utime(path, (1792698000 + 60 * run, 1792698000 + 60 * run))
+                coop.rotate_logs(tmp)
+            self.assertEqual((log / 'shad_log.prev.txt').read_text(encoding='utf-8'),
+                             f'shad_log run {coop.KEPT_RUN_LOGS + 1}')
+            kept = sorted(path.name for path in (log / 'older').iterdir())
+            self.assertEqual(len(kept), 2 * coop.KEPT_RUN_LOGS)
+            first = time.strftime('%Y%m%d-%H%M%S', time.localtime(1792698000 + 120))
+            self.assertEqual(kept[0], f'{first}-console.txt')
+            self.assertEqual((log / 'older' / kept[-1]).read_text(encoding='utf-8'),
+                             f'shad_log run {coop.KEPT_RUN_LOGS + 1}')
+
+    def test_no_logs_yet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            coop.rotate_logs(tmp)
+            self.assertFalse((Path(tmp) / 'user' / 'log' / 'older').exists())
 
 
 if __name__ == '__main__':

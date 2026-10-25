@@ -32,6 +32,7 @@
 #include "bbport_party_layout.h"
 #include "bbport_save_editor.h"
 #include "bbport_frame_gen_pace.h"
+#include "bbport_guest_hooks.h"
 #include "bbport_settings.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -1616,9 +1617,23 @@ void HdrRows() {
 
 void DisplayTab() {
     auto& s = BbSettings::Get();
-    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
-    Choice("output", T("Output resolution", "Разрешение вывода"), s.output_res, BbSettings::OutputCount,
-           [](int i) { return outputs[i]; }, [](int) { return true; },
+    // Kaniel 2026-10-24: the display's own resolutions, any shape (21:9, 32:9, 16:10, 4:3), and
+    // the one chosen even when the display has no such mode (another monitor, bbport.ini).
+    static std::vector<BbSettings::OutputSize> outputs;
+    static std::vector<std::string> output_names;
+    outputs = BbSettings::OutputChoices();
+    const BbSettings::OutputSize chosen = BbSettings::ChosenOutput();
+    if (std::find(outputs.begin(), outputs.end(), chosen) == outputs.end()) {
+        outputs.push_back(chosen);
+    }
+    output_names.clear();
+    for (const auto& size : outputs) {
+        const char* shape = BbOutputSizes::AspectName(size);
+        output_names.push_back(std::to_string(size.width) + " x " + std::to_string(size.height) +
+                               (shape[0] ? std::string("  (") + shape + ")" : std::string()));
+    }
+    Choice("output", T("Output resolution", "Разрешение вывода"), BbOutputSizes::Nearest(outputs, chosen),
+           int(outputs.size()), [](int i) { return output_names[i].c_str(); }, [](int) { return true; },
            BbSettings::FixedRenderSession()
                ? T("Size of the final frame and UI. The preset sets the scene size relative to "
                    "the output: 4K Performance = 1920x1080. Applies after restarting the game.",
@@ -1630,7 +1645,28 @@ void DisplayTab() {
                    "Размер готового кадра и интерфейса меняется со следующего кадра. Пресет задаёт "
                    "размер сцены относительно вывода: 4K Performance = 1920x1080. Смена сбрасывает "
                    "историю апскейлера (короткая пауза)."),
-           true, [&](int i) { Store(s.output_res, i, true); });
+           true, [&](int i) {
+               BbSettings::ChooseOutput(outputs[i]);
+               dirty = true;
+           });
+    const char* aspects[] = {T("Auto (the output's)", "Авто (как у вывода)"), T("16:9 (bars)", "16:9 (с полосами)")};
+    Choice("aspect", T("Aspect ratio", "Соотношение сторон"),
+           std::clamp(s.aspect.load(), 0, BbSettings::AspectModeCount - 1), BbSettings::AspectModeCount,
+           [&](int i) { return aspects[i]; }, [](int) { return true; },
+           BbSettings::FixedRenderSession()
+               ? T("Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) "
+                   "more above and below; the HUD goes to the screen's edges. 16:9: the game's picture "
+                   "with black bars. Applies after restarting the game.",
+                   "Авто: на широком экране (21:9, 32:9) видно больше по бокам, на высоком (16:10, 4:3) "
+                   "— сверху и снизу; интерфейс у краёв экрана. 16:9: картинка игры с чёрными "
+                   "полосами. Применяется после перезапуска игры.")
+               : T("Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) "
+                   "more above and below; the HUD goes to the screen's edges. 16:9: the game's picture "
+                   "with black bars. Changes at the next frame.",
+                   "Авто: на широком экране (21:9, 32:9) видно больше по бокам, на высоком (16:10, 4:3) "
+                   "— сверху и снизу; интерфейс у краёв экрана. 16:9: картинка игры с чёрными "
+                   "полосами. Меняется со следующего кадра."),
+           true, [&](int i) { Store(s.aspect, i, true); });
     const char* live_modes[] = {T("Auto (by GPU)", "Авто (по видеокарте)"), T("Off (faster)", "Выкл (быстрее)"),
                                 T("On", "Вкл")};
     Choice("live", T("Live resolution changes", "Смена разрешения на лету"), s.live_resolution + 1, 3,
@@ -1696,6 +1732,19 @@ void DisplayTab() {
              "every map. Only you see your bloodstain.",
              "Где лежат ваши отголоски после смерти: на компасе на этой карте, на карте на всех "
              "картах. Ваше пятно крови видите только вы."));
+    // Kaniel 2026-10-24: team pings.
+    Toggle("team_pings", T("Team pings", "Метки команды"), s.team_pings,
+           T("Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key "
+             "where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it "
+             "in the world, on the compass and on the map.",
+             "Отметьте место для команды на 20 секунд: двойное касание сенсорной панели или клавиша "
+             "метки туда, куда вы смотрите (на врага, на котором фиксирован взгляд), {Square} на "
+             "карте. Команда видит метку в мире, на компасе и на карте."));
+    Choice("ping_key", T("Ping key", "Клавиша метки"),
+           std::clamp(s.ping_key.load(), 0, BbSettings::PingKeyCount - 1), BbSettings::PingKeyCount,
+           [&](int i) { return BbSettings::PingKeyNames[i]; }, [](int) { return true; },
+           T("The keyboard key that pings where you aim.", "Клавиша, ставящая метку туда, куда вы смотрите."),
+           s.team_pings, [&](int i) { Store(s.ping_key, i, true); });
     // Kaniel 2026-10-19 ("make it opt in", "an opt in option to view rendered in real time"):
     // the map's 3D view.
     const char* map_3d_names[] = {T("Off", "Выкл."), T("Prerendered", "Заранее нарисованная"),
@@ -1816,9 +1865,10 @@ void UpscalerTab() {
     static char preset_names[BbSettings::PresetCount][64];
     for (int i = 0; i < BbSettings::PresetCount; ++i) {
         const float scale = BbSettings::PresetScale(i);
+        const BbSettings::OutputSize output = BbSettings::CurrentOutput();
         std::snprintf(preset_names[i], sizeof(preset_names[i]), "%s  %dx%d", BbSettings::PresetName(i),
-                      int(std::lround(BbSettings::OutputWidths[s.output_res] / scale / 2) * 2),
-                      int(std::lround(BbSettings::OutputHeights[s.output_res] / scale / 2) * 2));
+                      int(std::lround(output.width / scale / 2) * 2),
+                      int(std::lround(output.height / scale / 2) * 2));
     }
     Choice("preset", T("Quality preset", "Пресет качества"), taa ? BbSettings::NativeAA : s.preset.load(),
            BbSettings::PresetCount, [](int i) { return preset_names[i]; }, [](int) { return true; },
@@ -3577,7 +3627,9 @@ void PlainScreen() {
         draw->AddText(font, size, ImVec2((display.x - extent.x) * 0.5f, y), colour, text);
     };
     centred(Team::T("The Hunt Begins", "Охота начинается"), unit * 1.6f, display.y * 0.16f, gold);
-    const float left = display.x * 0.18f, right = display.x * 0.82f;
+    // The cards across the middle 16:9 part of a wider screen (21:9, 32:9), not its whole width.
+    const float wide = std::min(display.x, display.y * 16.0f / 9.0f), side = (display.x - wide) * 0.5f;
+    const float left = side + wide * 0.18f, right = side + wide * 0.82f;
     draw->AddLine(ImVec2(left, display.y * 0.24f), ImVec2(right, display.y * 0.24f), dim, 1.0f);
     const float card_w = (right - left) / 4.0f;
     const int count = std::clamp(load.count, 1, 4);
@@ -3705,6 +3757,9 @@ namespace Party {
 bbcoop_panel panel{}; // present thread: as Visible() read it last
 bool shown = false;
 BbPartyLayout::Rect game{}; // present thread: the game's frame on screen, as Render() got it
+/// How far the game's HUD groups moved toward the frame's edges (another aspect ratio than 16:9):
+/// the list and the supplies stay beside the player's bars.
+BbPartyLayout::Shift shift{};
 
 bool Read() {
     shown = bbcoop_party_panel(&panel) != 0;
@@ -4023,9 +4078,9 @@ void SupplyCounts(ImDrawList* draw, float right, float cy, float unit, uint32_t 
 void MemberList(ImDrawList* draw, float pulse) {
     using Ui::S;
     using Ui::T;
-    const float x = BbPartyLayout::ListLeft(game, base_scale), height = S(54.0f), gap = S(10.0f),
+    const float x = BbPartyLayout::ListLeft(game, base_scale, shift), height = S(54.0f), gap = S(10.0f),
                 bar = S(240.0f);
-    float y = BbPartyLayout::ListTop(game);
+    float y = BbPartyLayout::ListTop(game, shift);
     char line[64];
     for (int i = 0; i < panel.member_count; ++i) {
         const bbcoop_panel_member& member = panel.members[i];
@@ -4225,11 +4280,13 @@ void OwnDown(ImDrawList* draw, float pulse) {
 /// prompt has its button.
 void PromptGlyph(ImDrawList* draw) {
     using namespace BbPartyLayout;
-    const float sx = game.w / 1920.0f, sy = game.h / 1080.0f;
+    // The game's prompt stays on its 16:9 screen (the middle of a wider or taller frame).
+    const Rect stage = Stage(game);
+    const float sx = stage.w / 1920.0f, sy = stage.h / 1080.0f;
     const float size = PromptGlyphStageSize * sy;
     const int input = panel.vital == BBCOOP_VITAL_DOWN ? InputCircle : InputR1;
-    const float right = game.x + PromptGlyphStageRight * sx;
-    ButtonGlyph(draw, input, ImVec2(right - ButtonGlyphWidth(input, size), game.y + PromptGlyphStageY * sy),
+    const float right = stage.x + PromptGlyphStageRight * sx;
+    ButtonGlyph(draw, input, ImVec2(right - ButtonGlyphWidth(input, size), stage.y + PromptGlyphStageY * sy),
                 size, 1.0f);
 }
 
@@ -4273,11 +4330,13 @@ void SupplyCounts(ImDrawList* draw, float right, float cy, float unit, uint32_t 
 /// member's supplies on its name's line, at its HP bar's end (the tag at (204, 330 + 95 i), its bar
 /// from x 109 to about 300 on the 1080p stage).
 void Supplies(ImDrawList* draw) {
-    const float sx = game.w / 1920.0f, sy = game.h / 1080.0f;
+    using BbPartyLayout::HudX;
+    using BbPartyLayout::HudY;
+    const float unit = BbPartyLayout::Stage(game).h / 1080.0f;
     for (int i = 0; i < panel.member_count && i < 3; ++i) {
         const float bar_y = 330.0f + 95.0f * float(i) - 0.5f;
-        SupplyCounts(draw, game.x + 300.0f * sx, game.y + (bar_y - 20.0f) * sy, sy, panel.members[i].vials,
-                     panel.members[i].bullets, 1.0f);
+        SupplyCounts(draw, HudX(game, 300.0f, shift), HudY(game, bar_y - 20.0f, shift), unit,
+                     panel.members[i].vials, panel.members[i].bullets, 1.0f);
     }
 }
 
@@ -4302,6 +4361,14 @@ void Draw() {
 
 } // namespace Party
 
+/// Kaniel 2026-10-24: team pings (defined after the compass, which draws them too).
+namespace Pings {
+extern bbcoop_pings view;
+bool OnCompass();
+void OnStrip(ImDrawList* draw, float mid, float half, float y);
+void OnRing(ImDrawList* draw, ImVec2 mid, float r);
+} // namespace Pings
+
 /// Kaniel 2026-10-17: the teammate compass. A thin strip turned with the camera (ticks every 15
 /// degrees of the world, a notch for straight ahead) with each party member on this map as a
 /// marker in its colour, its initial and its distance under it; one behind sits at the strip's end
@@ -4319,6 +4386,12 @@ bool Read() {
         view.has_stain = 0; // Kaniel 2026-10-20: the Insert menu turned the bloodstains off
     }
     shown = shown && (view.count > 0 || view.has_stain);
+    // Kaniel 2026-10-24: the team's pings on this map are on it too, alone if need be.
+    if (BbSettings::Get().compass && !shown && Pings::OnCompass()) {
+        view = {};
+        view.heading = Pings::view.heading;
+        shown = true;
+    }
     return shown;
 }
 
@@ -4525,6 +4598,7 @@ void Strip(ImDrawList* draw, float y) {
         const bbcoop_compass_stain& stain = view.stain;
         StainMarker(draw, ImVec2(mid + half * stain.x, y), stain, stain.pinned ? (stain.x < 0.0f ? -1 : 1) : 0);
     }
+    Pings::OnStrip(draw, mid, half, y);
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const int arrow = marker.pinned ? (marker.x < 0.0f ? -1 : 1) : 0;
@@ -4541,6 +4615,7 @@ void Ring(ImDrawList* draw) {
         const bbcoop_compass_stain& stain = view.stain;
         StainMarker(draw, ImVec2(mid.x + r * std::sin(stain.bearing), mid.y - r * std::cos(stain.bearing)), stain, 0);
     }
+    Pings::OnRing(draw, mid, r);
     for (int i = 0; i < view.count; ++i) {
         const bbcoop_compass_marker& marker = view.markers[i];
         const ImVec2 at(mid.x + r * std::sin(marker.bearing), mid.y - r * std::cos(marker.bearing));
@@ -4566,6 +4641,154 @@ void Draw() {
 
 } // namespace Compass
 
+/// Kaniel 2026-10-24: team pings. Each member's ping (this player's own too) as a small mark in the
+/// compass's light gray, a ring round a dot (the game has no icon of its own for one), with the
+/// sender's character name and how far it is: over its spot in the world while it is in the
+/// picture, at the picture's edge with a chevron its way while it is not; on the compass (this
+/// map's); on the map (every map's, the area named when it is not this player's). It fades out over
+/// its last moment.
+namespace Pings {
+
+bbcoop_pings view{}; // present thread: as Visible() read it last
+bool shown = false;
+BbPartyLayout::Rect game{};
+
+bool Read() {
+    const bool on = BbSettings::Get().team_pings;
+    bbcoop_set_team_pings(on ? 1 : 0);
+    shown = on && bbcoop_pings_view(&view) != 0;
+    if (!shown) {
+        view = {};
+    }
+    return shown;
+}
+
+bool OnCompass() {
+    if (!shown || !view.has_heading) {
+        return false;
+    }
+    for (int i = 0; i < view.count; ++i) {
+        if (view.pings[i].here) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* NameOf(const bbcoop_ping& ping) {
+    return ping.name[0] != '\0' ? ping.name : Ui::T("Hunter", "Охотник"); // never an online id
+}
+
+float Alpha(const bbcoop_ping& ping) {
+    return std::clamp(ping.seconds_left / 1.5f, 0.0f, 1.0f);
+}
+
+/// Kaniel 2026-10-24 (after the first pictures: "Bolder + dark outline"): everything of a ping
+/// has a soft dark edge, so it reads on a bright scene too.
+ImU32 Edge(float alpha) {
+    return Compass::Faded(0.02f, 0.02f, 0.02f, 0.9f * alpha);
+}
+
+/// The mark centred on `at`, `r` its ring's radius: a 3 px ring (at 1080p) round a dot.
+void Mark(ImDrawList* draw, ImVec2 at, float r, float alpha) {
+    using Ui::S;
+    draw->AddCircle(at, r, Edge(alpha), 32, S(6.0f));
+    draw->AddCircleFilled(at, r * 0.32f + S(1.5f), Edge(alpha), 16);
+    draw->AddCircle(at, r, Compass::Gray(alpha), 32, S(3.0f));
+    draw->AddCircleFilled(at, r * 0.32f, Compass::Gray(alpha), 16);
+}
+
+/// A chevron beside a mark of radius `r`, pointing `angle` (radians on the screen, 0 right).
+void Chevron(ImDrawList* draw, ImVec2 at, float r, float angle, float alpha) {
+    using Ui::S;
+    const ImVec2 dir(std::cos(angle), std::sin(angle)), side(-dir.y, dir.x);
+    const float h = S(7.0f);
+    const ImVec2 base(at.x + dir.x * (r + S(5.0f)), at.y + dir.y * (r + S(5.0f)));
+    const ImVec2 a(base.x + side.x * h, base.y + side.y * h), b(base.x + dir.x * h, base.y + dir.y * h),
+        c(base.x - side.x * h, base.y - side.y * h);
+    draw->AddTriangle(a, b, c, Edge(alpha), S(3.0f));
+    draw->AddTriangleFilled(a, b, c, Compass::Gray(0.95f * alpha));
+}
+
+/// A ping's words in the gray with a dark edge all round; `align` as Party::Text's.
+void Words(ImDrawList* draw, float size, ImVec2 at, float alpha, const char* text, float align) {
+    const ImVec2 extent = sans_font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    at.x = std::floor(at.x - extent.x * align);
+    const float d = std::max(1.0f, size * 0.1f);
+    for (const ImVec2 off : {ImVec2(-d, 0), ImVec2(d, 0), ImVec2(0, -d), ImVec2(0, d), ImVec2(-d, -d), ImVec2(d, -d),
+                             ImVec2(-d, d), ImVec2(d, d)}) {
+        draw->AddText(sans_font, size, ImVec2(at.x + off.x, at.y + off.y), Edge(alpha), text);
+    }
+    draw->AddText(sans_font, size, at, Compass::Gray(0.97f * alpha), text);
+}
+
+/// Its words: the sender's name and how far it is (`distance`), else the area it is in (may be "").
+std::string Label(const bbcoop_ping& ping, bool distance, const std::string& area) {
+    char line[128];
+    bbcoop_ping_label(NameOf(ping), distance ? 1 : 0, ping.distance, area.c_str(), line, sizeof(line));
+    return line;
+}
+
+/// In the world: this map's pings over their spots, or at the picture's edge.
+void Draw() {
+    using Ui::S;
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    for (int i = 0; i < view.count; ++i) {
+        const bbcoop_ping& ping = view.pings[i];
+        if (!ping.here || !ping.on_screen) {
+            continue;
+        }
+        const float alpha = Alpha(ping), r = S(10.0f);
+        ImVec2 at(game.x + ping.screen_x * game.w, game.y + ping.screen_y * game.h);
+        // Pinned at the top, it stays under the compass and the counters there (the second
+        // pictures: it sat on the compass's strip).
+        if (ping.pinned) {
+            at.y = std::max(at.y, game.y + S(115.0f));
+        }
+        Mark(draw, at, r, alpha);
+        if (ping.pinned) {
+            Chevron(draw, at, r, ping.arrow, alpha);
+        }
+        // Its words over it; under it while its arrow points up (the arrow takes the place over it).
+        const std::string line = Label(ping, true, "");
+        const bool under = ping.pinned && std::sin(ping.arrow) < -0.3f;
+        Words(draw, S(17.0f), ImVec2(at.x, under ? at.y + r + S(5.0f) : at.y - r - S(26.0f)), alpha, line.c_str(), 0.5f);
+    }
+}
+
+/// On the compass: the mark, its words over the strip (the members' go under it).
+void OnCompassAt(ImDrawList* draw, ImVec2 at, const bbcoop_ping& ping, int arrow) {
+    using Ui::S;
+    const float alpha = Alpha(ping), r = S(8.0f);
+    Mark(draw, at, r, alpha);
+    if (arrow != 0) {
+        Chevron(draw, at, r, arrow < 0 ? 3.14159265f : 0.0f, alpha);
+    }
+    const std::string line = Label(ping, true, "");
+    Words(draw, S(15.0f), ImVec2(at.x, at.y - r - S(23.0f)), alpha, line.c_str(), 0.5f);
+}
+
+void OnStrip(ImDrawList* draw, float mid, float half, float y) {
+    for (int i = 0; shown && i < view.count; ++i) {
+        const bbcoop_ping& ping = view.pings[i];
+        if (ping.here) {
+            OnCompassAt(draw, ImVec2(mid + half * ping.strip_x, y), ping,
+                        ping.strip_pinned ? (ping.strip_x < 0.0f ? -1 : 1) : 0);
+        }
+    }
+}
+
+void OnRing(ImDrawList* draw, ImVec2 mid, float r) {
+    for (int i = 0; shown && i < view.count; ++i) {
+        const bbcoop_ping& ping = view.pings[i];
+        if (ping.here) {
+            OnCompassAt(draw, ImVec2(mid.x + r * std::sin(ping.bearing), mid.y - r * std::cos(ping.bearing)), ping, 0);
+        }
+    }
+}
+
+} // namespace Pings
+
 /// Kaniel 2026-10-17: a cutscene every party member on the map sees is skipped once all of them
 /// voted (Options, CutsceneVote): how many want to, low in the picture while someone does.
 namespace SkipVote {
@@ -4586,12 +4809,13 @@ void Draw() {
     std::snprintf(line, sizeof line, T("%d of %d want to skip", "%d из %d хотят пропустить"), want,
                   watching);
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
-    Party::Text(draw, sans_font, S(18.0f), ImVec2(game.x + game.w * 0.5f, game.y + game.h * 0.86f),
+    const BbPartyLayout::Rect stage = BbPartyLayout::Stage(game); // the game's 16:9 screen
+    Party::Text(draw, sans_font, S(18.0f), ImVec2(stage.x + stage.w * 0.5f, stage.y + stage.h * 0.86f),
                 Ui::Plain(0.9f), line, 0.5f);
     // Kaniel 2026-10-19: which button votes, as the game's icon.
     const Ui::Keys::Hint keys[] = {{"Options", nullptr, T("Skip", "Пропустить")}};
     ImGui::PushFont(MenuArt::Font(), 18.0f);
-    Ui::Keys::Guide(draw, keys, game.x, game.x + game.w, game.y + game.h * 0.86f + S(62.0f));
+    Ui::Keys::Guide(draw, keys, stage.x, stage.x + stage.w, stage.y + stage.h * 0.86f + S(62.0f));
     ImGui::PopFont();
 }
 
@@ -5001,6 +5225,13 @@ std::vector<uint32_t> WorldAreas() {
     if (std::find(world.begin(), world.end(), state.shown) == world.end() && state.shown != 0) {
         world.push_back(state.shown);
     }
+    // Kaniel 2026-10-24: the areas the team's pings are on.
+    for (int i = 0; i < Pings::view.count; ++i) {
+        const uint32_t map = Pings::view.pings[i].map;
+        if (map != 0 && std::find(world.begin(), world.end(), map) == world.end()) {
+            world.push_back(map);
+        }
+    }
     return world;
 }
 
@@ -5107,6 +5338,15 @@ float TopAt(float x, float z) {
     return NAN;
 }
 
+/// Kaniel 2026-10-24: the boxes (x0, y0, x1, y1) of the names drawn on the picture this frame, for
+/// the pings' words to keep off.
+std::vector<float> name_boxes;
+void NoteName(ImFont* font, float size, ImVec2 at, const char* text, float align) {
+    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    const float x0 = at.x - extent.x * align;
+    name_boxes.insert(name_boxes.end(), {x0, at.y, x0 + extent.x, at.y + extent.y});
+}
+
 /// A small lamp: its post and its glowing head; `focused` rings it.
 void LampMark(ImDrawList* draw, ImVec2 at, bool focused, float pulse) {
     const float r = S(7.0f);
@@ -5155,6 +5395,7 @@ void MemberMark(ImDrawList* draw, ImVec2 at, int index, bool label = true) {
     draw->AddCircle(at, r, down ? Party::Blood(0.95f) : Gray(dead ? 0.5f : 1.0f), 32, S(2.0f));
     if (label) {
         Party::Text(draw, sans_font, S(14.0f), ImVec2(at.x, at.y + r + S(3.0f)), Gray(0.95f), name, 0.5f);
+        NoteName(sans_font, S(14.0f), ImVec2(at.x, at.y + r + S(3.0f)), name, 0.5f);
     }
 }
 
@@ -5174,6 +5415,7 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                   ImVec2(frame.p1.x + S(14.0f), frame.p1.y + S(14.0f)), 14.0f, S(12.0f), 0.95f);
     draw->AddRectFilled(frame.p0, frame.p1, Party::Rgba(0.045f, 0.040f, 0.035f, 0.92f));
     draw->PushClipRect(frame.p0, frame.p1, true);
+    name_boxes.clear();
     if (const ChartTexture* shown = Shown()) {
         // The world's other areas under the shown one, a little darker; the shown one over them.
         const auto picture = [&](const ChartTexture& c, float tone) {
@@ -5247,6 +5489,7 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                                            chart.z1 - float(chart.height) / chart.ppm * 0.5f);
                 Party::Text(draw, MenuArt::Font(), S(map == state.shown ? 24.0f : 20.0f), at,
                             map == state.shown ? Bright() : Plain(0.8f), AreaName(map).c_str(), 0.5f);
+                NoteName(MenuArt::Font(), S(map == state.shown ? 24.0f : 20.0f), at, AreaName(map).c_str(), 0.5f);
             }
         }
         // Kaniel 2026-10-18: the places the game names (Iosefka's Clinic, the Healing Church
@@ -5261,6 +5504,7 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
                                                                                 label.z + AtlasOffset(map).dz));
                         Party::Text(draw, MenuArt::Font(), S(17.0f), ImVec2(at.x, at.y + S(22.0f)), Plain(0.85f),
                                     name.c_str(), 0.5f);
+                        NoteName(MenuArt::Font(), S(17.0f), ImVec2(at.x, at.y + S(22.0f)), name.c_str(), 0.5f);
                     }
                 }
             }
@@ -5303,6 +5547,25 @@ void DrawPicture(ImDrawList* draw, const Frame& frame, const std::vector<const b
             LampMark(draw, at, true, pulse);
             const std::string name = BbMapCharts::LampName(named->name_id);
             Party::Text(draw, MenuArt::Font(), S(20.0f), ImVec2(at.x, at.y - S(40.0f)), Bright(), name.c_str(), 0.5f);
+            NoteName(MenuArt::Font(), S(20.0f), ImVec2(at.x, at.y - S(40.0f)), name.c_str(), 0.5f);
+        }
+        // Kaniel 2026-10-24: the team's pings, on every map, drawn last: their words go off the
+        // place names (one on another area than this player's names it).
+        for (int i = 0; i < Pings::view.count; ++i) {
+            const bbcoop_ping& ping = Pings::view.pings[i];
+            if (!charts.contains(ping.map)) {
+                continue;
+            }
+            const float alpha = Pings::Alpha(ping), r = S(11.0f), size = S(17.0f);
+            const ImVec2 at = frame.At(ping.map, ping.x, ping.z, ping.y);
+            Pings::Mark(draw, at, r, alpha);
+            const std::string line = Pings::Label(ping, false, ping.map != view.map ? AreaName(ping.map) : std::string{});
+            const ImVec2 extent = sans_font->CalcTextSizeA(size, FLT_MAX, 0.0f, line.c_str());
+            float box[4];
+            bbcoop_ping_label_place(at.x, at.y, r, extent.x, extent.y, name_boxes.data(), int(name_boxes.size() / 4),
+                                    S(4.0f), box);
+            Pings::Words(draw, size, ImVec2(box[0], box[1]), alpha, line.c_str(), 0.0f);
+            name_boxes.insert(name_boxes.end(), box, box + 4);
         }
         // The cursor: a ring with four ticks, in the compass's light gray.
         if (state.cursor.x >= 0.0f) {
@@ -5478,7 +5741,8 @@ void DrawKeys(ImDrawList* draw, float x0, float x1, float bottom) {
         {"L1 R1", "Q E", T("Area", "Область")},
         {"LS", "WASD", T("Move", "Сдвиг")},
         {state.three_d && Live() ? "L2 R2" : "RS", "- =", T("Zoom", "Масштаб")},
-        {"Square", "C", T("You", "Вы")},
+        {"Options", "C", T("You", "Вы")},
+        {"Square", "RMB", T("Ping", "Метка")},
         {"Triangle", "Tab", T("Whole map", "Вся карта")},
         {"R3", "F", std::isnan(drawn_floors) ? T("Floors", "Этажи") : T("Roofs", "Крыши")},
     };
@@ -5492,6 +5756,28 @@ void DrawKeys(ImDrawList* draw, float x0, float x1, float bottom) {
     keys.push_back({"Circle", "Esc", T("Close", "Закрыть")});
     Keys::Guide(draw, keys, x0, x1, bottom);
     ImGui::PopFont();
+}
+
+/// Kaniel 2026-10-24: a team ping on the spot under `pick` (the cross, or the mouse): on the area
+/// drawn there, at its picture's height there (else this player's).
+void PingAt(const Frame& frame, ImVec2 pick) {
+    const ImVec2 m = frame.Mid();
+    const auto [dx, dz] = frame.Metres(pick.x - m.x, pick.y - m.y);
+    const float ax = state.cx + dx, az = state.cz + dz;
+    std::vector<bbcoop_ping_area> areas;
+    for (const auto& [map, c] : charts) {
+        const BbMapArt::Chart& chart = *c.chart;
+        const Place p = AtlasOffset(map);
+        areas.push_back({map, chart.x0 + p.dx, chart.x0 + float(chart.width) / chart.ppm + p.dx,
+                         chart.z1 - float(chart.height) / chart.ppm + p.dz, chart.z1 + p.dz, p.dx, p.dz});
+    }
+    float y = TopAt(ax, az);
+    if (std::isnan(y)) {
+        y = view.has_me ? view.y : 0.0f;
+    }
+    if (!bbcoop_ping_map(areas.data(), int(areas.size()), state.shown, ax, az, y)) {
+        std::printf("Map: no area under the ping at (%.1f, %.1f)\n", ax, az);
+    }
 }
 
 bool Pressed(std::initializer_list<ImGuiKey> keys, bool repeat = false) {
@@ -5765,7 +6051,18 @@ void Screen() {
                 }
             }
         }
-        if (Pressed({ImGuiKey_GamepadFaceLeft, ImGuiKey_C}) && view.has_me && view.map != 0) {
+        // Kaniel 2026-10-24: Square (or a right click on the picture, not a drag) pings the spot
+        // under the cursor; the player's own spot moved to Options (C stays).
+        if (BbSettings::Get().team_pings) {
+            const bool right_click = ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
+                                     io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < S(6.0f) * S(6.0f) &&
+                                     io.MousePos.x >= frame.p0.x && io.MousePos.x < frame.p1.x &&
+                                     io.MousePos.y >= frame.p0.y && io.MousePos.y < frame.p1.y;
+            if (Pressed({ImGuiKey_GamepadFaceLeft}) || right_click) {
+                PingAt(frame, right_click ? io.MousePos : state.cursor);
+            }
+        }
+        if (Pressed({ImGuiKey_GamepadStart, ImGuiKey_C}) && view.has_me && view.map != 0) {
             const Place p = AtlasOffset(view.map);
             state.cx = view.x + p.dx;
             state.cz = view.z + p.dz;
@@ -5889,7 +6186,7 @@ void ScriptedKeys() {
          : token == "enter" ? ImGuiKey_GamepadFaceDown : token == "l1" ? ImGuiKey_GamepadL1
          : token == "r1" ? ImGuiKey_GamepadR1 : token == "kdown" ? ImGuiKey_DownArrow
          : token == "kup" ? ImGuiKey_UpArrow : token == "circle" ? ImGuiKey_GamepadFaceRight
-         : token == "square" ? ImGuiKey_GamepadFaceLeft
+         : token == "square" ? ImGuiKey_GamepadFaceLeft : token == "start" ? ImGuiKey_GamepadStart
          : token == "triangle" ? ImGuiKey_GamepadFaceUp : token == "r3" ? ImGuiKey_GamepadR3
          : token == "l3" ? ImGuiKey_GamepadL3 : ImGuiKey_None;
     if (token == "back") {
@@ -6144,6 +6441,14 @@ bool HandleEvent(const SDL_Event& event) {
             SetOpen(insert && !menu_or_quit);
             return true;
         }
+        // Kaniel 2026-10-24: the ping key (Insert > Display) pings where the camera aims.
+        if (down && !event.key.repeat && !is_open && !prompt_active && BbSettings::Get().team_pings &&
+            event.key.key == SDL_GetKeyFromName(
+                                 BbSettings::PingKeyNames[std::clamp(BbSettings::Get().ping_key.load(), 0,
+                                                                     BbSettings::PingKeyCount - 1)])) {
+            bbcoop_ping_aim();
+            return false; // the game may see it too: no default control is on it
+        }
         // Kaniel 2026-10-17: M opens the map in the world (the screen closes itself on M).
         if (down && !event.key.repeat && event.key.key == SDLK_M && !is_open && !prompt_active &&
             Map::view.in_world) {
@@ -6277,6 +6582,7 @@ bool HandleEvent(const SDL_Event& event) {
 
 bool Visible() {
     const bool party = initialized && Party::Read(); // read every frame, whatever else is drawn
+    const bool pings = initialized && Pings::Read(); // before the compass, which shows them too
     const bool compass = initialized && Compass::Read();
     const bool skip_vote = initialized && SkipVote::Read();
     const bool was_team = Team::open;
@@ -6301,7 +6607,7 @@ bool Visible() {
         Team::focus.fresh = true;
     }
     return initialized && (menu_open || quit_open || prompt_active || BbSettings::Get().show_fps || party || compass ||
-                           skip_vote || Team::open || Joining::open || Map::open || ScriptedKeysWaiting());
+                           pings || skip_vote || Team::open || Joining::open || Map::open || ScriptedKeysWaiting());
 }
 
 bool MenuOpen() {
@@ -6405,8 +6711,19 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
     io.DeltaTime = ms > 0.0f && ms < 1000.0f ? ms / 1000.0f : 1.0f / 60.0f;
-    // UI scale follows the display height (1080p = 1).
-    const float scale = BbPartyLayout::Scale(float(extent.height));
+    // UI scale follows the display height (1080p = 1); on a frame of another shape than 16:9 (21:9,
+    // 4:3) the height of the game's 16:9 screen in it, as the game's own HUD is scaled.
+    const BbPartyLayout::Rect frame{float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                                    float(game.extent.height)};
+    const BbPartyLayout::Rect stage = BbPartyLayout::Stage(frame);
+    const bool other_shape = game.extent.width > 0 && game.extent.height > 0 &&
+                             (stage.w != frame.w || stage.h != frame.h);
+    const float scale = BbPartyLayout::Scale(other_shape ? stage.h : float(extent.height));
+    // The game's HUD groups at the frame's edges (the aspect hooks): the party HUD follows them,
+    // here and in the game's own HUD (the native list, bloodborne_party PartyListPosition).
+    const BbGuestHooks::HudShift hud_shift = BbGuestHooks::HudEdgeShift();
+    Party::shift = {hud_shift.dx, hud_shift.dy};
+    bbcoop_set_hud_shift(hud_shift.dx, hud_shift.dy);
     if (std::abs(scale - base_scale) > 0.01f) {
         ImGuiStyle& style = ImGui::GetStyle();
         style.ScaleAllSizes(scale / base_scale);
@@ -6443,6 +6760,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
         Compass::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
                          float(game.extent.height)};
         Compass::Draw();
+    }
+    if (Pings::shown && !menu_open && !quit_open && !Team::open && !Joining::open && !Map::open) {
+        Pings::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                       float(game.extent.height)};
+        Pings::Draw();
     }
     if (SkipVote::shown && !menu_open && !quit_open && !Team::open && !Joining::open) {
         SkipVote::game = {float(game.offset.x), float(game.offset.y), float(game.extent.width),

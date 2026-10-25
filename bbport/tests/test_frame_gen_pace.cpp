@@ -110,6 +110,39 @@ int main() {
     FpsText(text, sizeof(text), 60.0f, 0.0f, true, 16.7f); // game rate not known yet
     assert(std::strcmp(text, "60 FPS  16.7 ms") == 0);
 
+    // Releasing DLSS Frame Generation (switched off): under the present's lock, after the queue
+    // has finished presenting (Kaniel's playtest 2026-10-22: the driver crashed in the swap
+    // thread's present right after the release).
+    {
+        struct PresentLock {
+            bool held = false;
+            int locks = 0;
+            void lock() {
+                assert(!held);
+                held = true;
+                ++locks;
+            }
+            void unlock() {
+                assert(held);
+                held = false;
+            }
+        } present;
+        char steps[8] = {};
+        int n = 0;
+        ReleaseBesidePresent(
+            present,
+            [&] {
+                assert(present.held);
+                steps[n++] = 'w';
+            },
+            [&] {
+                assert(present.held);
+                steps[n++] = 'r';
+            });
+        assert(std::strcmp(steps, "wr") == 0);
+        assert(present.locks == 1 && !present.held);
+    }
+
     std::printf("frame-gen-pace-test: all checks passed\n");
     return 0;
 }

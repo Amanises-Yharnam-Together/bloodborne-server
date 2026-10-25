@@ -7,6 +7,7 @@
 #include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
+#include "core/bloodborne_pings.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
 #include "core/bloodborne_trade.h"
@@ -774,22 +775,28 @@ bool AutoplayGlide(const AutoplayStep& step) {
 
 // pickup [<meters>] [<timeout>]: onto the nearest usable map item within reach (30 m), then
 // X for 0.3 s of every 1.5 s until the item leaves the usable list: a real pickup through the
-// item button (the host could not pick up items in the Forbidden Woods, 2026-10-09).
+// item button (the host could not pick up items in the Forbidden Woods, 2026-10-09). Only an
+// item on the player's own floor: one 21 m below the first lamp lies in another map's block,
+// whose ground is not loaded, and the player teleported there fell into it (rig 2026-10-25).
+constexpr float PickupFloorMetres = 8.0f;
 bool AutoplayPickup(const AutoplayStep& step) {
     const auto position = MapItemSearchPlayerPosition();
     const auto items =
         position ? UsableMapItemsNear(*position) : std::vector<std::pair<float, MapItemSpot>>{};
     if (!step.begun) {
-        if (items.empty() || items.front().first > step.Number(0, 30)) {
+        const auto on_floor = std::ranges::find_if(items, [&](const auto& item) {
+            return std::abs(item.second.at[1] - (*position)[1]) <= PickupFloorMetres;
+        });
+        if (on_floor == items.end() || on_floor->first > step.Number(0, 30)) {
             step.failure = "no usable map item near";
             return false;
         }
-        const MapItemSpot& spot = items.front().second;
+        const MapItemSpot& spot = on_floor->second;
         autoplay_run.pickup_handle = spot.handle;
         autoplay_run.pickup_at = {spot.at[0], spot.at[1] + 0.2f, spot.at[2]};
         TeleportLocalPlayer(autoplay_run.pickup_at);
         LOG_INFO(Debug, "Bloodborne autoplay: picking up map item {:#x} {:.1f} m away", spot.handle,
-                 items.front().first);
+                 on_floor->first);
     }
     const bool there = std::ranges::any_of(
         items, [](const auto& item) { return item.second.handle == autoplay_run.pickup_handle; });
@@ -983,6 +990,42 @@ bool AutoplayExpectOrWaitFlag(const AutoplayStep& step) {
         return false;
     }
     return step.WaitedOut(step.Number(2, 180));
+}
+
+// flags <flag>...: each flag's state, logged (which world has what, compared in the logs).
+bool AutoplayLogFlags(const AutoplayStep& step) {
+    std::string states;
+    for (size_t index = 0; !step.Arg(index).empty(); ++index) {
+        const s32 flag = static_cast<s32>(step.Number(index, 0));
+        states += fmt::format(" {}={}", flag, EventFlagOn(flag) ? 1 : 0);
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay flags (map {:#x}):{}", GetCurrentPackedMap(), states);
+    return true;
+}
+
+// altar-record <altar 0-6 | view>: a ritual altar's record (94k00000-94k05999, or the current
+// altar's view 92900000-92905999), its 750 bytes logged as hex (team altars: the rig compares
+// every game's).
+bool AutoplayAltarRecord(const AutoplayStep& step) {
+    const bool view = step.Arg(0) == "view";
+    const s32 altar = view ? -1 : static_cast<s32>(step.Number(0, -1));
+    if (!view && (altar < 0 || altar >= 7)) {
+        step.failure = "altar-record takes an altar 0-6 or view";
+        return false;
+    }
+    const s32 base = view ? 92900000 : 94000000 + altar * 100000;
+    std::string hex;
+    for (s32 byte = 0; byte < 750; ++byte) {
+        const auto bits = EventFlagBits(base + byte * 8, 8);
+        if (!bits) {
+            step.failure = "the event flags are not readable";
+            return false;
+        }
+        hex += fmt::format("{:02x}", *bits & 0xFF);
+    }
+    LOG_INFO(Debug, "Bloodborne autoplay altar-record {} (map {:#x}): {}",
+             view ? "view" : std::string{step.Arg(0)}, GetCurrentPackedMap(), hex);
+    return true;
 }
 
 // godmode [off]: the player's HP back to its max on every party tick (tests that stand
@@ -1674,15 +1717,21 @@ bool AutoplayPickupStain(const AutoplayStep& step) {
 }
 
 // expect-others-shown <n>: exactly n other players show in this world (not hidden: Kaniel
-// 2026-10-15, members gone to another map still stood here).
+// 2026-10-15, members gone to another map still stood here; nor faded out: player report
+// 2026-10-23, the copy of a player who fell into the void stayed faded out after its respawn).
 bool AutoplayExpectOthersShown(const AutoplayStep& step) {
     size_t shown = 0;
     std::string seen;
     for (const OtherPlayer& other : OtherPlayers()) {
         const bool off = IsCharacterDisabled(other.character);
-        seen += fmt::format(" [{:#x} {}]", ReadValue<u32>(other.character, 0x08),
-                            off ? "hidden" : "shown");
-        shown += off ? 0 : 1;
+        const float fade = CharacterFade(other.character);
+        const bool faded = fade < 1.0f;
+        seen += fmt::format(" [{:#x} {} fade {:.2f}]", ReadValue<u32>(other.character, 0x08),
+                            off     ? "hidden"
+                            : faded ? "faded out"
+                                    : "shown",
+                            fade);
+        shown += off || faded ? 0 : 1;
     }
     if (shown != static_cast<size_t>(step.Number(0, 0))) {
         step.failure = fmt::format("{} shown:{}", shown, seen.empty() ? " none" : seen);
@@ -1703,6 +1752,71 @@ bool AutoplayExpectMap(const AutoplayStep& step) {
 
 bool AutoplayDone(const AutoplayStep&) {
     return true;
+}
+
+// ping-aim (Kaniel 2026-10-24, team pings): a ping where the camera aims (on the locked-on enemy
+// while locked on), as the pad's double tap or the ping key places it.
+bool AutoplayPingAim(const AutoplayStep&) {
+    RequestAimPing();
+    return true;
+}
+
+// ping-map <map> <x> <y> <z>: a ping on that map's spot, as the map screen's Square places it.
+bool AutoplayPingMap(const AutoplayStep& step) {
+    const auto map = ParseAutoplayTarget(step.Arg(0));
+    if (!map || *map == 0 || step.Arg(3).empty()) {
+        step.failure = "ping-map wants <map> <x> <y> <z>";
+        return false;
+    }
+    RequestMapPing(
+        *map, {float(step.Number(1, 0.0)), float(step.Number(2, 0.0)), float(step.Number(3, 0.0))});
+    return true;
+}
+
+// expect-pings <count> [<seconds> [<map> [<x> <z> [<metres>]]]] (Kaniel 2026-10-24): within
+// `seconds` (10) `count` pings are shown; with a map, one of them is on it (within `metres`, 3,
+// of x, z when given). Logs every ping shown: its sender, spot, distance and bearing here, and
+// where it is on the screen.
+bool AutoplayExpectPings(const AutoplayStep& step) {
+    PingsView view;
+    ReadPings(view);
+    std::string seen;
+    for (const PingShown& ping : view.pings) {
+        seen +=
+            fmt::format(" [{} ({}) on map {:#x} at ({:.1f}, {:.1f}, {:.1f}) enemy {:#x}{}",
+                        ping.name.empty() ? "?" : ping.name,
+                        ping.member.empty() ? "own" : ping.member, ping.map, ping.at[0], ping.at[1],
+                        ping.at[2], ping.enemy, ping.from_map ? " from the map" : "");
+        if (ping.here) {
+            seen += fmt::format(" here {:.1f} m at {:.1f} deg", ping.distance,
+                                ping.bearing * 180.0f / std::numbers::pi_v<float>);
+        }
+        if (ping.screen) {
+            seen += fmt::format(" screen ({:.2f}, {:.2f}){}", ping.screen->x, ping.screen->y,
+                                ping.screen->pinned ? " pinned" : "");
+        }
+        seen += fmt::format(" {:.1f} s left]", ping.seconds_left);
+    }
+    const std::string text = fmt::format("{}:{}", view.pings.size(), seen.empty() ? " none" : seen);
+    bool matches = view.pings.size() == static_cast<size_t>(step.Number(0, 0));
+    if (matches && !step.Arg(2).empty()) {
+        const auto map = ParseAutoplayTarget(step.Arg(2));
+        const bool spot = !step.Arg(4).empty();
+        const double x = step.Number(3, 0.0), z = step.Number(4, 0.0), metres = step.Number(5, 3.0);
+        matches = map && std::ranges::any_of(view.pings, [&](const PingShown& ping) {
+                      return ping.map == *map &&
+                             (!spot || std::hypot(ping.at[0] - x, ping.at[2] - z) <= metres);
+                  });
+    }
+    if (matches) {
+        LOG_INFO(Debug, "Bloodborne autoplay pings: {}", text);
+        return true;
+    }
+    if (step.elapsed > step.Number(1, 10.0)) {
+        step.failure = fmt::format("pings shown {}", text);
+        LOG_INFO(Debug, "Bloodborne autoplay pings: {}", text);
+    }
+    return false;
 }
 
 // The lobby's verbs (team-*) and the title's (title-press <button> [ms], title-wait <seconds>,
@@ -1931,6 +2045,55 @@ bool AutoplayWaitTrade(const AutoplayStep& step) {
     return TradeNoticesSeen(found->second) > 0 || step.WaitedOut(step.Number(1, 60));
 }
 
+// The gestures this player has learned, for the log.
+std::string LearnedGesturesText() {
+    std::vector<s32> learned;
+    for (const GestureSlot& gesture : PlayerGestures()) {
+        if (gesture.learned) {
+            learned.push_back(gesture.gesture);
+        }
+    }
+    return fmt::format("{}", fmt::join(learned, " "));
+}
+
+// talk-gesture <gesture> <flag>: an NPC talk's "gesture get" step (talk scripts 01.09, e.g.
+// Alfred's t240333 gives Pray, 9, by 6749): nothing while the flag is on, else the gesture learned
+// (talk command 66) and the flag set (11), as in this player's own talk.
+bool AutoplayTalkGesture(const AutoplayStep& step) {
+    const s32 gesture = static_cast<s32>(step.Number(0, 0));
+    const s32 flag = static_cast<s32>(step.Number(1, 0));
+    if (EventFlagOn(flag)) {
+        LOG_INFO(Debug, "Bloodborne autoplay: talk gives no gesture {}: its flag {} is on", gesture,
+                 flag);
+        return true;
+    }
+    if (!LearnGesture(gesture)) {
+        step.failure = "no slot for the gesture";
+        return false;
+    }
+    reinterpret_cast<void PS4_SYSV_ABI (*)(u64, s32, bool)>(
+        image_base + PartyGhostSetEventFlagOffset)(0, flag, true);
+    LOG_INFO(Debug, "Bloodborne autoplay: talk gave gesture {} (flag {}); learned: {}", gesture,
+             flag, LearnedGesturesText());
+    return true;
+}
+
+// expect-gesture <gesture> <0|1> [<timeout>]: whether this player has learned the gesture.
+bool AutoplayExpectGesture(const AutoplayStep& step) {
+    const s32 gesture = static_cast<s32>(step.Number(0, 0));
+    const auto gestures = PlayerGestures();
+    const bool learned = std::ranges::any_of(
+        gestures, [&](const GestureSlot& slot) { return slot.learned && slot.gesture == gesture; });
+    if (learned == (step.Number(1, 1) != 0)) {
+        return true;
+    }
+    if (step.elapsed > step.Number(2, 0)) {
+        step.failure = fmt::format("gesture {} {}learned ({} slots; learned: {})", gesture,
+                                   learned ? "" : "not ", gestures.size(), LearnedGesturesText());
+    }
+    return false;
+}
+
 // The script's verbs (tools/rig/tests/test_rig.py keeps the same list for the scenarios).
 using AutoplayVerb = bool (*)(const AutoplayStep& step);
 constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, AutoplayVerb>>({
@@ -1962,7 +2125,11 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"set-flag", AutoplaySetFlag},
     {"return-point", AutoplayReturnPoint},
     {"expect-flag", AutoplayExpectOrWaitFlag},
+    {"talk-gesture", AutoplayTalkGesture},
+    {"expect-gesture", AutoplayExpectGesture},
     {"wait-flag", AutoplayExpectOrWaitFlag},
+    {"flags", AutoplayLogFlags},
+    {"altar-record", AutoplayAltarRecord},
     {"godmode", AutoplayGodmode},
     {"snapshot", AutoplaySnapshot},
     {"census", AutoplayCensus},
@@ -1989,6 +2156,9 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-others-shown", AutoplayExpectOthersShown},
     {"expect-compass", AutoplayExpectCompass},
     {"expect-stains", AutoplayExpectStains},
+    {"ping-aim", AutoplayPingAim},
+    {"ping-map", AutoplayPingMap},
+    {"expect-pings", AutoplayExpectPings},
     {"pickup-stain", AutoplayPickupStain},
     {"expect-map", AutoplayExpectMap},
     {"chapter", AutoplayChapter},

@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "Opløsning, opskaler, skarphed og modeldetaljer (bbport)",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "Sceneopløsning: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "RCAS efter opskaleren: 0 fra, 10 stærkest",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "Endeligt billede: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
  "Frame rate in the top right corner": "Billedhastighed i øverste højre hjørne",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "Efter genstart: 0-1 højeste, 2-4 spillets standard, 5-7 lavere, 8-10 laveste",
  "Highest": "Højeste",
@@ -377,5 +376,17 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Lodret synsfelt i grader; spillets kamera har 43. Hvert kamera udvides lige meget. Træder i kraft, når spillet genstartes.",
  "Mute in the background": "Lydløs i baggrunden",
  "The game is silent while its window is not the active one.": "Spillet er stille, mens dets vindue ikke er det aktive.",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Knapperne, spillet viser på skærmen. Automatisk følger det, du spiller med: tasterne nedenfor, mens du bruger tastatur og mus, controllerens egne knapper (PlayStation, Xbox eller Switch), mens du bruger en, og skifter undervejs. En ændring her træder i kraft efter en genstart."
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Knapperne, spillet viser på skærmen. Automatisk følger det, du spiller med: tasterne nedenfor, mens du bruger tastatur og mus, controllerens egne knapper (PlayStation, Xbox eller Switch), mens du bruger en, og skifter undervejs. En ændring her træder i kraft efter en genstart.",
+ "Auto (the output's)": "Auto (som output)",
+ "16:9 (bars)": "16:9 (bjælker)",
+ "Aspect ratio": "Billedformat",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: en bredere skærm (21:9, 32:9) viser mere i siderne, en højere (16:10, 4:3) mere foroven og forneden; HUD'en flyttes ud til skærmens kanter. 16:9: spillets billede med sorte bjælker. Træder i kraft efter genstart af spillet.",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: en bredere skærm (21:9, 32:9) viser mere i siderne, en højere (16:10, 4:3) mere foroven og forneden; HUD'en flyttes ud til skærmens kanter. 16:9: spillets billede med sorte bjælker. Ændres fra næste billede.",
+ "Final frame": "Færdigt billede",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: en bredere eller højere skærm viser mere af verden. 16:9: spillets billede, sorte bjælker",
+ "Team pings": "Holdmarkeringer",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Markér et sted for dit hold i 20 sekunder: tryk to gange på touchpladen eller tryk på markeringstasten, hvor du sigter (på den fjende, du har låst), {Square} på kortet. Holdet ser den i verden, på kompasset og på kortet.",
+ "Ping key": "Markeringstast",
+ "The keyboard key that pings where you aim.": "Tasten, der markerer, hvor du sigter.",
+ "Ping": "Markér"
 }

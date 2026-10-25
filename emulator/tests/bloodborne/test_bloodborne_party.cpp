@@ -61,6 +61,21 @@ TEST(BloodborneCoopTime, ReportsEachSectionOncePerPeriod) {
     EXPECT_EQ(meter.Report(30'001), std::nullopt) << "counts start over";
 }
 
+// AtiniirSpectre 2026-10-23 (v1.2.0): after a death the co-op tick's longest call went from 21 ms
+// to 111 ms. The tick's parts are measured too, and only the slowest few are named, by their
+// total time, so a player's log says which part grew.
+TEST(BloodborneCoopTime, NamesOnlyTheSlowestSectionsWhenAsked) {
+    CoopTimeMeter meter{30'000};
+    meter.Add("place", 100'000, 0);
+    meter.Add("map screen", 9'000'000, 0);
+    meter.Add("trip", 2'000'000, 0);
+    meter.Add("trip", 2'000'000, 0);
+    EXPECT_EQ(meter.Report(30'000, 2),
+              std::optional<std::string>{
+                  "map screen avg 9.00 ms max 9.00 ms (1 calls), trip avg 2.00 ms max 2.00 ms "
+                  "(2 calls) over 30 s"});
+}
+
 using namespace Core::Bloodborne;
 
 // Kaniel 2026-10-15: the host and a guest went to the Hunter's Dream and the guest left behind
@@ -117,6 +132,41 @@ TEST(MemberPresence, OneMemberKeepsOnlyOneCharacterShown) {
                                           member("krolebord", Dream, 16.0f)};
     EXPECT_EQ(ShownOtherPlayers(characters, board, "me", Yharnam),
               (std::vector<bool>{true, false}));
+    EXPECT_EQ(VouchingMembers(characters, board, "me", Yharnam),
+              (std::vector<std::optional<size_t>>{1, std::nullopt}))
+        << "lisara (board entry 1) vouches for the nearer character, nobody for the other";
+    const std::vector<std::optional<LampPosition>> unknown{std::nullopt};
+    EXPECT_EQ(VouchingMembers(unknown, board, "me", Yharnam),
+              (std::vector<std::optional<size_t>>{std::nullopt}));
+}
+
+// Player report 2026-10-23 (v1.1.9): AppleML fell off a cliff into the void, woke at the lamp (its
+// trip) and saw itself, but Provi's copy of it stayed faded out (+0x20C at 0.0, rig
+// void-fall-respawn). It fades back in once the member died and is up again.
+TEST(MemberPresence, AFadedOutCopyFadesBackInOnceItsMemberDiedAndIsUpAgain) {
+    FadeBack fade;
+    EXPECT_FALSE(fade.Tick(1.0f, false, Vital::Up)) << "shown";
+    EXPECT_FALSE(fade.Tick(0.6f, false, Vital::Up)) << "still falling: the game's own fade-out";
+    EXPECT_FALSE(fade.Tick(0.0f, true, Vital::Dead)) << "dead in the void";
+    EXPECT_FALSE(fade.Tick(0.0f, false, std::nullopt)) << "its trip: on no map for a while";
+    EXPECT_TRUE(fade.Tick(0.0f, false, Vital::Up)) << "up at the lamp: faded back in";
+    EXPECT_FALSE(fade.Tick(1.0f, false, Vital::Up));
+    EXPECT_FALSE(fade.Tick(0.0f, false, Vital::Up)) << "faded out again: no death since";
+}
+
+TEST(MemberPresence, AFadedOutCopyStaysWhileItsMemberIsDownOrDead) {
+    FadeBack fade;
+    EXPECT_FALSE(fade.Tick(0.0f, true, Vital::Dead));
+    EXPECT_FALSE(fade.Tick(0.0f, true, Vital::Down));
+    EXPECT_FALSE(fade.Tick(0.0f, false, std::nullopt));
+    EXPECT_TRUE(fade.Tick(0.5f, false, Vital::Up));
+    EXPECT_FALSE(fade.Tick(0.5f, false, Vital::Up)) << "once";
+}
+
+TEST(MemberPresence, AShownCopyForgetsAnEarlierDeath) {
+    FadeBack fade;
+    EXPECT_FALSE(fade.Tick(1.0f, true, Vital::Dead)) << "another member's death, this one shown";
+    EXPECT_FALSE(fade.Tick(0.5f, false, Vital::Up)) << "a fade-out after that is the game's own";
 }
 
 // Rig 2026-10-22 (walls-woods-stairs): a guest joined as the host left for the Ward; both games

@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "分辨率、超分辨率、锐度和模型细节（bbport）",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "场景分辨率：0-1 Native AA，2-3 Quality，4-6 Balanced，7-8 Performance，9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "超分辨率后的 RCAS：0 关闭，10 最强",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "最终画面：0-1 1280x720，2-4 1920x1080，5-7 2560x1440，8-10 3840x2160",
  "Frame rate in the top right corner": "在右上角显示 FPS",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "重启后：0-1 最高，2-4 游戏默认，5-7 较低，8-10 最低",
  "Highest": "最高",
@@ -377,5 +376,17 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "垂直视野角度；游戏的镜头为 43。所有镜头按相同幅度放宽。重启游戏后生效。",
  "Mute in the background": "后台时静音",
  "The game is silent while its window is not the active one.": "游戏窗口不是当前窗口时，游戏不发出声音。",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "游戏在屏幕上显示的按键。自动会跟随你正在使用的设备：使用键盘和鼠标时显示下方绑定的按键，使用手柄时显示手柄自己的按键（PlayStation、Xbox 或 Switch），切换设备时随之切换。此处的更改在重启后生效。"
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "游戏在屏幕上显示的按键。自动会跟随你正在使用的设备：使用键盘和鼠标时显示下方绑定的按键，使用手柄时显示手柄自己的按键（PlayStation、Xbox 或 Switch），切换设备时随之切换。此处的更改在重启后生效。",
+ "Auto (the output's)": "自动（跟随输出）",
+ "16:9 (bars)": "16:9（黑边）",
+ "Aspect ratio": "画面比例",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "自动：更宽的屏幕（21:9、32:9）两侧显示更多，更高的屏幕（16:10、4:3）上下显示更多，HUD 移到屏幕边缘。16:9：游戏原本的画面，带黑边。重启游戏后生效。",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "自动：更宽的屏幕（21:9、32:9）两侧显示更多，更高的屏幕（16:10、4:3）上下显示更多，HUD 移到屏幕边缘。16:9：游戏原本的画面，带黑边。从下一帧起改变。",
+ "Final frame": "最终画面",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "自动：更宽或更高的屏幕显示更多世界。16:9：游戏原本的画面，黑边",
+ "Team pings": "队伍标记",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "为队伍标记一个地点，持续20秒：在瞄准处（锁定时为该敌人）连按两下触摸板或按标记键，地图上按{Square}。队伍可在世界、罗盘和地图上看到。",
+ "Ping key": "标记键",
+ "The keyboard key that pings where you aim.": "在瞄准处放置标记的键盘按键。",
+ "Ping": "标记"
 }

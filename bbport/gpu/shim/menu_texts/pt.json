@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "Resolução, upscaler, nitidez e detalhe dos modelos (bbport)",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "Resolução da cena: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "RCAS após o upscaler: 0 desativado, 10 mais forte",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "Imagem final: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
  "Frame rate in the top right corner": "Taxa de fotogramas no canto superior direito",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "Após reiniciar: 0-1 máximo, 2-4 original do jogo, 5-7 menor, 8-10 mínimo",
  "Highest": "Máximo",
@@ -377,5 +376,17 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Campo de visão vertical em graus; a câmara do jogo tem 43. Todas as câmaras são alargadas na mesma medida. Aplica-se depois de reiniciar o jogo.",
  "Mute in the background": "Sem som em segundo plano",
  "The game is silent while its window is not the active one.": "O jogo fica em silêncio enquanto a sua janela não for a ativa.",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Os botões que o jogo mostra no ecrã. Automático segue aquilo com que jogas: as teclas atribuídas abaixo enquanto usas teclado e rato, os botões do comando (PlayStation, Xbox ou Switch) enquanto usas um, e muda quando mudas. Uma alteração aqui aplica-se depois de reiniciar."
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Os botões que o jogo mostra no ecrã. Automático segue aquilo com que jogas: as teclas atribuídas abaixo enquanto usas teclado e rato, os botões do comando (PlayStation, Xbox ou Switch) enquanto usas um, e muda quando mudas. Uma alteração aqui aplica-se depois de reiniciar.",
+ "Auto (the output's)": "Auto (o da saída)",
+ "16:9 (bars)": "16:9 (barras)",
+ "Aspect ratio": "Proporção",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: um ecrã mais largo (21:9, 32:9) mostra mais dos lados, um mais alto (16:10, 4:3) mais em cima e em baixo; a interface vai para as margens do ecrã. 16:9: a imagem do jogo com barras pretas. Aplica-se depois de reiniciar o jogo.",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: um ecrã mais largo (21:9, 32:9) mostra mais dos lados, um mais alto (16:10, 4:3) mais em cima e em baixo; a interface vai para as margens do ecrã. 16:9: a imagem do jogo com barras pretas. Muda a partir da imagem seguinte.",
+ "Final frame": "Imagem final",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: um ecrã mais largo ou mais alto mostra mais do mundo. 16:9: a imagem do jogo, barras pretas",
+ "Team pings": "Marcas de equipa",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Marca um local para a tua equipa durante 20 segundos: toca duas vezes no painel tátil ou prime a tecla de marca onde apontas (no inimigo fixado), {Square} no mapa. A equipa vê-a no mundo, na bússola e no mapa.",
+ "Ping key": "Tecla de marca",
+ "The keyboard key that pings where you aim.": "A tecla que coloca uma marca onde apontas.",
+ "Ping": "Marcar"
 }

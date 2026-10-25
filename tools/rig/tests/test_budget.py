@@ -30,6 +30,16 @@ class BudgetTest(unittest.TestCase):
     def test_the_long_tier_names_real_scenarios(self):
         self.assertEqual(set(budget.LONG) - set(scenarios.SCENARIOS), set())
 
+    def test_the_full_tier_runs_the_recent_bugs(self):
+        # Kaniel 2026-10-25: the rig keeps up with the recent bugs: their scenarios run in the
+        # full tier (the LONG ones in the long tier), and each names a real scenario.
+        self.assertEqual(set(budget.RECENT) - set(scenarios.SCENARIOS), set())
+        self.assertEqual(set(budget.RECENT) & set(budget.LONG), set())
+        full = budget.tiers(suites.SUITES, scenarios.SCENARIOS)["full"]
+        self.assertTrue(set(budget.RECENT) <= set(full))
+        self.assertTrue({"dog-alone3", "nightmare-flags", "pings", "chalice-enter-broken",
+                         "build-check-harder"} <= set(budget.RECENT))
+
     def test_an_over_budget_scenario_fails(self):
         slow = {"timeout": 600, "roles": {"host": [scenarios.START, "wait 45"]}}
         problems = budget.scenario_problems("slow", slow)
@@ -78,7 +88,8 @@ class BudgetTest(unittest.TestCase):
     def test_the_tiers(self):
         tiers = budget.tiers(suites.SUITES, scenarios.SCENARIOS)
         self.assertEqual(tiers["quick"][0], "smoke")
-        self.assertEqual(set(tiers["full"]), set(suites.SUITES))
+        self.assertEqual(set(tiers["full"]), set(suites.SUITES) | set(budget.RECENT))
+        self.assertEqual(tiers["full"][:len(suites.SUITES)][-1] in suites.SUITES, True)
         self.assertIn("soak", tiers["long"])
         self.assertIn("ward-door", tiers["long"])
 

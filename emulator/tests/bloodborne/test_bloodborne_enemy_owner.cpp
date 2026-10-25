@@ -180,6 +180,25 @@ TEST(EnemyOwner, TheOwnerWakesTheGroupsAroundTheOtherPlayers) {
     EXPECT_EQ(WithOthersGroups(record, own, near), Groups(0x60400, 0x20000, 0x60400));
 }
 
+// Kaniel's test 2026-10-23: back alone in Central Yharnam, a guest saw the clinic's dog its story
+// had hidden (rig dog-alone: hidden, wanted 0, still applied 4; the host's game let it go).
+TEST(EnemyOwner, ALoneGuestSwitchesOffWhatItsStoryHidButKeptLoaded) {
+    EXPECT_TRUE(LoneGuestSwitchesOff(true, true, false, 0, 4));
+    EXPECT_TRUE(LoneGuestSwitchesOff(true, true, false, 0, 3));
+    // Let go already, or not hidden, or off already: as it is.
+    EXPECT_FALSE(LoneGuestSwitchesOff(true, true, false, 0, 0));
+    EXPECT_FALSE(LoneGuestSwitchesOff(true, false, false, 0, 4));
+    EXPECT_FALSE(LoneGuestSwitchesOff(true, true, true, 0, 4));
+    // Still wanted (the story shows it again): the game's.
+    EXPECT_FALSE(LoneGuestSwitchesOff(true, true, false, 4, 4));
+    // With the host on the map its game says what is shown (ShowCharactersLikeTheHost).
+    EXPECT_FALSE(LoneGuestSwitchesOff(false, true, false, 0, 4));
+    // One it switched off: back on once shown by the story, or the guest no longer alone.
+    EXPECT_FALSE(LoneGuestSwitchesBackOn(true, true));
+    EXPECT_TRUE(LoneGuestSwitchesBackOn(true, false));
+    EXPECT_TRUE(LoneGuestSwitchesBackOn(false, true));
+}
+
 // Rig 2026-10-15: awake by the far guest's groups, the host's game still let the enemy go.
 TEST(EnemyOwner, TheOwnerRunsEveryAwakeEnemyTheGameLetGo) {
     EXPECT_EQ(AwakeEnemyWord(EnemyRole::Owner, 4, 4, 0xFFFF, false),

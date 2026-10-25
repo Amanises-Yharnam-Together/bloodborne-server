@@ -144,7 +144,9 @@ class BuiltInPatchTests(unittest.TestCase):
                                   '--fps', 'uncap', '--settings', str(out / 'none.ini'),
                                   '--game-dir', str(out), '--xml', str(XML),
                                   '--patches-dir', str(out / 'mods')],
-                                 env={**os.environ, 'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1'},
+                                 # BB_FORCE_PATCHES: the test's ELF has none of the game's code.
+                                 env={**os.environ, 'SHADPS4_BLOODBORNE_SEAMLESS_COOP': '1',
+                                      'BB_FORCE_PATCHES': '1'},
                                  capture_output=True, text=True, encoding='utf-8')
             self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn('CO-OP CONFLICT', run.stderr)
