@@ -594,6 +594,11 @@ add_executable(async-claim-test EXCLUDE_FROM_ALL ../tests/test_async_claim.cpp)
 target_compile_options(async-claim-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(async-claim-test PRIVATE shim)
 
+# A shader table walker reading through a null pointer reads zeros for that walk only.
+add_executable(srt-fault-test EXCLUDE_FROM_ALL ../tests/test_srt_fault.cpp)
+target_compile_options(srt-fault-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(srt-fault-test PRIVATE shim)
+
 # The push constant block the shaders read (header only: bbgpu's include directories, no link).
 add_executable(push-data-test EXCLUDE_FROM_ALL ../tests/test_push_data.cpp)
 target_compile_options(push-data-test PRIVATE -UNDEBUG)
