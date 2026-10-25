@@ -423,7 +423,8 @@ void WorldWriter::SaveTeamWorld(const QString& dir, bbcoop::TeamWorld world, con
     state->Push(dir, [dir, world = std::move(world), today](State& s) {
         QDir{}.mkpath(dir);
         if (!StoreTeamWorld(QDir{dir}, world, today)) {
-            s.Log(QStringLiteral("could not write %1").arg(QDir{dir}.filePath(QStringLiteral("team_world.pb"))));
+            s.Log(QStringLiteral("could not write %1")
+                      .arg(QDir{dir}.filePath(QStringLiteral("team_world.pb"))));
         }
     });
 }

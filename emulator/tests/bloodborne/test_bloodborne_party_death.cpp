@@ -870,39 +870,39 @@ TEST(BloodbornePartyDeath, TheMemberInTheArenaRunsTheBoss) {
     BossRunnerPick pick;
     EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss, std::vector{at("host", 150.0f)}), "")
         << "nobody near: as the game runs it";
-    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
-                        std::vector{at("host", 150.0f), at("lisara", 10.0f)}),
-              "lisara");
-    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
-                        std::vector{at("host", 5.0f),
-                                    at("lisara", 10.0f, Vital::Up, Yharnam, true)}),
-              "lisara")
+    EXPECT_EQ(
+        pick.Tick(Yharnam, Gascoigne, boss, std::vector{at("host", 150.0f), at("lisara", 10.0f)}),
+        "lisara");
+    EXPECT_EQ(
+        pick.Tick(Yharnam, Gascoigne, boss,
+                  std::vector{at("host", 5.0f), at("lisara", 10.0f, Vital::Up, Yharnam, true)}),
+        "lisara")
         << "the host comes in: the boss stays with her";
-    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
-                        std::vector{at("host", 5.0f),
-                                    at("lisara", 10.0f, Vital::Down, Yharnam, true)}),
-              "lisara")
+    EXPECT_EQ(
+        pick.Tick(Yharnam, Gascoigne, boss,
+                  std::vector{at("host", 5.0f), at("lisara", 10.0f, Vital::Down, Yharnam, true)}),
+        "lisara")
         << "down in the arena: still hers";
     // Kaniel 2026-10-20: one owner for the whole fight, however far it runs in a big arena.
-    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
-                        std::vector{at("host", 5.0f),
-                                    at("lisara", 60.0f, Vital::Up, Yharnam, true)}),
-              "lisara")
+    EXPECT_EQ(
+        pick.Tick(Yharnam, Gascoigne, boss,
+                  std::vector{at("host", 5.0f), at("lisara", 60.0f, Vital::Up, Yharnam, true)}),
+        "lisara")
         << "kiting far across the arena: still hers";
-    EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
-                        std::vector{at("host", 5.0f),
-                                    at("lisara", 60.0f, Vital::Dead, Yharnam, true)}),
-              "host")
+    EXPECT_EQ(
+        pick.Tick(Yharnam, Gascoigne, boss,
+                  std::vector{at("host", 5.0f), at("lisara", 60.0f, Vital::Dead, Yharnam, true)}),
+        "host")
         << "dead for good: the nearest one in the arena";
     EXPECT_EQ(pick.Tick(Yharnam, Gascoigne, boss,
                         std::vector{at("host", 5.0f, Vital::Up, 0x15000000),
                                     at("lisara", 60.0f, Vital::Up, 0x15000000, true)}),
               "")
         << "both left the map, nobody in the arena: as the game runs it";
-    EXPECT_EQ(pick.Tick(Yharnam, 0x10010001, boss,
-                        std::vector{at("host", 5.0f),
-                                    at("lisara", 60.0f, Vital::Up, Yharnam, true)}),
-              "host")
+    EXPECT_EQ(
+        pick.Tick(Yharnam, 0x10010001, boss,
+                  std::vector{at("host", 5.0f), at("lisara", 60.0f, Vital::Up, Yharnam, true)}),
+        "host")
         << "her claim is for another boss";
     // krolebord joined in the middle of the host's fight: the boss stays with the host's game.
     BossRunnerPick fight;
@@ -910,21 +910,20 @@ TEST(BloodbornePartyDeath, TheMemberInTheArenaRunsTheBoss) {
                          std::vector{at("host", 8.0f), at("krolebord", 3.0f)}, "host"),
               "")
         << "the game's own runner is in the arena";
-    EXPECT_EQ(fight.Tick(Yharnam, Gascoigne, boss,
-                         std::vector{at("host", 80.0f, Vital::Up, Yharnam, true),
-                                     at("krolebord", 3.0f)},
-                         "host"),
-              "")
+    EXPECT_EQ(
+        fight.Tick(Yharnam, Gascoigne, boss,
+                   std::vector{at("host", 80.0f, Vital::Up, Yharnam, true), at("krolebord", 3.0f)},
+                   "host"),
+        "")
         << "the host runs far across the arena: still its game's";
-    EXPECT_EQ(fight.Tick(Yharnam, Gascoigne, boss,
-                         std::vector{at("host", 5.0f, Vital::Up, 0x15000000, true),
-                                     at("krolebord", 3.0f)},
-                         "host"),
+    EXPECT_EQ(fight.Tick(
+                  Yharnam, Gascoigne, boss,
+                  std::vector{at("host", 5.0f, Vital::Up, 0x15000000, true), at("krolebord", 3.0f)},
+                  "host"),
               "krolebord")
         << "the host left the map: the one in the arena";
     BossRunnerPick tie;
-    EXPECT_EQ(tie.Tick(Yharnam, Gascoigne, boss, std::vector{at("b", 10.0f), at("a", 10.0f)}),
-              "a")
+    EXPECT_EQ(tie.Tick(Yharnam, Gascoigne, boss, std::vector{at("b", 10.0f), at("a", 10.0f)}), "a")
         << "a tie: by name, the same in every game";
     EXPECT_EQ(tie.Tick(Yharnam, Gascoigne, boss,
                        std::vector{at("b", 10.0f, Vital::Up, Yharnam, true),
@@ -941,10 +940,10 @@ TEST(BloodbornePartyDeath, TheMemberInTheArenaRunsTheBoss) {
 
 // Kaniel's playtest 2026-10-25 (v1.2.2): krolebord started the Shadows of Yharnam on his own map
 // (his game the map's runner, so it ran them), the party left by trips and came back with Kaniel's
-// game the map's runner, and Kaniel restarted his game. His fresh pick gave the Shadows to krolebord
-// (nearest), krolebord's game still remembered its own fight (the game's own runner, now Kaniel's):
-// each followed the other and the Shadows stood still until krolebord went to the Dream. Every
-// game picks the same from the same board now, whatever it saw before.
+// game the map's runner, and Kaniel restarted his game. His fresh pick gave the Shadows to
+// krolebord (nearest), krolebord's game still remembered its own fight (the game's own runner, now
+// Kaniel's): each followed the other and the Shadows stood still until krolebord went to the Dream.
+// Every game picks the same from the same board now, whatever it saw before.
 TEST(BloodbornePartyDeath, EveryGamePicksTheSameBossRunnerAfterATripAndARestart) {
     constexpr u32 Woods = 0x1B000000;
     constexpr u32 Dream = 0x15000000;
@@ -996,11 +995,13 @@ TEST(BloodbornePartyDeath, BossClaimsLastAWhileAfterTheLastRun) {
 
     EXPECT_TRUE(ClaimsBoss("lisara", "lisara", false, false, 200.0f)) << "picked: at any distance";
     EXPECT_FALSE(ClaimsBoss("lisara", "kaniel", true, true, 5.0f)) << "another one's pick";
-    EXPECT_TRUE(ClaimsBoss("", "kaniel", true, false, 30.0f)) << "the game's own runner in the arena";
+    EXPECT_TRUE(ClaimsBoss("", "kaniel", true, false, 30.0f))
+        << "the game's own runner in the arena";
     EXPECT_FALSE(ClaimsBoss("", "kaniel", true, false, 150.0f))
         << "the game's own runner far away: a member walking in still takes the fight";
     EXPECT_TRUE(ClaimsBoss("", "kaniel", true, true, 150.0f)) << "its fight: kept at any distance";
-    EXPECT_FALSE(ClaimsBoss("", "lisara", false, false, 5.0f)) << "a follower runs nothing of its own";
+    EXPECT_FALSE(ClaimsBoss("", "lisara", false, false, 5.0f))
+        << "a follower runs nothing of its own";
 }
 
 TEST(BloodbornePartyDeath, GoesDownOnlyWithSomeoneElseStandingOnTheMap) {
@@ -1305,9 +1306,9 @@ TEST(BloodbornePartyDeath, AGuestBringsBackWhatTheHostsGeneratorBroughtBack) {
         {0x1002c03f, Now - 60'000},
         {0x1002c040, Now - 60'000},
         {0x1002c041, Now - 60'000},
-        {0x1002c042, Now - 60'000},     // a member's kill still stands: not back yet
-        {0x1002c043, Now - 1'000},      // died here just now: the host may not know yet
-        {0x1002c044, Now - 60'000},     // not on the host's board
+        {0x1002c042, Now - 60'000}, // a member's kill still stands: not back yet
+        {0x1002c043, Now - 1'000},  // died here just now: the host may not know yet
+        {0x1002c044, Now - 60'000}, // not on the host's board
     };
     EXPECT_EQ(BroughtBackByTheHost(host, dead_here, {0x1002c042}, Now),
               std::vector<u32>{0x1002c03d});
@@ -1322,9 +1323,9 @@ TEST(BloodbornePartyDeath, TheHostsGeneratorRespawnTakesOnlyItsOwn) {
     EXPECT_TRUE(RespawnsInWorldRespawn(WorldRespawnKind::BroughtBack, back, true));
     EXPECT_FALSE(RespawnsInWorldRespawn(WorldRespawnKind::BroughtBack,
                                         {.hp = 0, .max_hp = 370, .death_flags = 0x06}, true));
-    EXPECT_FALSE(RespawnsInWorldRespawn(
-        WorldRespawnKind::BroughtBack,
-        {.hp = 370, .max_hp = 370, .brought_back = true}, true)); // alive again already
+    EXPECT_FALSE(RespawnsInWorldRespawn(WorldRespawnKind::BroughtBack,
+                                        {.hp = 370, .max_hp = 370, .brought_back = true},
+                                        true)); // alive again already
     // Nor does the mark change the other two respawns.
     EXPECT_FALSE(RespawnsInWorldRespawn(WorldRespawnKind::AfterWipe, back, true));
     EXPECT_TRUE(RespawnsInWorldRespawn(WorldRespawnKind::PartyRest, back, true));

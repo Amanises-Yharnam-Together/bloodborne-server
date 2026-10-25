@@ -80,29 +80,32 @@ SHOW_OWN_CHOICES = ("deaths", "ghosts", "lanterns")
 # returns to the title. The server makes them itself. FormData is the dungeon as the game uploads
 # one (ChannelUpload after a root chalice's ritual, format 5, little endian): u32 5, u32 140;
 # layout, rites, depth*10 + area (0 Pthumeru, 1 Hintertomb, 2 Loran, 3 Isz), 0x1D; u32 the
-# chalice's goods id; 9 layers of {u32 id, s32 code} (ids 9900000 + key*1000 + 30, 35, 50, 60,
-# 11; -1 for none); the conductor's name, 16 bytes ASCII, and 32 bytes UTF-16; zeros to 140. A
-# ritual takes the chalice from the player's hands but its layout from the record's rites byte:
-# 90 is a standard chalice's story layout, m29_<key>_90_00 (0 gave the story Pthumeru Chalice
-# the root layout m29_10_00_00 and its boss the root loot, rig BB_FILE_TRACE 2026-10-21); a join
-# through Chalice Dungeon Search builds it from FormData alone. Keyed by RitualLevel * 10 +
-# HolyGrailTypeId: (rites, goods id, layer codes, 0xFF for none).
+# chalice's goods id; 9 feature slots of {u32 id, s32 code} (-1 for none); the conductor's name,
+# 16 bytes ASCII, and 32 bytes UTF-16; zeros to 140. A ritual takes the chalice from the player's
+# hands but its layout from the record's rites byte: 90 is a standard chalice's story layout,
+# m29_<key>_90_00 (0 gave the story Pthumeru Chalice the root layout m29_10_00_00 and its boss the
+# root loot, rig BB_FILE_TRACE 2026-10-21); a join through Chalice Dungeon Search builds it from
+# FormData alone. The slots are the game's own for the chalice (HolygrailExParam row <goods>, each
+# id's one code from DungeonSubFeatLotParam): the ritual sets the altar's flag 5300 + each code's
+# feature flag, and the last bosses give the next chalice only with 5378 or 5385 on (m29 event
+# 12901693; the root slots these had before gave none, Kaniel's playtest 2026-10-25). Keyed by
+# RitualLevel * 10 + HolyGrailTypeId: (rites, goods id, slots of (id, code), None for none).
+_S90, _S91, _S93, _S94, _S45 = ((995010110, 90), (995010120, 91), (995010140, 93),
+                                (995010220, 94), (994500000, 45))
 STANDARD_DUNGEONS = {
-    10: (90, 6109, (0xFF, 0x23, 0x32)),
-    20: (90, 6209, (0xFF, 0x24, 0x32, 0x3C)),
-    21: (90, 6219, (0xFF, 0x23, 0x33, 0x3C, 0x0A)),
-    30: (90, 6309, (0xFF, 0x24, 0x32, 0x3D)),
-    31: (90, 6319, (0xFF, 0x25, 0x33, 0x3C, 0x0A)),
-    40: (90, 6409, (0xFF, 0x24, 0x32, 0x3D, 0x0E)),
-    42: (90, 6429, (0xFF, 0x23, 0x34, 0x3C)),
-    50: (90, 6509, (0xFF, 0x24, 0x32, 0x3D, 0x0E)),
-    52: (90, 6529, (0xFF, 0x26, 0x34, 0x3C)),
-    53: (90, 6539, (0x4F, 0x27, 0x35, 0x43, 0x0F)),
+    10: (90, 6109, (None, None, _S90, None, None, _S45)),
+    20: (90, 6209, (None, None, _S90, _S91, None, _S45)),
+    21: (90, 6219, (None, None, _S94, (991000000, 10), None, _S45)),
+    30: (90, 6309, ((996100000, 61), (998500000, 85), _S90, _S91, None, _S45)),
+    31: (90, 6319, (None, (998600000, 86), _S94, (995010230, 95), (991000000, 10), _S45)),
+    40: (90, 6409, ((996200000, 62), (997000000, 70), _S90, _S91, _S93, _S45)),
+    42: (90, 6429, (None, None, (995010340, 96), None, None, _S45)),
+    50: (90, 6509, ((996200000, 62), (998700000, 87), _S90, _S91, _S93, _S45)),
+    52: (90, 6529, (None, (998800000, 88), (995010340, 96), (995010350, 97), None, _S45)),
+    53: (90, 6539, (_S90, (998900000, 89), (995010450, 98), _S91, _S94, _S45)),
 }
 # Their ChannelIds: this base plus the key, far above any stored dungeon's.
 STANDARD_CHANNEL_BASE = 2000000000
-# A layer's id is 9900000 + key * 1000 + its own offset.
-STANDARD_LAYER_IDS = (30, 35, 50, 60, 11)
 STANDARD_CONDUCTOR = "Hunter"
 
 
@@ -652,13 +655,11 @@ def standard_dungeon(key):
     """The record of the standard chalice dungeon `key` (RitualLevel * 10 + HolyGrailTypeId)."""
     if key not in STANDARD_DUNGEONS:
         return None
-    rites, goods, codes = STANDARD_DUNGEONS[key]
+    rites, goods, slots = STANDARD_DUNGEONS[key]
     form = struct.pack("<II4BI", 5, 140, 0, rites, key, 0x1D, goods)
     for slot in range(9):
-        code = codes[slot] if slot < len(codes) else None
-        form += (struct.pack("<Ii", 9900000 + key * 1000 + STANDARD_LAYER_IDS[slot],
-                             -1 if code == 0xFF else code)
-                 if code is not None else struct.pack("<ii", -1, -1))
+        feature = slots[slot] if slot < len(slots) else None
+        form += struct.pack("<Ii", *feature) if feature else struct.pack("<ii", -1, -1)
     form += STANDARD_CONDUCTOR.encode("ascii").ljust(16, b"\0")
     form += STANDARD_CONDUCTOR.encode("utf-16-le").ljust(32, b"\0")
     form = form.ljust(140, b"\0")

@@ -1928,11 +1928,12 @@ int ATeamsWorldKeepsBackups() {
       }
       now += Day;
     }
-    for (const QString &name :
-         QDir{dir.path()}.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-      if (QFile::exists(QDir{dir.filePath(name)}.filePath("team_world.pb"))) {
-        world_dir = dir.filePath(name);
-      }
+  }
+  // The server gone: its writer thread has written everything.
+  for (const QString &name :
+       QDir{dir.path()}.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+    if (QFile::exists(QDir{dir.filePath(name)}.filePath("team_world.pb"))) {
+      world_dir = dir.filePath(name);
     }
   }
   CHECK(!world_dir.isEmpty());

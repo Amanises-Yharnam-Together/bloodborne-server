@@ -5988,7 +5988,8 @@ std::string BossRunnerPick::Tick(u32 map, u32 handle, const LampPosition& boss,
     const auto holds = [&](const MemberVitals& member) {
         return member.map == map && (member.vital == Vital::Up || member.vital == Vital::Down);
     };
-    // A claimer keeps its fight: the game's own runner first, then by name (the same in every game).
+    // A claimer keeps its fight: the game's own runner first, then by name (the same in every
+    // game).
     const MemberVitals* claimer = nullptr;
     for (const MemberVitals& member : board) {
         if (!holds(member) || !std::ranges::contains(member.bosses, handle)) {

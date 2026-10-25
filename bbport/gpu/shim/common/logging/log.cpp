@@ -47,7 +47,9 @@ static const FileSink& file_sink() {
         const bool restarted = append && !std::strcmp(append, "1");
         opened.file = std::fopen(path, restarted ? "a" : "w");
         if (opened.file) opened.threshold = ParseLevel(std::getenv("BB_LOG_LEVEL"), Level::info);
-        if (opened.file && restarted && std::ftell(opened.file) > 0) {
+        // At the end first: Windows' C runtime opens "a" at position 0 until the first write.
+        if (opened.file && restarted && std::fseek(opened.file, 0, SEEK_END) == 0 &&
+            std::ftell(opened.file) > 0) {
             std::fputs("[Log] <Info> () log.cpp:0 Open: the game restarted; its log goes on below\n",
                        opened.file);
             std::fflush(opened.file);
