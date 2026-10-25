@@ -3,6 +3,7 @@
  * use FreeBSD numbering; host errno values never reach the guest directly. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "gpu/bbgpu.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -180,6 +181,7 @@ static ABI int32_t yield(void) { sched_yield(); return 0; }
 static ABI __attribute__((noreturn)) void hard_exit(int status) {
     printf("Runtime: guest requested _exit(%d)\n",status);
     runtime_report();
+    bbgpu_log_flush();
     fflush(stdout);
     _exit(status);
 }
@@ -188,6 +190,7 @@ static ABI __attribute__((noreturn)) void raise_exception(uint32_t code,uint64_t
     runtime_report();
     /* Other threads still run (the game's network threads among them): no exit handlers or
      * static destructors under them (deadinside28's bbport 0.6). */
+    bbgpu_log_flush();
     fflush(NULL);
     _exit(23);
 }

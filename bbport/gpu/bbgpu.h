@@ -24,6 +24,9 @@ int bbgpu_init(const BbGpuConfig *config);
 uintptr_t bbgpu_resolve(const char *scoped_nid);
 /* Called first by the loader's SIGSEGV handler: 1 when a GPU page-tracking fault was handled. */
 int bbgpu_handle_fault(void *ucontext, void *address);
+/* Writes out the log lines still queued for the log's writer thread (BB_LOG_FILE and stderr):
+ * called before the process ends by any path that skips exit handlers (_exit, TerminateProcess). */
+void bbgpu_log_flush(void);
 /* BB_WRITE_LOG=1: prints the logged GPU-side writes to guest memory near the fault. */
 void bbgpu_dump_guest_writes(void *ucontext);
 /* Keyboard text entry through the game window (IME dialog). begin returns 0 when

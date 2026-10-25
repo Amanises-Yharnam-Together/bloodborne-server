@@ -194,6 +194,7 @@ import bbport_controls  # noqa: E402
 import bbport_steam  # noqa: E402
 import bbport_coop  # noqa: E402
 import bbport_upnp  # noqa: E402
+import bbport_support  # noqa: E402
 
 LANG = 'en'
 
@@ -3955,6 +3956,9 @@ class Launcher:
         self.button(holder, _('How to connect', 'Как подключиться'), self.open_coop_help).pack(side='left')
         self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
                     self.coop_import_saves).pack(side='left', padx=(px(8), 0))
+        # Kaniel 2026-10-25: one press makes the zip a bug report needs (bbport_support).
+        self.button(holder, _('Support bundle', 'Пакет для поддержки'),
+                    self.make_support_bundle).pack(side='left', padx=(px(8), 0))
         self.note(card, _('Make or join a team in the game: Continue, Load Game or New Game opens the team screen. '
                           'Windows asks once to let co-op through its firewall.',
                           'Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают экран '
@@ -5305,6 +5309,8 @@ class Launcher:
         row.pack(fill='x')
         self.label(row, spaced(_('Log', 'Журнал')), 'h1', bg=PANEL).pack(side='left')
         self.button(row, _('Copy', 'Копировать'), self.copy_log, bg=PANEL).pack(side='right')
+        self.button(row, _('Support bundle', 'Пакет для поддержки'), self.make_support_bundle,
+                    bg=PANEL).pack(side='right', padx=px(8))
         self.button(row, _('Clear', 'Очистить'), lambda: self.set_log(''), bg=PANEL).pack(side='right', padx=px(8))
         self.rule(top, PANEL).pack(fill='x', pady=(px(6), px(2)))
         frame = tk.Frame(page, bg=FIELD, highlightthickness=1, highlightbackground=LINE)
@@ -5782,6 +5788,56 @@ class Launcher:
     def copy_log(self):
         self.root.clipboard_clear()
         self.root.clipboard_append(self.log.get('1.0', 'end'))
+
+    def make_support_bundle(self):
+        """Support bundle (Kaniel 2026-10-25): the logs, reports, settings and a network check in one zip
+        on the Desktop, made off the window's thread at background priority, while the game runs too."""
+        if getattr(self, 'support_busy', False):
+            return
+        self.support_busy = True
+        user = PORT_DIR / 'user' if COOP_INSTALL else Path(self.app.get('user_dir') or DATA_DIR / 'user')
+        settings = dict(self.coop) if COOP_INSTALL and getattr(self, 'coop', None) else None
+        versions = {'Launcher': VERSION, 'Release': coop_release_version() or 'dev',
+                    'Install': str(PORT_DIR), 'Co-op install': 'yes' if COOP_INSTALL else 'no',
+                    'Game running': 'yes' if self.process is not None else 'no'}
+        texts = {'launcher-log.txt': self.log.get('1.0', 'end')}
+        target = bbport_support.default_folder() / bbport_support.bundle_name()
+        self.status.configure(text=_('Making the support bundle…', 'Собираем пакет для поддержки…'), fg=GOLD)
+        threading.Thread(target=self.support_bundle_worker, args=(target, user, settings, versions, texts),
+                         daemon=True).start()
+
+    def support_bundle_worker(self, target, user, settings, versions, texts):
+        bbport_support.worker_priority()
+        try:
+            texts['system.txt'] = bbport_support.system_report(versions)
+            if settings is not None:
+                texts['network.txt'] = bbport_support.network_report(settings)
+            extra = [(ini_path(), 'bbport.ini'), (CONFIG_FILE, 'launcher-settings.json'),
+                     (DATA_DIR / 'last_run.log', 'last_run.log')]
+            failed = bbport_support.make_bundle(target, user, settings=settings, extra_files=extra, texts=texts)
+            error = None
+        except OSError as problem:
+            failed, error = [], problem
+        self.ui_calls.put(lambda: self.support_bundle_done(target, failed, error))
+
+    def support_bundle_done(self, target, failed, error):
+        self.support_busy = False
+        if error is not None:
+            self.status.configure(text=_('Could not make the support bundle: {}',
+                                         'Не удалось собрать пакет для поддержки: {}').format(error), fg=BAD)
+            return
+        text = _('Support bundle saved: {}. Send it with your bug report.',
+                 'Пакет для поддержки сохранён: {}. Отправьте его вместе с описанием ошибки.').format(target.name)
+        if failed:
+            text += ' ' + _('{} files could not be read (listed in missing.txt).',
+                            'Не удалось прочитать файлов: {} (список в missing.txt).').format(len(failed))
+        self.status.configure(text=text, fg=GOLD)
+        if os.name == 'nt':
+            windows = os.environ.get('SystemRoot', r'C:\Windows')
+            try:
+                subprocess.Popen([str(Path(windows) / 'explorer.exe'), f'/select,{target}'])
+            except OSError:
+                pass
 
     def open_path(self, path, key=None):
         if key == 'user_dir' and not path:

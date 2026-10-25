@@ -124,5 +124,17 @@ class ResolutionMemoryTests(unittest.TestCase):
         self.assertIsNone(self.memory('3840x2160', STUB_VERSION='01.00'))
 
 
+class RestartLogTests(unittest.TestCase):
+    def test_an_in_game_restart_keeps_the_log(self):
+        # The in-game restart (Apply and restart, a resolution change) used to start shad_log.txt
+        # afresh, so the run before it lost its log (support bundle thread, 2026-10-25).
+        self.assertEqual(run_py.split_restart(['--after', '4242', '--timeout', '0']), (4242, ['--timeout', '0']))
+        self.assertEqual(run_py.log_append(4242), '1')
+
+    def test_a_new_start_writes_a_fresh_log(self):
+        self.assertEqual(run_py.split_restart(['--timeout', '0']), (None, ['--timeout', '0']))
+        self.assertEqual(run_py.log_append(None), '0')
+
+
 if __name__ == '__main__':
     unittest.main()
