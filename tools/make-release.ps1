@@ -121,6 +121,15 @@ if (-not (Test-Path (Join-Path $bbport "fsr4_shaders"))) {
     try { Invoke-Clang64 "bash tools/fetch_fsr4_assets.sh" }
     catch { Write-Host "  FSR 4 assets could not be fetched: the release has FSR 3.1 only, FSR 4 downloads from the launcher" -ForegroundColor Yellow }
 }
+# Shader packs: our caches for one kind of graphics card each, from <BB_ROOT>\shader-packs
+# (scripts\shader_pack.py make). Only packs of this build's cache versions go in.
+$packSource = Join-Path $env:BB_ROOT "shader-packs"
+if (Test-Path $packSource) {
+    py -3.12 -I (Join-Path $bbport "scripts\shader_pack.py") current $packSource (Join-Path $bbport "shader_packs")
+    if ($LASTEXITCODE -ne 0) { throw "the shader packs could not be copied" }
+} elseif (Test-Path (Join-Path $bbport "shader_packs")) {
+    Remove-Item -Recurse -Force (Join-Path $bbport "shader_packs")
+}
 # DLSS: the bridge and NVIDIA's nvngx_dlss.dll next to bb-probe.exe. A checkout without them (no
 # -DlssSdk) takes a built pair from -DlssDir, by default another checkout's bbport\out: the 0.2.x
 # local releases had none, and their launcher showed DLSS disabled on RTX GPUs.

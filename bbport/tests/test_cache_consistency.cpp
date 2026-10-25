@@ -15,10 +15,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
+#include <span>
 #include <string>
 #include <thread>
 #include "common/elf_info.h"
+#include <miniz.h>
 #include "common/path_util.h"
 #include "video_core/cache_storage.h"
 
@@ -71,6 +74,91 @@ bool Appears(const fs::path& path) {
             std::abort(); \
         } \
     } while (0)
+// A zip of the given entries (name, bytes), as tools/shader_pack.py writes it.
+void WriteZip(const fs::path& path, const std::vector<std::pair<std::string, std::string>>& entries) {
+    mz_zip_archive zip{};
+    mz_zip_zero_struct(&zip);
+    CHECK(mz_zip_writer_init_file(&zip, path.string().c_str(), 0));
+    for (const auto& [name, data] : entries) {
+        CHECK(mz_zip_writer_add_mem(&zip, name.c_str(), data.data(), data.size(),
+                                    MZ_BEST_COMPRESSION));
+    }
+    CHECK(mz_zip_writer_finalize_archive(&zip));
+    CHECK(mz_zip_writer_end(&zip));
+}
+
+std::string ReadAll(const fs::path& path) {
+    std::ifstream file{path, std::ios::binary};
+    return {std::istreambuf_iterator<char>{file}, {}};
+}
+
+// Shader packs (shader_packs/*.zip): installed whole into the cache only when its profile fits,
+// with nothing but cache blobs, and an older cache is gone afterwards.
+void CheckPackInstall(Storage::DataBase& db, const fs::path& dir, const fs::path& root) {
+    const auto ours = [](std::span<const u8> blob) {
+        return blob.size() == 3 && blob[0] == 'G' && blob[1] == 'P' && blob[2] == 'U';
+    };
+    const std::string key = "g_0x00000000000000aa.key", meta = "0x00000000000000bb.meta",
+                      spv = "0x00000000000000cc_12.spv", compute = "c_0x00000000000000dd.key";
+    const auto pack = root / "nvidia.zip";
+    WriteZip(pack, {{"profile.bin", "GPU"},
+                    {key, "k"},
+                    {meta, "m"},
+                    {spv, "s"},
+                    {compute, "c"},
+                    {"vk_pipeline_cache.vkc", "driver"},
+                    {"../escape.key", "x"},
+                    {"sub/0x00000000000000bb.meta", "x"},
+                    {"0x00000000000000ee.key.tmp", "x"}});
+    const auto other_gpu = root / "amd.zip";
+    WriteZip(other_gpu, {{"profile.bin", "AMD"}, {key, "other"}});
+    const auto no_profile = root / "plain.zip";
+    WriteZip(no_profile, {{key, "k"}});
+    std::ofstream{root / "broken.zip", std::ios::binary} << "not a zip";
+
+    // The cache as a session left it: one blob of an older generation and the driver's cache.
+    std::ofstream{dir / "0x0000000000000099.meta", std::ios::binary} << "old";
+    CHECK(db.SaveDriverCache(std::vector<u8>{7}));
+
+    CHECK(db.InstallPack(other_gpu, ours) == 0);
+    CHECK(db.InstallPack(no_profile, ours) == 0);
+    CHECK(db.InstallPack(root / "broken.zip", ours) == 0);
+    CHECK(db.InstallPack(root / "missing.zip", ours) == 0);
+    // None of them touched the cache.
+    CHECK(fs::exists(dir / "0x0000000000000099.meta") && fs::exists(dir / "vk_pipeline_cache.vkc"));
+    CHECK(!fs::exists(dir / key));
+
+    CHECK(db.InstallPack(pack, ours) == 5); // four blobs and the profile
+    CHECK(ReadAll(dir / key) == "k" && ReadAll(dir / meta) == "m" && ReadAll(dir / spv) == "s" &&
+          ReadAll(dir / compute) == "c" && ReadAll(dir / "profile.bin") == "GPU");
+    CHECK(!fs::exists(dir / "0x0000000000000099.meta") && !fs::exists(dir / "vk_pipeline_cache.vkc"));
+    CHECK(!fs::exists(root / "escape.key") && !fs::exists(dir / "sub") &&
+          !fs::exists(dir / "0x00000000000000ee.key.tmp"));
+    size_t files = 0;
+    for ([[maybe_unused]] const auto& entry : fs::directory_iterator{dir}) {
+        ++files;
+    }
+    CHECK(files == 5);
+    CHECK(db.HasBlobs(Storage::BlobType::PipelineKey) && db.HasBlobs(Storage::BlobType::ShaderMeta));
+    // What WarmUp reads next is the pack's own blobs under the names it loads them by.
+    std::vector<u8> profile;
+    db.Load(Storage::BlobType::ShaderProfile, "profile", profile);
+    CHECK(ours(profile));
+    std::map<std::string, std::vector<u8>> keys;
+    db.ForEachBlob(Storage::BlobType::PipelineKey,
+                   [&](const std::string& name, std::vector<u8>&& data) { keys[name] = data; });
+    CHECK(keys.size() == 2 && keys.contains("g_0x00000000000000aa") &&
+          keys.contains("c_0x00000000000000dd"));
+    std::vector<u32> binary;
+    db.Load(Storage::BlobType::ShaderBinary, "0x00000000000000cc_12", binary);
+    CHECK(binary.empty()); // one byte is no SPIR-V word: what the loader rejects as damaged
+    for (const auto& name : {key, meta, spv, compute, std::string{"profile.bin"}}) {
+        fs::remove(dir / name);
+    }
+    CHECK(!db.HasBlobs(Storage::BlobType::PipelineKey));
+    std::puts("  shader packs: profile check, cache blobs only, old cache replaced: PASS");
+}
+
 // What WarmUp relies on in the cache on disk: ForEachBlob hands out each blob under its file
 // name without the extension (the name Save and Remove take), and Remove deletes that blob and
 // nothing else. The port always runs with a cache directory (EmulatorSettings::
@@ -131,6 +219,10 @@ void CheckBlobsOnDisk() {
     db.Close();
     CHECK(!db.Remove(BlobType::ShaderMeta, first)); // closed again
     CHECK(fs::exists(dir / (first + ".meta")));
+
+    db.Open();
+    CheckPackInstall(db, dir, root);
+    db.Close();
     std::error_code ec;
     fs::remove_all(root, ec);
     std::puts("  blobs on disk: ForEachBlob names, Remove: PASS");
@@ -206,6 +298,29 @@ int main() {
     blob.push_back(0);
     assert(!HeaderMatches(blob, versions, profile_size));
     assert(!HeaderMatches(std::vector<u8>{}, versions, profile_size));
+
+    // Shader pack entries: the cache's own blob names, nothing else.
+    assert(IsPackEntryName("profile.bin"));
+    assert(IsPackEntryName("g_0x0123456789abcdef.key"));
+    assert(IsPackEntryName("c_0x0123456789abcdef.key"));
+    assert(IsPackEntryName("0x0123456789abcdef.meta"));
+    assert(IsPackEntryName("0x0123456789abcdef_0.spv"));
+    assert(IsPackEntryName("0x0123456789abcdef_1234.spv"));
+    assert(!IsPackEntryName("vk_pipeline_cache.vkc"));
+    assert(!IsPackEntryName("g_0x0123456789abcdef.key.tmp"));
+    assert(!IsPackEntryName("../g_0x0123456789abcdef.key"));
+    assert(!IsPackEntryName("sub/0x0123456789abcdef.meta"));
+    assert(!IsPackEntryName("sub\\0x0123456789abcdef.meta"));
+    assert(!IsPackEntryName("0x0123456789ABCDEF.meta"));
+    assert(!IsPackEntryName("0x0123456789abcde.meta"));
+    assert(!IsPackEntryName("x_0x0123456789abcdef.key"));
+    assert(!IsPackEntryName("0x0123456789abcdef.key"));
+    assert(!IsPackEntryName("0x0123456789abcdef_.spv"));
+    assert(!IsPackEntryName("0x0123456789abcdef_12345.spv"));
+    assert(!IsPackEntryName("0x0123456789abcdef_1a.spv"));
+    assert(!IsPackEntryName("0x0123456789abcdef.spv"));
+    assert(!IsPackEntryName("profile.bin.tmp"));
+    assert(!IsPackEntryName(""));
 
 #ifdef BB_CACHE_STORAGE_TEST
     CheckBlobsOnDisk();

@@ -7,7 +7,9 @@
 #include "common/singleton.h"
 #include "common/types.h"
 
+#include <filesystem>
 #include <functional>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -54,6 +56,18 @@ public:
                          func);
     /// bbport: deletes one blob (not in an archive: false there, and when it is missing).
     bool Remove(BlobType type, const std::string& name);
+
+    /// bbport: whether the cache holds at least one blob of this type.
+    [[nodiscard]] bool HasBlobs(BlobType type) const;
+
+    /// bbport: replaces the whole cache with a shader pack (a zip of cache blobs, see
+    /// CacheCheck::IsPackEntryName) when `matches` accepts the pack's profile.bin (this build and
+    /// this GPU). Returns the number of blobs written, profile.bin included; 0 leaves the cache as
+    /// it was (no match, not a pack). A pack that breaks off while it is written leaves an empty
+    /// cache. Written at once, not queued: called before the preload, which then reads the pack's
+    /// blobs as its own.
+    u32 InstallPack(const std::filesystem::path& pack,
+                    const std::function<bool(std::span<const u8> profile)>& matches);
 
     /// bbport: the driver's VkPipelineCache blob, kept beside the shader cache of the game. Not
     /// queued like the blobs above: Load/Save are synchronous and Save is atomic (temporary
