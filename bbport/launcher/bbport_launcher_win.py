@@ -132,6 +132,10 @@ USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 
 # variables, see game_environment().
 RESHADE_DIR = PORT_DIR / 'bin' / 'reshade'
 RESHADE_LAYER = 'VK_LAYER_bbport_reshade'
+# HudSight (a crosshair overlay) crashes the game while it makes its Vulkan device (VK_LAYER_HudSight2 in
+# vulkan-1.dll+0x45a10 under hudsightvk64.dll, and XeSS's device setup through it): a player's game closed on
+# every start (2026-10-25). The loader takes a glob, so any HudSight version is skipped.
+CRASHING_VK_LAYERS = ('*HudSight*',)
 RESHADE_PRESET_PREFIX = 'Bloodborne - '  # the shipped presets; the dropdowns show the rest of the name
 
 
@@ -1200,6 +1204,11 @@ def game_environment(s, frame_generation=None):
         env['BB_FSR4VK'] = '0'
     else:
         env.pop('BB_FSR4VK', None)  # the switch decides: an inherited 0 would leave the dropdown on and the game off
+    # Overlay layers that crash the game while it makes its Vulkan device, before the first frame: the
+    # loader skips them for this run only (extra_env can set VK_LOADER_LAYERS_DISABLE back).
+    disabled = [item for item in env.get('VK_LOADER_LAYERS_DISABLE', '').split(',') if item]
+    env['VK_LOADER_LAYERS_DISABLE'] = ','.join(disabled + [layer for layer in CRASHING_VK_LAYERS
+                                                           if layer not in disabled])
     for item in str(s['extra_env']).split():
         if '=' in item:
             key, value = item.split('=', 1)
