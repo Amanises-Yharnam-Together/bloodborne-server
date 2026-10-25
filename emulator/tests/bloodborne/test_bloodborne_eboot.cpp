@@ -136,6 +136,22 @@ TEST_F(BloodborneEboot, EveryCoopSiteHoldsItsOriginalBytes) {
     }
 }
 
+// Player report 2026-10-23 (the compass's bloodstain a bit off): the record UpDateBloodMark
+// (0x013D2910) writes keeps where the stain lies at +0x00 and where the player died at +0x18
+// (BloodstainOfRecord), and the stain's marker is placed at the first.
+TEST_F(BloodborneEboot, TheBloodstainLiesAtTheRecordsFirstPlace) {
+    // In the player's own world: +0x00 = 0x01904660(player), `mov [rbx], rax; mov [rbx+8], edx`.
+    EXPECT_EQ(CallTarget(0x013D2982), 0x01904660u);
+    EXPECT_EQ(Bytes(0x013D2987, 6), (std::vector<u8>{0x48, 0x89, 0x03, 0x89, 0x53, 0x08}));
+    // ... which is [player +0x400] +0x30, the player's last safe ground.
+    EXPECT_EQ(Bytes(0x01904660, 16), HexBytes("48 8B 8F 00 04 00 00 48 85 C9 74 06 48 83 C1 30"));
+    // +0x18: the character's position now (its physics +0x1E0), where it died.
+    EXPECT_EQ(Bytes(0x013D2AEE, 20),
+              HexBytes("C5 F8 28 80 E0 01 00 00 C4 E3 79 17 43 20 02 C5 F9 D6 43 18"));
+    // The show (0x01868A50) copies the record's +0x00 into the stain's marker (+0x88).
+    EXPECT_EQ(Bytes(0x01868BAC, 16), HexBytes("48 8B 49 30 8B 51 08 89 50 08 48 8B 11 48 89 10"));
+}
+
 // The channel table drops a received packet by giving it a channel past 0x43: both receive paths
 // of 0x01790C20 test `cmp ..., 0x43` right after its hook and take the game's own drop branch
 // (`ja`), which frees the packet (reliable, 0x01790E31) or returns false (unreliable, 0x01790F2E).
@@ -174,6 +190,31 @@ TEST_F(BloodborneEboot, TheNamedGameFunctionsStartThere) {
           OnKeyTime2Offset, MultiPlayStopRequest, LeaveSession, KillCharacterOffset}) {
         EXPECT_EQ(Bytes(offset, FunctionPrologue.size()), FunctionPrologue) << std::hex << offset;
     }
+}
+
+// Talk command 66 (an NPC's gesture, rig talk-gesture and the gesture flags' fix read the list the
+// same way): the dispatcher's case 66 (table 0x020442E0) goes to 0x02041691; its body takes the
+// local PlayerGameData ([GameDataMan] +8) +0x5B8, looks at its 30 slots from +0x10 and sets the
+// found one's bit 0. The gesture table (0x014EC980) has rows 0 to 30.
+TEST_F(BloodborneEboot, TalkCommand66SetsTheGestureSlotsBit) {
+    constexpr u64 Table = 0x020442E0;
+    s32 case66 = 0;
+    std::memcpy(&case66, Bytes(Table + 66 * 4, 4).data(), 4);
+    EXPECT_EQ(Table + case66, 0x02041691u);
+    EXPECT_EQ(Bytes(0x02040004, 3), (std::vector<u8>{0x83, 0xF8, 0x57})) << "88 commands";
+    s32 manager = 0;
+    std::memcpy(&manager, Bytes(0x02042AD1 + 3, 4).data(), 4);
+    EXPECT_EQ(Bytes(0x02042AD1, 3), (std::vector<u8>{0x48, 0x8D, 0x05})); // lea rax, [rip + x]
+    EXPECT_EQ(0x02042AD8 + manager, 0x0553B130) << "GameDataMan";
+    EXPECT_EQ(Bytes(0x02042ADB, 4), (std::vector<u8>{0x48, 0x8B, 0x40, 0x08})); // [rax + 8]
+    EXPECT_EQ(Bytes(0x02042AE8, 7),
+              (std::vector<u8>{0x4C, 0x8B, 0xA0, 0xB8, 0x05, 0x00, 0x00})); // [rax + 0x5B8]
+    EXPECT_EQ(Bytes(0x02042B01, 5),
+              (std::vector<u8>{0x41, 0x8B, 0x44, 0x9C, 0x10})); // [r12 + rbx * 4 + 0x10]
+    EXPECT_EQ(Bytes(0x02042B5C, 3), (std::vector<u8>{0x83, 0xFB, 0x1E})) << "30 slots";
+    EXPECT_EQ(Bytes(0x02043E9E, 6), (std::vector<u8>{0x41, 0x80, 0x4C, 0x9C, 0x10, 0x01}))
+        << "or byte [slot], 1";
+    EXPECT_EQ(Bytes(0x014ECE3B, 3), (std::vector<u8>{0x83, 0xFB, 0x1E})) << "rows 0 to 30";
 }
 
 // The downed banner is the game's SetTextEffect (the event binding that queues the HUD's big
@@ -374,6 +415,41 @@ TEST_F(BloodborneEboot, ThePatchedCallsGoWhereTheCommentsSay) {
     // Host death: the jump lands on the epilogue it names.
     const CodePatch& host_dead = HostDeathKeepGuestsPatches().front();
     EXPECT_EQ(DecodeNearJumpTarget(host_dead.offset, host_dead.patched), HostDeadEpilogueOffset);
+}
+
+// The give (GiveItems, 0x017D89F0) queues each item it put in the inventory and each it sent to
+// the storage on the item-received popup's queue, the hook silent grants skip.
+TEST_F(BloodborneEboot, TheGiveQueuesItsPopupsAtTheHookedPush) {
+    EXPECT_EQ(CallTarget(0x017D9348), ItemGetQueuedOffset);
+    EXPECT_EQ(CallTarget(0x017D94C7), ItemGetQueuedOffset);
+    EXPECT_EQ(Bytes(ItemGetQueuedOffset, ItemGetQueuedPrologue.size()),
+              std::vector<u8>(ItemGetQueuedPrologue.begin(), ItemGetQueuedPrologue.end()));
+}
+
+// Team pings (Kaniel 2026-10-24): the item popup's push plays its sound (300) with the system
+// sound function, which the pings play their tick with; the HUD's feed writes the lock cursor's
+// spot where the pings read it.
+TEST_F(BloodborneEboot, ThePingsSoundAndLockCursorAreTheGamesOwn) {
+    EXPECT_EQ(CallTarget(0x016D8981), SystemSoundOffset);
+    EXPECT_EQ(Bytes(0x016D897C, 5),
+              (std::vector<u8>{0xBE, 0x2C, 0x01, 0x00, 0x00})); // mov esi, 300
+    EXPECT_EQ(SystemSoundItemGot, 300);
+    // mov rdi, [rip + ...]: the sound's object from the pointer the pings read.
+    const std::vector<u8> load = Bytes(0x016D8975, 7);
+    ASSERT_EQ(load.size(), 7u);
+    EXPECT_EQ((std::vector<u8>{load[0], load[1], load[2]}), (std::vector<u8>{0x48, 0x8B, 0x3D}));
+    s32 displacement = 0;
+    std::memcpy(&displacement, load.data() + 3, 4);
+    EXPECT_EQ(0x016D897C + displacement, s64(SystemSoundPointerOffset));
+    EXPECT_EQ(Bytes(SystemSoundOffset, SystemSoundPrologue.size()),
+              std::vector<u8>(SystemSoundPrologue.begin(), SystemSoundPrologue.end()));
+    // The cursor's tick: a selection that moved plays sound 0 (xor esi, esi; call).
+    EXPECT_EQ(CallTarget(0x015CA596), SystemSoundOffset);
+    EXPECT_EQ(Bytes(0x015CA594, 2), (std::vector<u8>{0x31, 0xF6}));
+    EXPECT_EQ(Bytes(HudLockCursorXWrite, HudLockCursorXStore.size()),
+              std::vector<u8>(HudLockCursorXStore.begin(), HudLockCursorXStore.end()));
+    EXPECT_EQ(Bytes(HudLockCursorYWrite, HudLockCursorYStore.size()),
+              std::vector<u8>(HudLockCursorYStore.begin(), HudLockCursorYStore.end()));
 }
 
 // The boss-death tracer's sites are the game's dead-flag writes; the two deaths go straight on

@@ -280,6 +280,62 @@ static void EmitFragmentMotion(EmitContext& ctx) {
                     ctx.OpSelect(f32_type, front, dy, zero), valid, depth}));
 }
 
+// The game's UI on an output of another aspect ratio (UiComposition::EdgeParam), from deadinside28's
+// bbport 0.6 (emit_spirv_special.cpp, EmitUiEdgeStretch): with motion_param set, a vertex in a
+// corner of the game's 16:9 screen or past it (on or beyond its edges in both x and y: normalized
+// edges, 16 bits each) goes to that corner of the output, so that full-screen fills and backgrounds
+// (the game draws some a little larger than its screen) cover the output; and (subtitles'
+// backdrops, lower screen) a vertex on a side edge. What the HUD moved past one edge only stays
+// where it is.
+static void EmitUiEdgeStretch(EmitContext& ctx) {
+    const Id f32 = ctx.F32[1];
+    const Id u32 = ctx.U32[1];
+    const Id b1 = ctx.U1[1];
+    const Id param = ctx.OpLoad(u32, ctx.OpAccessChain(
+        ctx.TypePointer(spv::StorageClass::PushConstant, u32), ctx.push_data_block,
+        ctx.ConstU32(PushData::MotionParamIndex)));
+    const Id on = ctx.OpINotEqual(b1, param, ctx.u32_zero_value);
+    const Id unit = ctx.Constant(f32, 1.0f / 65535.0f);
+    const Id ex = ctx.OpFMul(f32, ctx.OpConvertUToF(f32, ctx.OpShiftRightLogical(u32, param, ctx.ConstU32(16u))), unit);
+    const Id ey = ctx.OpFMul(f32, ctx.OpConvertUToF(f32, ctx.OpShiftRightLogical(u32,
+        ctx.OpBitwiseAnd(u32, param, ctx.ConstU32(65534u)), ctx.ConstU32(1u))), ctx.Constant(f32, 1.0f / 32767.0f));
+    const Id y_down = ctx.OpINotEqual(b1, ctx.OpBitwiseAnd(u32, param, ctx.ConstU32(1u)), ctx.u32_zero_value);
+    const Id position = ctx.OpLoad(ctx.F32[4], ctx.output_position);
+    const Id x = ctx.OpCompositeExtract(f32, position, 0u);
+    const Id y = ctx.OpCompositeExtract(f32, position, 1u);
+    const Id w = ctx.OpFAbs(f32, ctx.OpCompositeExtract(f32, position, 3u));
+    // On the edge (within 0.002: a pixel of the 1080 lines, two of the 1920 columns) or past it.
+    const auto out = [&](Id v, Id edge) {
+        return ctx.OpFOrdGreaterThanEqual(b1, ctx.OpFAbs(f32, v),
+            ctx.OpFMul(f32, w, ctx.OpFSub(f32, edge, ctx.Constant(f32, 0.002f))));
+    };
+    // On the edge only (up to two pixels past it: Scaleform's anti-aliasing fringe): a band the
+    // movie draws from edge to edge of its screen (the subtitles' backdrop) has its inner vertices
+    // there. What the port moved to the edges (the HUD's groups) lies further out.
+    const auto at = [&](Id v, Id edge) {
+        return ctx.OpLogicalAnd(b1, out(v, edge),
+            ctx.OpFOrdLessThanEqual(b1, ctx.OpFAbs(f32, v),
+                ctx.OpFMul(f32, w, ctx.OpFAdd(f32, edge, ctx.Constant(f32, 0.004f)))));
+    };
+    // The band's vertices on a side edge only in the lower part of the screen (y past 0.4 of its
+    // half height: the subtitles), not anywhere: the HUD's groups moved toward the edges put some
+    // of their vertices on the 16:9 screen's edge by chance (a glyph, a frame), which went to the
+    // output's edge (white streaks across the HUD at 21:9). Top and bottom edges: corners only,
+    // for the same reason (the HUD moved up and down on taller outputs).
+    const Id towards_bottom = ctx.OpSelect(f32, y_down, y, ctx.OpFNegate(f32, y));
+    const Id lower = ctx.OpFOrdGreaterThan(b1, towards_bottom, ctx.OpFMul(f32, w, ctx.Constant(f32, 0.4f)));
+    const Id corner = ctx.OpLogicalAnd(b1, out(x, ex), out(y, ey));
+    const Id snap_x = ctx.OpLogicalAnd(b1, on, ctx.OpLogicalOr(b1, corner,
+                                                               ctx.OpLogicalAnd(b1, lower, at(x, ex))));
+    const Id snap_y = ctx.OpLogicalAnd(b1, on, corner);
+    // v * |w| / |v|: the output's edge on v's side.
+    const auto snap = [&](Id v, Id when) {
+        return ctx.OpSelect(f32, when, ctx.OpFDiv(f32, ctx.OpFMul(f32, v, w), ctx.OpFAbs(f32, v)), v);
+    };
+    ctx.OpStore(ctx.output_position, ctx.OpCompositeInsert(ctx.F32[4], snap(y, snap_y),
+        ctx.OpCompositeInsert(ctx.F32[4], snap(x, snap_x), position, 0u), 1u));
+}
+
 void EmitEpilogue(EmitContext& ctx) {
     if (ctx.VertexMotion()) {
         EmitVertexMotion(ctx);
@@ -293,6 +349,10 @@ void EmitEpilogue(EmitContext& ctx) {
     }
     if (ctx.hw_stage == HwStage::Vertex && ctx.runtime_info.hw.vs.clip_disable) {
         ConvertPositionToClipSpace(ctx);
+    } else if (ctx.hw_stage == HwStage::Vertex && !ctx.VertexMotion()) {
+        // Any vertex shader can draw the UI (Scaleform's, the HUD's gauges and icons); outside
+        // the UI motion_param is 0 and this does nothing.
+        EmitUiEdgeStretch(ctx);
     }
 }
 

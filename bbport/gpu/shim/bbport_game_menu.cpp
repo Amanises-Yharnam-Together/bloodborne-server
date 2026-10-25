@@ -122,6 +122,12 @@ u32 AddText(const char* english, const char* russian) {
     return IdBase + u32(texts.size() - 1);
 }
 
+/// A text filled in later (UpdateOutputRow), empty until then.
+u32 AddBlankText() {
+    texts.emplace_back();
+    return IdBase + u32(texts.size() - 1);
+}
+
 /// In the game's own language (the one it reads, BB_LANGUAGE), whatever the port's menus speak.
 const char16_t* TextOf(u32 id) {
     static const BbSettings::MenuLanguage game = BbSettings::GameLanguage();
@@ -136,7 +142,7 @@ std::u16string dynamic_texts[DynamicSlots];
 
 // ---- The port's values the game's rows edit (ints: the list rows bind ints). ----
 enum Field : int {
-    OutputRes, Upscaler, Preset, Sharpness, ShowFps, FpsLimit, DlssModel,
+    OutputRes, AspectField, Upscaler, Preset, Sharpness, ShowFps, FpsLimit, DlssModel,
     WindowModeField, Hdr, HdrScene, HdrPeak, HdrPaperWhite, HdrHighlights,
     ScreenLightingField, ScreenLightingAo, ScreenLightingGi, RayTracedAo,
     ModelLod, FastShaderMath, FirstEffect, FieldCount = FirstEffect + BbSettings::EffectCount
@@ -161,6 +167,34 @@ constexpr float LightingGiStep = 0.2f; // 0..10 -> 0.0 .. 2.0
 /// ChoicePosition.
 int steps_count[FieldCount]; ///< choices of a slider-with-choices row, else 0
 
+/// Kaniel 2026-10-24: the output row offers the display's own resolutions (any shape), known once
+/// the window is there: the list is taken each time a page is built (LoadValues, the game's menu
+/// thread) and read by Poll (the presenter's thread). At most the slider's 11 positions: the
+/// largest sizes (and the chosen one).
+std::mutex outputs_mutex;
+std::vector<BbSettings::OutputSize> menu_outputs;
+constexpr std::size_t MaxOutputChoices = 11;
+/// The output row's help ("Final frame: 0-2 1920x1080, ..."): written into a spare text no page
+/// shows yet when the list changes, so the game never reads a text while it changes.
+std::array<u32, 4> output_help_ids{};
+std::size_t output_help_next = 0;
+std::string output_help_for; ///< the list the row's help was written for
+
+std::vector<BbSettings::OutputSize> MenuOutputs(BbSettings::OutputSize chosen) {
+    std::vector<BbSettings::OutputSize> list = BbSettings::OutputChoices();
+    if (std::find(list.begin(), list.end(), chosen) == list.end()) {
+        list.push_back(chosen);
+        std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) {
+            return a.width * a.height != b.width * b.height ? a.width * a.height < b.width * b.height
+                                                            : a.width < b.width;
+        });
+    }
+    while (list.size() > MaxOutputChoices) {
+        list.erase(list.begin() + (list.front() == chosen ? 1 : 0)); // the smallest go first
+    }
+    return list;
+}
+
 int ChoiceFromPosition(u8 position, int count) {
     return std::clamp((int(position) * (count - 1) + 5) / 10, 0, count - 1);
 }
@@ -171,7 +205,13 @@ u8 ChoicePosition(int choice, int count) {
 
 /// The rows' values of settings `s`.
 void Fill(const BbSettings::Values& s, int* values) {
-    values[OutputRes] = s.output_res;
+    {
+        const BbOutputSizes::Size chosen = BbOutputSizes::Unpack(s.output_res);
+        std::scoped_lock lock{outputs_mutex};
+        values[OutputRes] = std::max(0, BbOutputSizes::Nearest(
+            menu_outputs, chosen.Valid() ? chosen : BbOutputSizes::DefaultOutput(BbSettings::Desktop())));
+    }
+    values[AspectField] = std::clamp(s.aspect.load(), 0, BbSettings::AspectModeCount - 1);
     values[Upscaler] = s.upscaler;
     values[Preset] = s.preset;
     // One slider for both: 0 is sharpening off.
@@ -201,7 +241,10 @@ void Fill(const BbSettings::Values& s, int* values) {
     }
 }
 
+void UpdateOutputRow();
+
 void LoadValues() {
+    UpdateOutputRow();
     Fill(BbSettings::Get(), values);
     for (int f = 0; f < FieldCount; ++f) {
         bytes[f] = steps_count[f] ? ChoicePosition(values[f], steps_count[f]) : u8(values[f]);
@@ -257,14 +300,24 @@ void DefineTexts() {
         Kind::Steps);
     row(Sharpness, "Sharpness", "Резкость", "RCAS after the upscaler: 0 off, 10 strongest",
         "RCAS после апскейлера: 0 выкл, 10 сильнее всего", {}, Kind::Slider);
-    row(OutputRes, "Output resolution", "Разрешение вывода",
-        "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
-        "Готовый кадр: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
-        {AddText("1280 x 720", "1280 x 720"), AddText("1920 x 1080", "1920 x 1080"),
-         AddText("2560 x 1440", "2560 x 1440"), AddText("3840 x 2160", "3840 x 2160")},
-        Kind::Steps);
-    row(ShowFps, "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
-        "Частота кадров в правом верхнем углу", toggle);
+    // The display's resolutions: the choices (and the help naming them) are filled in once the
+    // window is there (UpdateOutputRow); the slider's positions stand for them.
+    {
+        std::vector<u32> sizes(MaxOutputChoices);
+        for (u32& id : sizes) {
+            id = AddBlankText();
+        }
+        for (u32& id : output_help_ids) {
+            id = AddBlankText();
+        }
+        row(OutputRes, "Output resolution", "Разрешение вывода", "Final frame", "Готовый кадр", sizes,
+            Kind::Steps);
+        pages.back().rows.back().help = output_help_ids[0];
+    }
+    row(AspectField, "Aspect ratio", "Соотношение сторон",
+        "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars",
+        "Авто: на широком или высоком экране видно больше мира. 16:9: картинка игры, чёрные полосы",
+        {AddText("Auto", "Авто"), AddText("16:9", "16:9")});
     row(ModelLod, "Model detail", "Детализация",
         "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest",
         "После перезапуска: 0-1 максимальная, 2-4 как в игре, 5-7 ниже, 8-10 минимальная",
@@ -330,6 +383,8 @@ void DefineTexts() {
         "After a restart: faster, less strict float math in shaders; the picture can differ slightly",
         "После перезапуска: быстрее и менее строгие вычисления в шейдерах; картинка может немного отличаться",
         toggle);
+    row(ShowFps, "FPS counter", "Счётчик FPS", "Frame rate in the top right corner",
+        "Частота кадров в правом верхнем углу", toggle);
     if (BbSettings::FrameRateLocked()) {
         // Co-op: the game's fixed 60 FPS, one choice that cannot change (Apply keeps the limit).
         row(FpsLimit, "FPS limit", "Лимит FPS",
@@ -412,6 +467,65 @@ void DefineTexts() {
         row(Field(FirstEffect + e), name ? name->en : effect.label, name ? name->ru : effect.label_ru,
             help_en.c_str(), help_ru.c_str(), toggle);
     }
+}
+
+/// The output row for the display's resolutions now (LoadValues, the game's menu thread): its
+/// choices, the slider's steps and the help naming which positions pick which size.
+void UpdateOutputRow() {
+    const BbSettings::OutputSize chosen = BbSettings::ChosenOutput();
+    std::vector<BbSettings::OutputSize> list = MenuOutputs(chosen);
+    std::string key;
+    for (const auto& size : list) {
+        key += BbOutputSizes::Text(size) + " ";
+    }
+    {
+        std::scoped_lock lock{outputs_mutex};
+        menu_outputs = list;
+    }
+    steps_count[OutputRes] = std::max(2, int(list.size()));
+    // The page's "Default": the game's 1080 lines in the desktop's shape (BbSettings::ChosenOutput).
+    default_values[OutputRes] =
+        std::max(0, BbOutputSizes::Nearest(list, BbOutputSizes::DefaultOutput(BbSettings::Desktop())));
+    default_bytes[OutputRes] = ChoicePosition(default_values[OutputRes], steps_count[OutputRes]);
+    if (key == output_help_for) {
+        return;
+    }
+    output_help_for = key;
+    Row* output_row = nullptr;
+    for (Page& page : pages) {
+        for (Row& r : page.rows) {
+            if (r.field == OutputRes) output_row = &r;
+        }
+    }
+    if (!output_row) {
+        return;
+    }
+    // "0-1 1280x720, 2-4 1920x1080, ...": the slider positions ChoiceFromPosition gives each size.
+    const int count = steps_count[OutputRes];
+    std::string ranges;
+    for (int choice = 0; choice < int(list.size()); ++choice) {
+        int first = -1, last = -1;
+        for (int position = 0; position <= 10; ++position) {
+            if (ChoiceFromPosition(u8(position), count) == choice) {
+                first = first < 0 ? position : first;
+                last = position;
+            }
+        }
+        if (first < 0) {
+            continue;
+        }
+        ranges += (ranges.empty() ? "" : ", ") + std::to_string(first) +
+                  (last != first ? "-" + std::to_string(last) : std::string()) + " " +
+                  BbOutputSizes::Text(list[choice]);
+    }
+    const u32 help = output_help_ids[++output_help_next % output_help_ids.size()];
+    Text& text = texts[help - IdBase];
+    for (int l = 0; l < BbSettings::MenuLanguageCount; ++l) {
+        const std::string line = std::string(BbSettings::Translate(BbSettings::MenuLanguage(l), "Final frame",
+                                                                   "Готовый кадр")) + ": " + ranges;
+        text.by_language[l] = Utf16(line.c_str());
+    }
+    output_row->help = help;
 }
 
 // ---- The game's structures, as its own code builds them. ----
@@ -931,7 +1045,13 @@ void Poll() {
         return;
     }
     auto& s = BbSettings::Get();
-    s.output_res = std::clamp(values[OutputRes], 0, BbSettings::OutputCount - 1);
+    if (values[OutputRes] != applied[OutputRes]) {
+        std::scoped_lock lock{outputs_mutex};
+        if (!menu_outputs.empty()) {
+            BbSettings::ChooseOutput(menu_outputs[std::clamp(values[OutputRes], 0, int(menu_outputs.size()) - 1)]);
+        }
+    }
+    s.aspect = std::clamp(values[AspectField], 0, BbSettings::AspectModeCount - 1);
     const int upscaler = std::clamp(values[Upscaler], 0, BbSettings::UpscalerCount - 1);
     s.upscaler = UpscalerAvailable(upscaler) ? upscaler : int(BbSettings::UpscalerFsr3);
     s.preset = std::clamp(values[Preset], 0, BbSettings::PresetCount - 1);

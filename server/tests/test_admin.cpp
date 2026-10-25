@@ -117,7 +117,8 @@ struct Rig {
       }
       const QByteArray plain = ServerLink::Encode(hello);
       LinkAuth::Key ephemeral{};
-      ephemeral[1] = static_cast<quint8>(++nonces); // past the bits X25519 clears
+      ephemeral[1] =
+          static_cast<quint8>(++nonces); // past the bits X25519 clears
       const auto bytes =
           game.SealHello({reinterpret_cast<const u8 *>(plain.constData()),
                           static_cast<size_t>(plain.size())},

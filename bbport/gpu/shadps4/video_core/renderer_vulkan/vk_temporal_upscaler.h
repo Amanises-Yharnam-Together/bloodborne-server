@@ -91,6 +91,11 @@ public:
     void OnDispatch(u64 cs_hash);
 
     /// Start of a frame in the command stream (display pass).
+    /// The display pass begins (before the camera's frame ends): a scene the game finished
+    /// without drawing its UI (cinematics) on an output of another aspect ratio than 16:9 is
+    /// finished at the output's size, as frames with UI are (deadinside28's bbport 0.6). Its
+    /// camera has the output's aspect already: the game's 16:9 display buffer would squeeze it.
+    void OnDisplayPassStart();
     bool OnFrameStart();
     bool RasterScaling() const;
     /// bbport: LOD bias for scene materials, log2(render / output) while a reduced scene is
@@ -251,7 +256,8 @@ private:
     bool done_this_frame = false;
     u32 preset_file_frames = 0; ///< BB_PRESET_FILE polling
     u32 proxy_cleanup_frames = 0; ///< bbport: SceneTargets::CleanupStaleEntries pacing
-    int applied_output = -1;
+    u32 applied_output = 0;      ///< BbOutputSizes::Pack of the output, 0 before the first frame
+    float applied_aspect = 0.0f; ///< the output's, given to the game's camera and HUD
     bool snapshot_taken = false;
     bool opaque_valid = false;
     bool mask_ready = false;

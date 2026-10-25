@@ -128,6 +128,38 @@ class LaneClaimTest(unittest.TestCase):
         self.assertTrue(lanes.claim(self.rig, 2, "phase8", 200, self.alive))
         self.assertFalse((self.rig / "lanes" / "2" / "blocked").exists())
 
+    @unittest.mock.patch.dict(os.environ, {"BB_RIG_MAX_LANES": "4"})
+    def test_a_free_lane_with_someones_games_in_it_is_blocked(self):
+        # Rig 2026-10-25: another thread's run had ended (its claim gone) but its lane-1 guest
+        # still ran, signed in as lane 1's account: every run there timed out in the lobby. Any
+        # build's game playing in a lane's folders blocks the lane while no run holds it.
+        port = self.rig / "port"
+        listing = "\n".join([
+            f"61\t{port / 'lanes' / '1' / 'guest' / 'out' / 'boot-linked.bin'} --user x",
+            f"62\t{port / 'lanes' / '3' / 'host' / 'out' / 'boot-linked.bin'}",
+            f"63\t{port / 'host' / 'out' / 'boot-linked.bin'}",
+            "64\tC:\\games\\bloodborne\\bb-probe.exe",
+        ])
+        self.running |= {61, 62, 63, 64}
+        lanes.claim(self.rig, 3, "phase8", 200, self.alive)  # lane 3's game is its run's
+        self.assertEqual(lanes.block_occupied(self.rig, port, listing, self.alive),
+                         {0: [63], 1: [61]})
+        self.assertEqual(lanes.claim_free(self.rig, 4, "phase7", 100, self.alive), [2])
+        self.running -= {61, 63}
+        self.assertEqual(lanes.claim_free(self.rig, 4, "phase7", 100, self.alive), [0, 1, 2])
+
+    @unittest.skipUnless(os.name == "nt", "Windows process handles")
+    def test_an_exited_process_still_held_open_lingers(self):
+        # As a game whose GPU teardown hung: exited, yet still there (here this test's own
+        # handle keeps it), so its lane stays blocked.
+        import subprocess
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        self.assertFalse(lanes.pid_alive(child.pid))
+        self.assertTrue(lanes.pid_lingers(child.pid))
+        lanes.block(self.rig, 2, [child.pid])
+        self.assertEqual(lanes.blocked_by(self.rig, 2), [child.pid])
+
     def test_status_names_the_holder(self):
         lanes.claim(self.rig, 3, "phase8", 200, self.alive)
         [line] = [line for line in lanes.status(self.rig, self.alive) if line.startswith("lane 3")]

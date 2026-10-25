@@ -42,6 +42,22 @@ def pid_alive(pid: int) -> bool:
         kernel.CloseHandle(handle)
 
 
+def pid_lingers(pid: int) -> bool:
+    """Whether process `pid` is still there, running or not: a game whose GPU teardown hung has
+    exited (its exit code is set) yet stays, unkillable until Windows restarts, and keeps its
+    lane's sockets (rig 2026-10-25: lanes 1 and 3 timed out in the lobby beside such games)."""
+    if pid <= 0:
+        return False
+    if os.name != "nt":
+        return pid_alive(pid)
+    kernel = ctypes.windll.kernel32
+    handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    kernel.CloseHandle(handle)
+    return True
+
+
 def default_owner() -> str:
     """Who a claim names: BB_RIG_OWNER (a thread's name), else this user on this PC."""
     return os.environ.get("BB_RIG_OWNER") or f"{os.environ.get('USERNAME', 'someone')}@" \
@@ -80,7 +96,9 @@ def blocked_by(rig: pathlib.Path, lane: int, alive=pid_alive) -> list[int]:
         pids = [int(word) for word in path.read_text(encoding="utf-8").split() if word.isdigit()]
     except OSError:
         return []
-    running = [pid for pid in pids if alive(pid)]
+    # A blocking game counts while it lingers, not only while it runs (pid_lingers).
+    still = pid_lingers if alive is pid_alive else alive
+    running = [pid for pid in pids if still(pid)]
     if not running:
         path.unlink(missing_ok=True)
     return running
@@ -239,3 +257,26 @@ def strays(listing: str, role_dirs: list[pathlib.Path]) -> list[int]:
         if pid.isdigit() and any(folder in command + os.sep for folder in wanted):
             found.append(int(pid))
     return found
+
+
+ROLES = ("host", "guest", "guest2")
+
+
+def block_occupied(rig: pathlib.Path, port: pathlib.Path, listing: str,
+                   alive=pid_alive) -> dict[int, list[int]]:
+    """Marks blocked every lane no live run holds whose role folders (port/<role> for lane 0,
+    port/lanes/<n>/<role>) still have a game playing in them, of any build: an ended run's game
+    left signed in as the lane's accounts (rig 2026-10-25: every run on lane 1 timed out in the
+    lobby). {lane: its games} for the lanes it blocked."""
+    blocked = {}
+    for lane in available(rig):
+        held = read_claim(rig, lane)
+        if held is not None and alive(held["pid"]):
+            continue
+        base = port if lane == 0 else port / "lanes" / str(lane)
+        still = pid_lingers if alive is pid_alive else alive
+        found = [pid for pid in strays(listing, [base / role for role in ROLES]) if still(pid)]
+        if found:
+            block(rig, lane, found)
+            blocked[lane] = found
+    return blocked

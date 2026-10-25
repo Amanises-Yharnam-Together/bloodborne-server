@@ -287,7 +287,7 @@ INI_FLOATS = {'sharpness', 'mouse_sensitivity'}  # written with two decimals
 INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'frame_generation': '0', 'show_fps': '1',
                 'frame_gen_provider': 'fsr3', 'frame_gen_multiplier': '2', 'frame_gen_fit_display': '1',
-                'output_res': '1920x1080', 'model_lod': '0', 'map_3d': '0',
+                'output_res': '1920x1080', 'aspect_ratio': 'auto', 'model_lod': '0', 'map_3d': '0',
                 'live_resolution': 'auto', 'window_mode': 'windowed', 'hdr': '0', 'fast_shader_math': '0',
                 'button_icons': bbport_controls.ICON_DEFAULT, **bbport_controls.MOUSE_DEFAULTS,
                 **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
@@ -352,8 +352,111 @@ UPSCALERS = [('dlss', ('DLSS (NVIDIA GeForce RTX)',)),
              ('off', ('Off', 'Выключен'))]
 PRESETS = [('0', ('Native AA (×1.0)',)), ('1', ('Quality (×1.5)',)), ('2', ('Balanced (×1.7)',)),
            ('3', ('Performance (×2)',)), ('4', ('Ultra Performance (×3)',))]
-OUTPUTS = [('1280x720', ('1280 × 720 (Steam Deck)',)), ('1920x1080', ('1920 × 1080',)),
-           ('2560x1440', ('2560 × 1440',)), ('3840x2160', ('3840 × 2160 (4K)',))]
+# Kaniel 2026-10-24: the output resolutions are the monitor's own (any shape: 21:9, 32:9, 16:10,
+# 4:3), as the game's menus offer them (gpu/shim/bbport_output_sizes.h); output_choices below.
+STANDARD_OUTPUTS = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)]
+MIN_OUTPUT, MAX_OUTPUT = (1024, 576), (7680, 4320)
+# bbport.ini aspect_ratio: auto follows the output (a wider screen sees more to the sides), 16:9 keeps
+# the game's picture with bars.
+ASPECTS = [('auto', ('Auto (the screen\'s shape)', 'Авто (по форме экрана)')),
+           ('16:9', ('16:9 (black bars)', '16:9 (чёрные полосы)'))]
+
+
+def aspect_name(width, height):
+    """'21:9' for 2560x1080, 3440x1440 and 3840x1600 alike; '' for a shape far from all of these."""
+    if width <= 0 or height <= 0:
+        return ''
+    import math
+    names = [(4 / 3, '4:3'), (5 / 4, '5:4'), (16 / 10, '16:10'), (16 / 9, '16:9'), (64 / 27, '21:9'), (32 / 9, '32:9')]
+    ratio = width / height
+    best = min(names, key=lambda n: abs(math.log(ratio / n[0])))
+    return best[1] if abs(math.log(ratio / best[0])) < 0.06 else ''
+
+
+def default_output(desktop):
+    """The output before one is chosen: the game's 1080 lines in the desktop's shape (2560x1080 on a
+    21:9 monitor), as the game itself has it (BbOutputSizes::DefaultOutput)."""
+    if not desktop or desktop[0] <= 0 or desktop[1] <= 0:
+        return (1920, 1080)
+    return (min(max(2, round(1080 * desktop[0] / desktop[1] / 2) * 2), MAX_OUTPUT[0]), 1080)
+
+
+def output_choices(modes, desktop, current=''):
+    """The Output resolution dropdown: (value, (label,)) for the monitor's modes (each size once, 1024x576
+    to 7680x4320), its desktop size and the 16:9 sizes that fit it (windowed play; all four when the
+    monitor is unknown), and the current bbport.ini value; fewest pixels first (BbOutputSizes::Choices)."""
+    sizes = []
+
+    def add(size):
+        w, h = size
+        if (MIN_OUTPUT[0] <= w <= MAX_OUTPUT[0] and MIN_OUTPUT[1] <= h <= MAX_OUTPUT[1]
+                and (w, h) not in sizes):
+            sizes.append((w, h))
+    for mode in modes:
+        add(mode)
+    if desktop:
+        add(desktop)
+    for size in STANDARD_OUTPUTS:
+        if not desktop or (size[0] <= desktop[0] and size[1] <= desktop[1]):
+            add(size)
+    try:
+        w, h = (int(v) for v in str(current).lower().replace(' ', '').split('x'))
+        if w > 0 and h > 0 and (w, h) not in sizes:
+            sizes.append((w, h))
+    except ValueError:
+        pass
+    sizes.sort(key=lambda s: (s[0] * s[1], s[0]))
+    out = []
+    for w, h in sizes:
+        shape = aspect_name(w, h)
+        out.append((f'{w}x{h}', (f'{w} × {h}' + (f' ({shape})' if shape else ''),)))
+    return out
+
+
+_display_modes = None
+
+
+def display_modes():
+    """(modes, desktop) of the primary monitor from Win32 (EnumDisplaySettingsW): every resolution it
+    has and its current one; ([], None) when Windows cannot say. Read once per run."""
+    global _display_modes
+    if _display_modes is None:
+        _display_modes = ([], None)
+        try:
+            from ctypes import wintypes
+
+            class DEVMODEW(ctypes.Structure):
+                _fields_ = [('dmDeviceName', wintypes.WCHAR * 32), ('dmSpecVersion', wintypes.WORD),
+                            ('dmDriverVersion', wintypes.WORD), ('dmSize', wintypes.WORD),
+                            ('dmDriverExtra', wintypes.WORD), ('dmFields', wintypes.DWORD),
+                            ('dmPosition', ctypes.c_long * 2), ('dmDisplayOrientation', wintypes.DWORD),
+                            ('dmDisplayFixedOutput', wintypes.DWORD), ('dmColor', ctypes.c_short),
+                            ('dmDuplex', ctypes.c_short), ('dmYResolution', ctypes.c_short),
+                            ('dmTTOption', ctypes.c_short), ('dmCollate', ctypes.c_short),
+                            ('dmFormName', wintypes.WCHAR * 32), ('dmLogPixels', wintypes.WORD),
+                            ('dmBitsPerPel', wintypes.DWORD), ('dmPelsWidth', wintypes.DWORD),
+                            ('dmPelsHeight', wintypes.DWORD), ('dmDisplayFlags', wintypes.DWORD),
+                            ('dmDisplayFrequency', wintypes.DWORD), ('dmICMMethod', wintypes.DWORD),
+                            ('dmICMIntent', wintypes.DWORD), ('dmMediaType', wintypes.DWORD),
+                            ('dmDitherType', wintypes.DWORD), ('dmReserved1', wintypes.DWORD),
+                            ('dmReserved2', wintypes.DWORD), ('dmPanningWidth', wintypes.DWORD),
+                            ('dmPanningHeight', wintypes.DWORD)]
+            mode = DEVMODEW()
+            mode.dmSize = ctypes.sizeof(DEVMODEW)
+            modes = []
+            index = 0
+            while index < 2000 and ctypes.windll.user32.EnumDisplaySettingsW(None, index, ctypes.byref(mode)):
+                size = (int(mode.dmPelsWidth), int(mode.dmPelsHeight))
+                if size not in modes:
+                    modes.append(size)
+                index += 1
+            desktop = None
+            if ctypes.windll.user32.EnumDisplaySettingsW(None, -1, ctypes.byref(mode)):  # ENUM_CURRENT_SETTINGS
+                desktop = (int(mode.dmPelsWidth), int(mode.dmPelsHeight))
+            _display_modes = (modes, desktop)
+        except (AttributeError, OSError, ImportError):
+            pass
+    return _display_modes
 LIVE = [('auto', ('Auto (by graphics card)', 'Авто (по видеокарте)')), ('0', ('Off (faster)', 'Выключена (быстрее)')),
         ('1', ('On (change without restarting)', 'Включена (без перезапуска)'))]
 LODS = [('0', ('As in the game', 'Как в игре')), ('-2', ('Highest (−2)', 'Максимальная (−2)')),
@@ -391,6 +494,9 @@ FRAME_CAPS = [('', ('Auto', 'Авто')),
               ('60', ('60 FPS',)), ('90', ('90 FPS',)), ('120', ('120 FPS',)), ('144', ('144 FPS  ⚠',)),
               ('165', ('165 FPS  ⚠',)), ('240', ('240 FPS  ⚠',)), ('0', ('No limit  ⚠', 'Без ограничения  ⚠'))]
 
+
+# The game's 1080 lines in the monitor's shape until an output is chosen (the game does the same).
+INI_DEFAULTS['output_res'] = '%dx%d' % default_output(display_modes()[1])
 
 _refresh_hz = None
 
@@ -1038,6 +1144,8 @@ def game_environment(s, frame_generation=None):
     env['BB_PATCHES_DIR'] = s['patches_dir'] or str(DATA_DIR / 'patches')
     env['BB_PATCHES_CONFIG'] = str(DATA_DIR / 'patches.json')
     env['BB_LANGUAGE'] = s['language']
+    # Build check on join: the co-op server refuses a game of another release and says both versions.
+    env['BB_RELEASE_VERSION'] = coop_release_version() or 'dev'
     if str(s['player_name']).strip():
         env['BB_USER_NAME'] = str(s['player_name']).strip()
     if str(s.get('addcont', '')).strip():
@@ -2840,6 +2948,11 @@ class Launcher:
             self.vars[key] = v
         return self.vars[key]
 
+    def output_options(self):
+        """The Output resolution dropdown's choices: the monitor's resolutions and the one in bbport.ini."""
+        modes, desktop = display_modes()
+        return output_choices(modes, desktop, self.var('output_res', 'ini').get())
+
     def choice(self, parent, key, store, options, width=None):
         """A combobox over (value, (english, russian)) pairs, kept in sync with its variable."""
         var = self.var(key, store)
@@ -3371,7 +3484,7 @@ class Launcher:
         """A settings field: a small caption above, the control returned in a frame."""
         px = self.px
         holder = self.tk.Frame(parent, bg=bg)
-        holder.grid(row=row, column=column, columnspan=span, sticky='we', pady=(px(10), 0),
+        holder.grid(row=row, column=column, columnspan=span, sticky='nwe', pady=(px(10), 0),
                     padx=(0, px(12)) if column == 0 and span == 1 else 0)
         if title:
             self.label(holder, title, 'small', MUTED, bg=bg).pack(anchor='w', pady=(0, px(4)))
@@ -3532,7 +3645,7 @@ class Launcher:
             self.button(holder, _('Browse…', 'Обзор…'), lambda game_dir=var: self.browse_game(game_dir)).pack(side='left',
                                                                                          padx=(px(8), 0))
             self.pkg_button(cell).pack(anchor='w', pady=(px(8), 0))
-        for r, pairs in enumerate((((_('Output', 'Разрешение'), 'output_res', 'ini', OUTPUTS),
+        for r, pairs in enumerate((((_('Output', 'Разрешение'), 'output_res', 'ini', None),
                                     (_('Frame rate (60 recommended in co-op)', 'Частота кадров (в кооперативе лучше 60)')
                                      if COOP_INSTALL
                                      else _('Frame rate', 'Частота кадров'), 'fps_mode', 'app', FPS_MODES)),
@@ -3543,7 +3656,7 @@ class Launcher:
             for column, (title, key, store, options) in enumerate(pairs):
                 holder = self.cell(quick, r, column, title)
                 box = (self.upscaler_choice(holder, 16) if key == 'upscaler' else
-                       self.choice(holder, key, store, options, 16))
+                       self.choice(holder, key, store, self.output_options() if key == 'output_res' else options, 16))
                 box.pack(fill='x')
                 if key == 'fps_mode':
                     self.coop_frame_rate(box)
@@ -4462,9 +4575,17 @@ class Launcher:
         self.row(f, _('Quality preset', 'Пресет'), self.choice(f, 'preset', 'ini', PRESETS),
                  _('Render scale per axis: Quality renders at 1/1.5 of the output size.',
                    'Масштаб рендера по каждой оси: Quality рисует в 1/1.5 размера вывода.'))
-        self.row(f, _('Output resolution', 'Разрешение вывода'), self.choice(f, 'output_res', 'ini', OUTPUTS),
-                 _('What the upscaler produces; the HUD is drawn at this size too.',
-                   'Что выдаёт апскейлер; интерфейс рисуется в этом же размере.'))
+        self.row(f, _('Output resolution', 'Разрешение вывода'),
+                 self.choice(f, 'output_res', 'ini', self.output_options()),
+                 _("What the upscaler produces; the HUD is drawn at this size too. The monitor's own "
+                   'resolutions, ultrawide ones too; exclusive fullscreen switches the monitor to it.',
+                   'Что выдаёт апскейлер; интерфейс рисуется в этом же размере. Разрешения самого '
+                   'монитора, сверхширокие тоже; эксклюзивный полный экран переключает монитор на него.'))
+        self.row(f, _('Aspect ratio', 'Соотношение сторон'), self.choice(f, 'aspect_ratio', 'ini', ASPECTS),
+                 _('Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more '
+                   "above and below, with the HUD at the screen's edges. 16:9: the game's picture with bars.",
+                   'Авто: на широком экране (21:9, 32:9) видно больше по бокам, на высоком (16:10, 4:3) — '
+                   'сверху и снизу, интерфейс у краёв экрана. 16:9: картинка игры с полосами.'))
         self.row(f, _('Live resolution changes', 'Смена разрешения на лету'), self.choice(f, 'live_resolution', 'ini', LIVE),
                  _('Off: outputs other than 1080p are set by a patch at start (fastest; changing them in the '
                    'game restarts it). On: change output and preset in the game without a restart, at a cost.',

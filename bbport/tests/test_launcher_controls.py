@@ -622,13 +622,25 @@ class ButtonIconLaunchTests(unittest.TestCase):
         self.environment('keyboard')
         self.assertEqual(self.ensure.call_args.args[2], 'keyboard')
 
-    def test_a_mod_with_its_own_icons_file_wins_and_the_log_says_icons_are_off(self):
+    def test_a_mod_with_its_own_icons_file_gets_the_icons_drawn_on_it(self):
+        # Bloodborne Enhanced has its own menu/common.tpf.dcx (player report 2026-10-24): the icons were off.
         self.user_mod()
+        mine = self.root / 'mods/Mine/dvdroot_ps4/menu/common.tpf.dcx'
+        env = self.environment('xbox')
+        self.assertEqual(env['BB_ICONS_DIR'], str(self.layer))
+        self.assertEqual(Path(self.ensure.call_args.args[4]).resolve(), mine.resolve())
+        self.assertIn("Mine's menu/common.tpf.dcx", env['BB_ICONS_NOTE'])
+        env = self.environment('auto')
+        self.assertEqual(env['BB_PROMPT_SETS'], str(self.prompt_file))
+        self.assertEqual(Path(self.prompts.call_args.args[3]).resolve(), mine.resolve())
+
+    def test_a_mod_file_the_icons_do_not_fit_names_the_mod(self):
+        self.user_mod()
+        self.ensure.side_effect = self.icons.IconError('KG_OK is 64x64')
         env = self.environment('xbox')
         self.assertNotIn('BB_ICONS_DIR', env)
         self.assertIn('off', env['BB_ICONS_NOTE'])
-        self.assertIn('Mine', env['BB_ICONS_NOTE'])
-        self.ensure.assert_not_called()  # nothing is generated for a file nobody will use
+        self.assertIn('Mine: KG_OK is 64x64', env['BB_ICONS_NOTE'])
 
     def test_mods_switched_off_or_disabled_do_not_take_the_icons_away(self):
         self.user_mod()
