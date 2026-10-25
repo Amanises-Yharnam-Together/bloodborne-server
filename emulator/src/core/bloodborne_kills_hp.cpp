@@ -2403,14 +2403,35 @@ void KeepEnemyDeathsInStep(bool sharing) {
     const std::unordered_set<u32>& member_kills = party.members;
     // And what is dead in the host's world, killed before the session too (its save): a guest
     // back from a trip runs its own world, where those were alive (Kaniel 2026-10-11).
+    std::optional<std::vector<CharacterShown>> hosts_now;
     if (IsPartyGuestRole() && InPartySession()) {
         const std::optional<MemberMapState> host = HostShownNow();
         if (host && host->map == map) {
-            if (const auto hosts = DecodeShownCharacters(host->bits)) {
-                const auto dead = DeadInTheHostsWorld(*hosts);
+            if (hosts_now = DecodeShownCharacters(host->bits); hosts_now) {
+                const auto dead = DeadInTheHostsWorld(*hosts_now);
                 others.insert(dead.begin(), dead.end());
             }
         }
+    }
+    // This guest's copies dead by a real death, since when: what the host's map generator brought
+    // back while they stayed dead here comes back here too (see BroughtBackByTheHost).
+    static std::unordered_map<u32, s64> dead_since;
+    static u64 dead_since_visit = 0;
+    if (visit != dead_since_visit) {
+        dead_since.clear();
+        dead_since_visit = visit;
+    }
+    std::vector<DeadCopy> dead_here;
+    for (size_t index = 0; index < pointers.size(); ++index) {
+        const u32 handle = characters[index].handle;
+        if (characters[index].hp <= 0 && IsRealDeath(ReadValue<u8>(pointers[index], 0x1E3))) {
+            dead_here.push_back({handle, dead_since.try_emplace(handle, now_ms).first->second});
+        } else {
+            dead_since.erase(handle);
+        }
+    }
+    if (hosts_now) {
+        BringBackWhatTheHostBroughtBack(BroughtBackByTheHost(*hosts_now, dead_here, others, now_ms));
     }
     TraceMemberKills(characters, pointers, hidden, others, died_for_others);
     size_t newly_hidden = 0;

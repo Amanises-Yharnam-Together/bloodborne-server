@@ -469,6 +469,8 @@ struct RespawnCandidate {
     // Hidden or switched off by the party, not its own story: as the host has it
     // (ShowCharactersLikeTheHost, SwitchCharactersLikeTheHost).
     bool changed_by_party = false;
+    // Dead here while the host has it alive again (see BroughtBackByTheHost).
+    bool brought_back = false;
 };
 // Dead in this member's own save from before the session: at 0 HP with no death mark at all
 // (bits 0-2 and 5 of +0x1E3 clear), not switched off or hidden by the story. A game that loads
@@ -480,9 +482,26 @@ bool LeftDeadByItsSave(const RespawnCandidate& character);
 // trip, which brings back what the member's save left dead (a party wipe resets the map for
 // every member, as a solo death does; Kaniel). The wipe's own reload brought this visit's kills
 // back already.
-enum class WorldRespawnKind : u8 { PartyRest, AfterWipe };
+// Or, mid-play, the one that brings back on a guest what the host's map generator brought back
+// (BroughtBackByTheHost).
+enum class WorldRespawnKind : u8 { PartyRest, AfterWipe, BroughtBack };
 bool RespawnsInWorldRespawn(WorldRespawnKind kind, const RespawnCandidate& character,
                             bool alive_this_visit);
+// A map generator brings the same pre-placed enemies back (MSB events of type 5): the chalice
+// bell-ringing woman's red skeletons, the Witch of Hemwick's Mad Ones. It runs in the host's game;
+// a guest near one when it died there took the game's kill (DiesInsteadOfHiding), and its copy
+// stayed dead after the host's came back, so the guests never saw those again (Kaniel's chalice
+// playtest 2026-10-25, v1.2.2). Of this guest's copies dead here (`dead_here`: since when), the
+// ones the host's board has alive near the host, no member's kill standing (`party_kills`), dead
+// here for BringBackAfterMs at least (a kill made here reaches the host first). Sorted.
+struct DeadCopy {
+    u32 handle = 0;
+    s64 dead_since_ms = 0;
+};
+constexpr s64 BringBackAfterMs = 3'000;
+std::vector<u32> BroughtBackByTheHost(std::span<const CharacterShown> host,
+                                      std::span<const DeadCopy> dead_here,
+                                      const std::unordered_set<u32>& party_kills, s64 now_ms);
 // The same for the character state flags (+0x1E0) the scripts set and the respawn clears.
 constexpr u64 ScriptCharacterFlags = 0x4000 | 0x20000 | 0x40000000;
 u64 RestoreScriptFlagsAfterRespawn(u64 flags_before, u64 flags_after, s32 hp_before);

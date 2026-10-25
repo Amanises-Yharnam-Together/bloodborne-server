@@ -4069,6 +4069,34 @@ SCENARIOS["mad-one-back"] = {
 }
 
 
+# Kaniel's chalice playtest 2026-10-25 (v1.2.2): the bell-ringing woman's red skeletons stayed
+# invisible to the guests. A guest near the enemy when the host kills it takes the game's kill
+# (DiesInsteadOfHiding), and when the host's generator brings it back that copy stayed dead. Now
+# the guest's bonfire respawn brings it back too (BroughtBackByTheHost). The host stands closer,
+# so it keeps the enemy (nearest player) and its generator is the one that runs.
+SCENARIOS["mad-one-back-near"] = {
+    "about": "a guest next to a Mad One the host kills sees it die; when the Witch of Hemwick's "
+             "generator brings it back in the host's game, it is alive in the guest's game too",
+    "roles": {
+        "host": [*HEMWICK_START, "wait-session 2 300", "wait 10", f"approach {MAD_ONE} 0 2",
+                 "sync near-ready", f"kill {MAD_ONE}", "wait 3", f"expect-hp {MAD_ONE} == 0",
+                 "sync near-killed", "wait 25", "wait 20", "census 60", f"expect-hp {MAD_ONE} > 0",
+                 "sync near-checked", "expect-session 2"],
+        "guest": [*HEMWICK_START, "wait-session 2 300", "wait 10", f"approach {MAD_ONE} 0 8",
+                  "sync near-ready", "sync near-killed", "wait 5", f"expect-hp {MAD_ONE} == 0",
+                  "wait 20", f"wait-hp {MAD_ONE} > 0 60", "census 60", f"expect-hp {MAD_ONE} > 0",
+                  f"expect-hidden {MAD_ONE} 0", f"expect-disabled {MAD_ONE} 0",
+                  "sync near-checked", "expect-session 2"],
+    },
+    "syncs": {name: {"chapter": "mad-one-back-near", "roles": ["host", "guest"]}
+              for name in ("near-ready", "near-killed", "near-checked")},
+    "expect": {"guest": [r"brought back are dead here on map 0x16000000; bringing them "
+                         r"back:[^\n]*0x1000801b"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
+}
+
+
 # Kaniel's playtest 2026-10-20: only the host saw the Mad Ones the Witch of Hemwick summons. They
 # wait switched off with their hits off (2004:39); her summon (m22_00 12204839, waiting on her AI)
 # turns them on in the host's game only, and a guest's copy switched on like the host's kept its
