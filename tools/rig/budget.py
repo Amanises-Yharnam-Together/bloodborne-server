@@ -68,6 +68,12 @@ RECENT = {
 LONG = {
     "boss-death-spectate": "#414: a boss fight to a teammate's death and the fight after (600 s)",
     "boss-death-wipe": "#414: a boss fight to the whole party's deaths (600 s)",
+    "logarius-spells": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "logarius-look": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "logarius-runner-leaves": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "shadows-spells": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "shadows-look": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
+    "shadows-runner-leaves": "Kaniel 2026-10-25 boss spells: a trip to the boss and a phase of its fight",
     "story-hostless": "the 10-20 case #286: a team join and a trip",
     "key-items-kept": "the 10-19 playtest case #267: a join, two trips",
     "gesture-own": "the 10-23 gestures case: a join, two trips",

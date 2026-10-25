@@ -571,6 +571,9 @@ bool FreeCameraOn();
 void TickAutoplay();
 // The rig's watch-unseen check (bloodborne_autoplay.cpp), after the co-op tick.
 void CheckAutoplayWatch();
+void LogBossFightBullets();
+// How many bullets of that BulletParam id this game made so far.
+u64 BulletsMade(s32 bullet);
 void TickPartyDeath();
 // Kaniel 2026-10-24: team pings (bloodborne_pings_game.cpp), each game tick.
 void TickPings();

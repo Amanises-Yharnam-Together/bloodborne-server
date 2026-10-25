@@ -52,6 +52,7 @@ VERBS = {
     "watch-unseen",  # a story NPC never drawn after a load
     "use-lamp", "travel-answer", "expect-rot",  # Kaniel 2026-10-25: the host rules
     "death-mode", "wait-death-mode", "free-camera", "lamp-use",  # Kaniel 2026-10-25: spectating
+    "watch-effects", "wait-bullets",  # 2026-10-25: a boss's spells in every game
 }
 VITALS = {"up", "down", "dead", "spectate"}
 BUTTONS = {"cross", "circle", "square", "triangle", "options", "up", "right", "down", "left",
