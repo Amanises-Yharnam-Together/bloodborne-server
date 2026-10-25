@@ -134,6 +134,129 @@ inline void FpsText(char* text, std::size_t size, float shown_fps, float game_fp
     }
 }
 
+// ---- What is really shown (Kaniel 2026-10-25: "sometimes it just says it's up but does nothing")
+
+/// Why frame generation, switched on, shows no generated frames now.
+enum Idle {
+    IdleNone = 0,      ///< generating
+    IdleStarting,      ///< nothing measured yet
+    IdleFailed,        ///< the provider refused; until the switch is turned off and on
+    IdleNoMemory,      ///< no video memory for the generated frames; likewise
+    IdleNoScene,       ///< menus, loading screens, movies: nothing to interpolate
+    IdleSceneLarger,   ///< the scene is rendered larger than the window
+    IdleNoRoom,        ///< fitted to the display: no room at this frame rate
+    IdlePresentBehind, ///< Limiter's pause: presenting did not keep up
+    IdleLate,          ///< made, but replaced before the display showed them
+};
+
+/// The log's words for `idle` (the menu has its own, translated).
+inline const char* IdleText(int idle) {
+    switch (idle) {
+    case IdleStarting:
+        return "starting";
+    case IdleFailed:
+        return "the provider refused (switch it off and on to retry)";
+    case IdleNoMemory:
+        return "not enough video memory for the generated frames";
+    case IdleNoScene:
+        return "no game scene (menu, loading screen or movie)";
+    case IdleSceneLarger:
+        return "the scene is rendered larger than the window";
+    case IdleNoRoom:
+        return "no room on the display at this frame rate";
+    case IdlePresentBehind:
+        return "paused, presenting does not keep up";
+    case IdleLate:
+        return "generated frames are replaced before the display shows them";
+    default:
+        return "generating";
+    }
+}
+
+/// A generated image counts as shown when the next image goes out at least half a refresh
+/// later: Mailbox and Immediate replace (or tear over) an image the display has not scanned out
+/// yet, V-Sync (FIFO) queues every one. `gap_ms`: from its present to the next.
+inline bool GeneratedShown(double gap_ms, unsigned hz, bool fifo) {
+    if (fifo) {
+        return true;
+    }
+    const double needed = hz > 0 ? 500.0 / hz : 2.0;
+    return gap_ms >= needed;
+}
+
+/// One measuring window of the swap thread: game frames presented, generated frames presented
+/// and how many of those were shown (GeneratedShown).
+struct Window {
+    double seconds = 0.0;
+    unsigned game = 0, generated = 0, shown = 0;
+};
+
+/// What the menu, the FPS counter and the log say about a window.
+struct Status {
+    bool active = false; ///< generated frames reach the display
+    int idle = IdleStarting;
+    float game_fps = 0.0f, shown_fps = 0.0f; ///< shown: game frames plus shown generated ones
+    int multiplier = 1;                      ///< images shown per game frame, rounded
+};
+
+/// `plan_idle`: why the presenter's last plan made no frames (IdleNone when it made them).
+/// Active when at least a quarter of the game frames had a generated frame shown (a load's
+/// hitches and history restarts skip a few); otherwise why not.
+inline Status Judge(const Window& window, int plan_idle) {
+    Status status;
+    if (window.seconds <= 0.0 || window.game == 0) {
+        status.idle = plan_idle != IdleNone ? plan_idle : IdleStarting;
+        return status;
+    }
+    status.game_fps = float(window.game / window.seconds);
+    status.shown_fps = float((window.game + window.shown) / window.seconds);
+    status.multiplier = int(double(window.game + window.shown) / window.game + 0.5);
+    status.active = window.shown * 4 >= window.game;
+    if (status.active) {
+        status.idle = IdleNone;
+    } else if (plan_idle != IdleNone) {
+        status.idle = plan_idle;
+    } else {
+        status.idle = window.generated > 0 ? IdleLate : IdleStarting;
+    }
+    return status;
+}
+
+/// Reports a change of Status once it held for two windows (one window of a loading screen is
+/// no change worth a log line).
+class StatusTracker {
+public:
+    /// True when `status` is a change to report now.
+    bool Update(const Status& status) {
+        const int key = Key(status);
+        if (key == reported) {
+            candidate = -1;
+            return false;
+        }
+        if (key != candidate) {
+            candidate = key;
+            held = 0;
+        }
+        if (++held < 2) {
+            return false;
+        }
+        reported = key;
+        candidate = -1;
+        return true;
+    }
+    /// Switched off: the next switch-on reports afresh.
+    void Reset() noexcept {
+        reported = candidate = -1;
+        held = 0;
+    }
+
+private:
+    static int Key(const Status& status) {
+        return status.active ? 1000 + status.multiplier : status.idle;
+    }
+    int reported = -1, candidate = -1, held = 0;
+};
+
 /// DLSS Frame Generation released (switched off, or another provider): under the present's lock
 /// (`present_lock`, which every present and queue submit takes), once the queues are idle
 /// (`wait_idle`), so no present runs beside the release. Kaniel's playtest 2026-10-22 (v1.1.5):

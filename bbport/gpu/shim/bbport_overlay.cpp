@@ -1471,23 +1471,60 @@ void FrameGenRows(bool on) {
     if (!on) {
         return;
     }
-    static char line[160];
-    const int now = s.frame_gen_now.load();
+    static char line[256];
     const int hz = s.frame_gen_display_hz.load();
     if (const char* problem = s.frame_gen_problem.load()) {
         Note(problem, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
     }
-    if (hz > 0 && now > 0) {
-        std::snprintf(line, sizeof(line), T("Now %dx on a %d Hz display", "Сейчас %dx на экране %d Гц"),
-                      now + 1, hz);
+    // What reaches the display (the presenter's count of shown generated frames), not what the
+    // settings ask for: "on" with nothing generated says why (Kaniel 2026-10-25).
+    if (s.fg_active) {
+        const float game = s.fg_base_fps.load(), shown = s.fg_presented_fps.load();
+        std::snprintf(line, sizeof(line),
+                      T("Generating: game %d FPS, shown %d FPS (%dx)",
+                        "Генерация идёт: игра %d FPS, на экране %d FPS (%dx)"),
+                      int(game + 0.5f), int(shown + 0.5f),
+                      game > 0.0f ? int(shown / game + 0.5f) : 1);
         Note(line, Dim());
-    } else if (hz > 0 && s.fg_base_fps > 0.0f) {
+        return;
+    }
+    const int idle = s.frame_gen_idle.load();
+    if (idle == BbFrameGenPace::IdleNoRoom && hz > 0) {
         std::snprintf(line, sizeof(line),
                       T("Paused: no room on the %d Hz display at this frame rate",
                         "Приостановлено: нет места на экране %d Гц при этой частоте кадров"),
                       hz);
         Note(line, Dim());
+        return;
     }
+    const char* reason = T("starting", "запускается");
+    switch (idle) {
+    case BbFrameGenPace::IdleFailed:
+        reason = T("the provider refused; switch it off and on to retry",
+                   "технология отказала; выключите и включите, чтобы попробовать снова");
+        break;
+    case BbFrameGenPace::IdleNoMemory:
+        reason = T("not enough video memory", "не хватает видеопамяти");
+        break;
+    case BbFrameGenPace::IdleNoScene:
+        reason = T("no game scene (menu or loading screen)", "нет игровой сцены (меню или загрузка)");
+        break;
+    case BbFrameGenPace::IdleSceneLarger:
+        reason = T("the scene is rendered larger than the window", "сцена отрисовывается больше окна");
+        break;
+    case BbFrameGenPace::IdlePresentBehind:
+        reason = T("paused, presenting does not keep up", "пауза, вывод кадров не успевает");
+        break;
+    case BbFrameGenPace::IdleLate:
+        reason = T("generated frames are replaced before the display shows them",
+                   "сгенерированные кадры заменяются раньше, чем экран их покажет");
+        break;
+    default:
+        break;
+    }
+    std::snprintf(line, sizeof(line), T("On, but not generating: %s", "Включено, но не генерирует: %s"),
+                  reason);
+    Note(line, ImGui::GetColorU32(ImVec4(1.0f, 0.55f, 0.35f, 1.0f)));
 }
 
 /// A whole-number setting from lo to hi, one step a press; `game` is shown as the game's own.

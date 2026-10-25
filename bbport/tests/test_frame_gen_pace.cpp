@@ -110,6 +110,75 @@ int main() {
     FpsText(text, sizeof(text), 60.0f, 0.0f, true, 16.7f); // game rate not known yet
     assert(std::strcmp(text, "60 FPS  16.7 ms") == 0);
 
+    // Shown or not (Kaniel 2026-10-25: "says it's up but does nothing"): Mailbox replaces an
+    // image the next one follows within half a refresh; V-Sync (FIFO) shows every one.
+    assert(GeneratedShown(8.3, 240, false));   // 60 FPS 2x on 240 Hz: 8.3 ms apart
+    assert(!GeneratedShown(0.2, 240, false));  // the generated and the game frame at once
+    assert(GeneratedShown(0.2, 240, true));
+    assert(!GeneratedShown(3.0, 144, false));  // 6.9 ms refresh needs 3.5 ms
+    assert(GeneratedShown(3.5, 144, false));
+    assert(GeneratedShown(3.0, 0, false));     // refresh unknown: 2 ms
+    assert(!GeneratedShown(1.0, 0, false));
+
+    // The status of a measuring window: generated frames that reach the display, else why not.
+    {
+        // 60 FPS, one generated frame shown per game frame: active, 120 shown, 2x.
+        Status st = Judge({1.0, 60, 60, 60}, IdleNone);
+        assert(st.active && st.idle == IdleNone && st.multiplier == 2);
+        assert(st.game_fps == 60.0f && st.shown_fps == 120.0f);
+        // DLSS 4x.
+        st = Judge({1.0, 60, 180, 180}, IdleNone);
+        assert(st.active && st.multiplier == 4 && st.shown_fps == 240.0f);
+        // Made every frame but none shown (presented together with the game frame): not
+        // active, though the provider ran (the old counter said 120 FPS here).
+        st = Judge({1.0, 60, 60, 0}, IdleNone);
+        assert(!st.active && st.idle == IdleLate && st.multiplier == 1);
+        assert(st.shown_fps == 60.0f);
+        // Nothing made: the plan's reason.
+        st = Judge({1.0, 60, 0, 0}, IdleNoScene);
+        assert(!st.active && st.idle == IdleNoScene);
+        st = Judge({1.0, 60, 0, 0}, IdleFailed);
+        assert(!st.active && st.idle == IdleFailed);
+        st = Judge({1.0, 60, 0, 0}, IdleNoRoom);
+        assert(!st.active && st.idle == IdleNoRoom);
+        // A few shown during a load's hitches: still active from a quarter of the game frames.
+        st = Judge({1.0, 40, 12, 10}, IdleNoScene);
+        assert(st.active && st.idle == IdleNone);
+        st = Judge({1.0, 40, 12, 9}, IdleNoScene);
+        assert(!st.active && st.idle == IdleNoScene);
+        // Nothing presented yet.
+        st = Judge({0.0, 0, 0, 0}, IdleNone);
+        assert(!st.active && st.idle == IdleStarting);
+        st = Judge({0.5, 0, 0, 0}, IdleFailed);
+        assert(!st.active && st.idle == IdleFailed);
+        // Log words for every reason.
+        for (int idle = IdleNone; idle <= IdleLate; ++idle) {
+            assert(IdleText(idle) && IdleText(idle)[0]);
+        }
+        assert(std::strcmp(IdleText(IdleNone), "generating") == 0);
+    }
+
+    // A change of status is reported once it held for two windows.
+    {
+        StatusTracker tracker;
+        const Status active = Judge({0.5, 30, 30, 30}, IdleNone);
+        const Status no_scene = Judge({0.5, 30, 0, 0}, IdleNoScene);
+        assert(!tracker.Update(active));
+        assert(tracker.Update(active));  // held: reported
+        assert(!tracker.Update(active)); // unchanged
+        assert(!tracker.Update(no_scene)); // one window of a loading screen
+        assert(!tracker.Update(active));
+        assert(!tracker.Update(no_scene));
+        assert(tracker.Update(no_scene));
+        // A different multiplier is a change.
+        const Status four = Judge({0.5, 30, 90, 90}, IdleNone);
+        assert(!tracker.Update(four));
+        assert(tracker.Update(four));
+        tracker.Reset();
+        assert(!tracker.Update(four));
+        assert(tracker.Update(four));
+    }
+
     // Releasing DLSS Frame Generation (switched off): under the present's lock, after the queue
     // has finished presenting (Kaniel's playtest 2026-10-22: the driver crashed in the swap
     // thread's present right after the release).

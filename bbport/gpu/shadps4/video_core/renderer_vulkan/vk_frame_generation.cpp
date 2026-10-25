@@ -482,6 +482,8 @@ int FrameGeneration::ChooseProvider() {
 
 void FrameGeneration::OutOfMemory() {
     failed = true;
+    failed_idle = BbFrameGenPace::IdleNoMemory;
+    SetIdle(failed_idle);
     history_broken = true;
     BbSettings::Get().frame_gen_problem = "Not enough video memory for the generated frames";
     Report("off (not enough video memory for the generated frames)");
@@ -504,6 +506,7 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
             settings.frame_gen_problem = nullptr;
             plan.off = true;
         }
+        SetIdle(BbFrameGenPace::IdleStarting);
         if (switched_on) {
             Report("off (no temporal upscaler selected)");
         } else {
@@ -514,9 +517,11 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
     if (!was_requested) {
         was_requested = true;
         failed = false;
+        failed_idle = BbFrameGenPace::IdleFailed;
         history_broken = true;
     }
     if (failed) {
+        SetIdle(failed_idle);
         skipped.fetch_add(1, std::memory_order_relaxed);
         return plan;
     }
@@ -527,12 +532,14 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
     }
     if (!current.valid) {
         // Menus, loading screens, movies: no scene to interpolate.
+        SetIdle(BbFrameGenPace::IdleNoScene);
         history_broken = true;
         skipped.fetch_add(1, std::memory_order_relaxed);
         return plan;
     }
     if (current.width > width || current.height > height) {
         Report("off (the scene is rendered larger than the window)");
+        SetIdle(BbFrameGenPace::IdleSceneLarger);
         history_broken = true;
         skipped.fetch_add(1, std::memory_order_relaxed);
         return plan;
@@ -561,6 +568,7 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
             }
             if (!CreateContext(width, height, format)) {
                 failed = true;
+                SetIdle(failed_idle);
                 return plan;
             }
             history_broken = true;
@@ -570,6 +578,7 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
     } else {
         if (!ChooseOutputFormat(format)) {
             failed = true;
+            SetIdle(failed_idle);
             return plan;
         }
         if (reported != "on (DLSS)") {
@@ -582,6 +591,8 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
         provider == BbFrameGenPace::ProviderDlss ? DlssMaxCount() : 0);
     const u32 count = std::min(wanted, display_limit.load(std::memory_order_relaxed));
     if (count == 0) {
+        SetIdle(display_paused.load(std::memory_order_relaxed) ? BbFrameGenPace::IdlePresentBehind
+                                                               : BbFrameGenPace::IdleNoRoom);
         if (!paused) {
             paused = true;
             std::printf("Frame generation: paused, no room on the display at this frame rate\n");
@@ -598,6 +609,7 @@ FrameGeneration::Plan FrameGeneration::PlanFrame(u32 width, u32 height, vk::Form
         scheduler.Wait(ticks.front());
         ticks.pop_front();
     }
+    SetIdle(BbFrameGenPace::IdleNone);
     plan.generate = true;
     plan.count = count;
     reset_frame = current.reset || history_broken;
@@ -882,7 +894,6 @@ float FrameGeneration::OnPresent(u32 generated) {
     }
     last_present = now;
     ++stats_base;
-    ++overlay_base;
     return generated ? std::clamp(base_interval_ms.load(std::memory_order_relaxed), 1.0f, 33.0f)
                      : 0.0f;
 }
@@ -894,44 +905,78 @@ void FrameGeneration::PrintStats(std::chrono::steady_clock::time_point now) {
         return;
     }
     if (BbSettings::Get().frame_generation.load(std::memory_order_relaxed)) {
-        std::printf("Frame generation: %.1f generated/s, %.1f presented/s, base %.1f FPS, %u "
-                    "skipped\n",
-                    stats_generated / seconds, stats_images / seconds, stats_base / seconds,
-                    skipped.exchange(0, std::memory_order_relaxed));
+        std::printf("Frame generation: %.1f generated/s (%.1f shown), %.1f presented/s, base %.1f "
+                    "FPS, %u skipped\n",
+                    stats_generated / seconds, stats_shown / seconds, stats_images / seconds,
+                    stats_base / seconds, skipped.exchange(0, std::memory_order_relaxed));
     }
     stats_start = now;
-    stats_base = stats_images = stats_generated = 0;
+    stats_base = stats_images = stats_generated = stats_shown = 0;
 }
 
 void FrameGeneration::OnSwitchedOff() {
     auto& settings = BbSettings::Get();
     if (settings.fg_active.load(std::memory_order_relaxed)) {
         settings.fg_active.store(false, std::memory_order_relaxed);
-        overlay_base = overlay_images = 0;
-        overlay_start = {};
     }
+    settings.frame_gen_idle.store(BbFrameGenPace::IdleStarting, std::memory_order_relaxed);
+    overlay = summary = {};
+    overlay_start = summary_start = {};
+    tracker.Reset();
 }
 
-void FrameGeneration::OnImagePresented(bool generated) {
+void FrameGeneration::OnPresented(u32 generated, u32 shown) {
     const auto now = std::chrono::steady_clock::now();
     if (stats_start.time_since_epoch().count() == 0) {
-        stats_start = overlay_start = now;
+        stats_start = now;
     }
-    ++stats_images;
-    ++overlay_images;
+    if (overlay_start.time_since_epoch().count() == 0) {
+        overlay_start = summary_start = now;
+    }
+    stats_images += generated + 1;
     stats_generated += generated;
+    stats_shown += shown;
     PrintStats(now);
-    // The overlay's "60 -> 120 FPS FG", twice a second.
-    const double seconds = std::chrono::duration<double>(now - overlay_start).count();
-    if (seconds >= 0.5) {
-        auto& settings = BbSettings::Get();
-        const bool on = settings.frame_generation.load(std::memory_order_relaxed) &&
-                        overlay_images > overlay_base + overlay_base / 4;
-        settings.fg_active.store(on, std::memory_order_relaxed);
-        settings.fg_base_fps.store(float(overlay_base / seconds), std::memory_order_relaxed);
-        settings.fg_presented_fps.store(float(overlay_images / seconds), std::memory_order_relaxed);
+    for (auto* window : {&overlay, &summary}) {
+        ++window->game;
+        window->generated += generated;
+        window->shown += shown;
+    }
+    // Twice a second: the menu's status and the FPS counter's "120 FPS (game 60, frame gen 2x)",
+    // from the generated frames that reached the display, not the ones handed to the driver.
+    auto& settings = BbSettings::Get();
+    overlay.seconds = std::chrono::duration<double>(now - overlay_start).count();
+    if (overlay.seconds >= 0.5) {
+        const auto status =
+            BbFrameGenPace::Judge(overlay, plan_idle.load(std::memory_order_relaxed));
+        settings.fg_active.store(status.active, std::memory_order_relaxed);
+        settings.fg_base_fps.store(status.game_fps, std::memory_order_relaxed);
+        settings.fg_presented_fps.store(status.shown_fps, std::memory_order_relaxed);
+        settings.frame_gen_idle.store(status.idle, std::memory_order_relaxed);
+        if (tracker.Update(status)) {
+            if (status.active) {
+                std::printf("Frame generation: active, %dx (game %.0f FPS, shown %.0f FPS)\n",
+                            status.multiplier, status.game_fps, status.shown_fps);
+            } else {
+                std::printf("Frame generation: switched on, not generating: %s\n",
+                            BbFrameGenPace::IdleText(status.idle));
+            }
+        }
+        overlay = {};
         overlay_start = now;
-        overlay_base = overlay_images = 0;
+    }
+    // Every 30 seconds, beside the "Perf:" line, so a player's log says what it really did.
+    summary.seconds = std::chrono::duration<double>(now - summary_start).count();
+    if (summary.seconds >= 30.0) {
+        const auto status =
+            BbFrameGenPace::Judge(summary, plan_idle.load(std::memory_order_relaxed));
+        std::printf("Frame generation: %.1f generated/s made, %.1f shown, game %.1f FPS, shown "
+                    "%.1f FPS over %.0f s (%s)\n",
+                    summary.generated / summary.seconds, summary.shown / summary.seconds,
+                    status.game_fps, status.shown_fps, summary.seconds,
+                    BbFrameGenPace::IdleText(status.idle));
+        summary = {};
+        summary_start = now;
     }
 }
 
