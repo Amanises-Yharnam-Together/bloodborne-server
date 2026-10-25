@@ -75,6 +75,9 @@ std::mutex enemy_hits_mutex;
 std::vector<EnemyHitNews> enemy_hits;
 std::mutex altar_records_mutex;
 std::vector<AltarRecordNews> altar_records;
+// Kaniel 2026-10-24: the team's pings (bbcoop::Ping) as they came, for the next pings tick.
+std::mutex team_pings_mutex;
+std::vector<TeamPing> team_pings;
 std::string hello_party;
 std::string hello_member;
 bool hello_due = true;
@@ -464,6 +467,13 @@ void StreamTick(s64 now_ms) {
                         }
                         continue;
                     }
+                    if (envelope->has_ping()) {
+                        std::scoped_lock pings_lock{team_pings_mutex};
+                        if (team_pings.size() < 64) {
+                            team_pings.push_back(PingOf(envelope->ping()));
+                        }
+                        continue;
+                    }
                     if (IsTradeMessage(*envelope)) {
                         TakeServerTrade(std::move(*envelope));
                     } else if (IsBoard(*envelope)) {
@@ -751,6 +761,20 @@ void SendEnemyHit(u32 map, u32 handle, s32 hp, s32 max) {
     hit.set_hp(hp);
     hit.set_max(max);
     Queue(std::move(envelope));
+}
+
+void SendTeamPing(const TeamPing& ping) {
+    if (!ServerWorldOn()) {
+        return;
+    }
+    bbcoop::Envelope envelope;
+    *envelope.mutable_ping() = ToMessage(ping);
+    Queue(std::move(envelope));
+}
+
+std::vector<TeamPing> TakeTeamPings() {
+    std::scoped_lock lock{team_pings_mutex};
+    return std::exchange(team_pings, {});
 }
 
 std::vector<EnemyHitNews> TakeEnemyHits() {

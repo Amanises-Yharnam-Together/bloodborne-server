@@ -383,5 +383,10 @@
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: en bredare skärm (21:9, 32:9) visar mer på sidorna, en högre (16:10, 4:3) mer ovanför och nedanför; HUD:en flyttas ut till skärmens kanter. 16:9: spelets bild med svarta fält. Gäller efter att spelet startats om.",
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: en bredare skärm (21:9, 32:9) visar mer på sidorna, en högre (16:10, 4:3) mer ovanför och nedanför; HUD:en flyttas ut till skärmens kanter. 16:9: spelets bild med svarta fält. Ändras från nästa bildruta.",
  "Final frame": "Färdig bild",
- "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: en bredare eller högre skärm visar mer av världen. 16:9: spelets bild, svarta fält"
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: en bredare eller högre skärm visar mer av världen. 16:9: spelets bild, svarta fält",
+ "Team pings": "Lagmarkeringar",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Markera en plats för ditt lag i 20 sekunder: tryck två gånger på pekplattan eller tryck på markeringstangenten där du siktar (på fienden du låst), {Square} på kartan. Laget ser den i världen, på kompassen och på kartan.",
+ "Ping key": "Markeringstangent",
+ "The keyboard key that pings where you aim.": "Tangenten som markerar där du siktar.",
+ "Ping": "Markera"
 }

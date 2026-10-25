@@ -415,7 +415,7 @@ message Envelope {
         // 38 was EnemiesLetGo (phase 6's far-guest runners, gone in phase 8).
         EnemyHit enemy_hit = 39;
         ResumeAt resume_at = 40;
-        // 41 is the team pings' (PR #386).
+        Ping ping = 41;
         AltarRecord altar_record = 42;
     }
 }
@@ -429,6 +429,19 @@ message AltarRecord {
     uint32 altar = 1;
     bytes bits = 2;
     string member = 3; // server -> game: whose
+}
+
+// Kaniel 2026-10-24: a team ping. A member marks a spot (where its camera aims, the enemy it is
+// locked on, or a spot on the world map; game -> server); the server sends it on at once to the
+// team's other members (`member` set; server -> game). Each game shows it 20 s, one per member
+// (a new one replaces it). Nothing is kept.
+message Ping {
+    uint32 map = 1;    // the packed map the spot is on
+    Position at = 2;   // the game's metres on that map
+    uint32 enemy = 3;  // the enemy it follows (its handle), 0 none
+    uint32 seq = 4;    // counts up within the sender's run
+    bool from_map = 5; // placed on the world map
+    string member = 6; // server -> game: whose
 }
 
 // Phase 7, server -> game (after its hello): where this member last stood in the team's world

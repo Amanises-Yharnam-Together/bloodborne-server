@@ -383,5 +383,10 @@
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "自动：更宽的屏幕（21:9、32:9）两侧显示更多，更高的屏幕（16:10、4:3）上下显示更多，HUD 移到屏幕边缘。16:9：游戏原本的画面，带黑边。重启游戏后生效。",
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "自动：更宽的屏幕（21:9、32:9）两侧显示更多，更高的屏幕（16:10、4:3）上下显示更多，HUD 移到屏幕边缘。16:9：游戏原本的画面，带黑边。从下一帧起改变。",
  "Final frame": "最终画面",
- "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "自动：更宽或更高的屏幕显示更多世界。16:9：游戏原本的画面，黑边"
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "自动：更宽或更高的屏幕显示更多世界。16:9：游戏原本的画面，黑边",
+ "Team pings": "队伍标记",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "为队伍标记一个地点，持续20秒：在瞄准处（锁定时为该敌人）连按两下触摸板或按标记键，地图上按{Square}。队伍可在世界、罗盘和地图上看到。",
+ "Ping key": "标记键",
+ "The keyboard key that pings where you aim.": "在瞄准处放置标记的键盘按键。",
+ "Ping": "标记"
 }

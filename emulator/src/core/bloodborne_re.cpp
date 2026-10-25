@@ -1066,6 +1066,15 @@ void TickPartyController() {
                           .count(),
                       SteadyMilliseconds());
     }
+    {
+        const auto started = std::chrono::steady_clock::now();
+        TimeTickPart("TickPings", TickPings);
+        coop_time.Add("pings",
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - started)
+                          .count(),
+                      SteadyMilliseconds());
+    }
     TimeTickPart("TickLampRest", TickLampRest);
     if (!party_controller) {
         return;

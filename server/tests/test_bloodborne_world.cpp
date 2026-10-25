@@ -175,6 +175,8 @@ struct Game {
       hits.push_back(envelope.enemy_hit());
     } else if (envelope.has_altar_record()) {
       altar_records.push_back(envelope.altar_record());
+    } else if (envelope.has_ping()) {
+      pings.push_back(envelope.ping());
     } else if (envelope.has_map_board()) {
       map_board = envelope.map_board();
     } else if (envelope.has_rest_board()) {
@@ -243,6 +245,7 @@ struct Game {
   std::map<std::string, bbcoop::LoadProgress> loads;
   std::vector<bbcoop::EnemyHit> hits;
   std::vector<bbcoop::AltarRecord> altar_records;
+  std::vector<bbcoop::Ping> pings;
   bool enemy_owner = true; // runs phase 4's owners (its hello says)
   TradeClient trades;
   std::vector<TradeItems> added; // what its trades added
@@ -1206,6 +1209,52 @@ int AnAltarRecordReachesTheOthersWhole() {
     CHECK(game->altar_records[0].bits() == bits);
   }
   CHECK(guest.altar_records.empty());
+  return 0;
+}
+
+// Kaniel 2026-10-24: a team ping goes to every other member of the party at
+// once, under the sender's name (never the name it claims), wherever they are;
+// not back to its sender and not to another party. The server keeps nothing.
+int APingReachesTheTeamAtOnce() {
+  Service service{{}};
+  Game host{1000, "host", 11};
+  Game guest{1001, "guest", 12};
+  Game other{1002, "other", 13};
+  Game stranger{1003, "stranger", 14};
+  const std::vector<Game *> games{&host, &guest, &other, &stranger};
+  qint64 now = 1'000'000;
+  host.Hello(now);
+  guest.Hello(now);
+  other.Hello(now);
+  stranger.Hello(now, "someone:else");
+  Pump(service, games, now);
+  other.Map(0x17000000, now); // another map: still in the team
+  Pump(service, games, now);
+  bbcoop::Envelope ping;
+  ping.mutable_ping()->set_map(0x18010000);
+  ping.mutable_ping()->mutable_at()->set_x(-215.5f);
+  ping.mutable_ping()->mutable_at()->set_y(-54.25f);
+  ping.mutable_ping()->mutable_at()->set_z(178.0f);
+  ping.mutable_ping()->set_enemy(0x1001400b);
+  ping.mutable_ping()->set_seq(3);
+  ping.mutable_ping()->set_member("spoofed");
+  guest.Send(ping, now + 10);
+  Pump(service, games, now + 10);
+  for (Game *game : {&host, &other}) {
+    CHECK(game->pings.size() == 1);
+    CHECK(game->pings[0].member() == "guest");
+    CHECK(game->pings[0].map() == 0x18010000u && game->pings[0].seq() == 3u);
+    CHECK(game->pings[0].at().x() == -215.5f &&
+          game->pings[0].at().z() == 178.0f);
+    CHECK(game->pings[0].enemy() == 0x1001400bu);
+  }
+  CHECK(guest.pings.empty());
+  CHECK(stranger.pings.empty());
+  // A member joining later hears no old ping: pings are not kept.
+  Game late{1004, "late", 15};
+  late.Hello(now + 20);
+  Pump(service, {&host, &guest, &other, &late}, now + 20);
+  CHECK(late.pings.empty());
   return 0;
 }
 
@@ -2250,6 +2299,7 @@ int main() {
       {"AHitReachesTheOthersAtOnce", AHitReachesTheOthersAtOnce},
       {"AnAltarRecordReachesTheOthersWhole",
        AnAltarRecordReachesTheOthersWhole},
+      {"APingReachesTheTeamAtOnce", APingReachesTheTeamAtOnce},
       {"TheFirstMemberOnAnAreaRunsItsEnemies",
        TheFirstMemberOnAnAreaRunsItsEnemies},
       {"GamePacketsGoByMapAndOwner", GamePacketsGoByMapAndOwner},

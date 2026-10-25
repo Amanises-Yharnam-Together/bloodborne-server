@@ -383,5 +383,10 @@
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: leveämpi näyttö (21:9, 32:9) näyttää enemmän sivuilta, korkeampi (16:10, 4:3) enemmän ylhäältä ja alhaalta; HUD siirtyy näytön reunoille. 16:9: pelin kuva mustin palkein. Tulee voimaan pelin uudelleenkäynnistyksen jälkeen.",
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: leveämpi näyttö (21:9, 32:9) näyttää enemmän sivuilta, korkeampi (16:10, 4:3) enemmän ylhäältä ja alhaalta; HUD siirtyy näytön reunoille. 16:9: pelin kuva mustin palkein. Muuttuu seuraavasta kuvasta.",
  "Final frame": "Valmis kuva",
- "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: leveämpi tai korkeampi näyttö näyttää enemmän maailmaa. 16:9: pelin kuva, mustat palkit"
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: leveämpi tai korkeampi näyttö näyttää enemmän maailmaa. 16:9: pelin kuva, mustat palkit",
+ "Team pings": "Tiimimerkit",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Merkitse paikka tiimillesi 20 sekunniksi: napauta kosketuslevyä kahdesti tai paina merkkinäppäintä sinne, mihin tähtäät (lukittuun viholliseen), kartalla {Square}. Tiimi näkee sen maailmassa, kompassissa ja kartalla.",
+ "Ping key": "Merkkinäppäin",
+ "The keyboard key that pings where you aim.": "Näppäin, joka merkitsee kohdan, johon tähtäät.",
+ "Ping": "Merkitse"
 }

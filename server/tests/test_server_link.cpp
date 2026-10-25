@@ -629,8 +629,9 @@ int RoutesGamePackets() {
   return 0;
 }
 
-// Two PCs with one player id (a copied install, player report 2026-10-24): the second one's hello
-// no longer takes the link from the first while that one is still heard.
+// Two PCs with one player id (a copied install, player report 2026-10-24): the
+// second one's hello no longer takes the link from the first while that one is
+// still heard.
 int TwoPCsOneId() {
   Hub hub;
   const Endpoint home{0x1A0BABBA, 59881};
@@ -647,10 +648,12 @@ int TwoPCsOneId() {
   hub.Receive(home, Encode(Kind::Ping, Ping{1, 2500}), 2500);
   result = hub.Receive(friends_pc, HelloFrom("Eloise"), 5000);
   CHECK(!DecodeWelcome(SentTo(result, friends_pc).value(0))->accepted);
-  // The first PC gone quiet (its game closed, or its connection moved): the id links from there.
+  // The first PC gone quiet (its game closed, or its connection moved): the id
+  // links from there.
   result = hub.Receive(friends_pc, HelloFrom("Eloise"), 5600);
   CHECK(DecodeWelcome(SentTo(result, friends_pc).value(0))->accepted);
-  CHECK(result.gone.size() == 1 && result.gone[0] == home && hub.Members() == 1);
+  CHECK(result.gone.size() == 1 && result.gone[0] == home &&
+        hub.Members() == 1);
   std::cout << "server link one id on two PCs: ok\n";
   return 0;
 }

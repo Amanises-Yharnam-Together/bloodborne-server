@@ -36,6 +36,9 @@ int bbcoop_team_menu_back(void) { return menu_back; }
 /* The touchpad held: the map opens. */
 static int map_opened;
 void bbcoop_map_from_pad(void) { ++map_opened; }
+/* A double tap on the touchpad: a team ping (Kaniel 2026-10-24). */
+static int pings_asked;
+void bbcoop_ping_aim(void) { ++pings_asked; }
 /* The mouse is tested apart (test_mouse_camera.c); here the window has none. */
 void bbgpu_mouse_enable(int enabled) { (void)enabled; }
 void bbgpu_mouse_set_direct(void (*turn)(float, float), void (*drop)(void)) { (void)turn; (void)drop; }

@@ -108,6 +108,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.compass = i != 0;
     } else if (key == "bloodstains") {
         v.bloodstains = i != 0;
+    } else if (key == "team_pings") {
+        v.team_pings = i != 0;
+    } else if (key == "ping_key") {
+        for (int k = 0; k < PingKeyCount; ++k) {
+            if (value == PingKeyNames[k]) {
+                v.ping_key = k;
+            }
+        }
     } else if (key == "map_3d") {
         v.map_3d = std::clamp(i, 0, Map3dCount - 1);
     } else if (key == "screen_lighting") {
@@ -645,6 +653,8 @@ void Save() {
     put("fov", std::to_string(std::clamp(v.fov.load(), FovMin, FovMax)));
     put("compass", flag(v.compass));
     put("bloodstains", flag(v.bloodstains));
+    put("team_pings", flag(v.team_pings));
+    put("ping_key", PingKeyNames[std::clamp(v.ping_key.load(), 0, PingKeyCount - 1)]);
     put("compass_position",
         CompassPositionNames[std::clamp(v.compass_position.load(), 0, CompassPositionCount - 1)]);
     put("map_3d", std::to_string(std::clamp(v.map_3d.load(), 0, Map3dCount - 1)));

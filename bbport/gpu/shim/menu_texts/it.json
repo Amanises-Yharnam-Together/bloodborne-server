@@ -383,5 +383,10 @@
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: uno schermo più largo (21:9, 32:9) mostra di più ai lati, uno più alto (16:10, 4:3) di più sopra e sotto; l'interfaccia va ai bordi dello schermo. 16:9: l'immagine del gioco con bande nere. Si applica dopo il riavvio del gioco.",
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: uno schermo più largo (21:9, 32:9) mostra di più ai lati, uno più alto (16:10, 4:3) di più sopra e sotto; l'interfaccia va ai bordi dello schermo. 16:9: l'immagine del gioco con bande nere. Cambia dal fotogramma successivo.",
  "Final frame": "Immagine finale",
- "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: uno schermo più largo o più alto mostra più mondo. 16:9: l'immagine del gioco, bande nere"
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: uno schermo più largo o più alto mostra più mondo. 16:9: l'immagine del gioco, bande nere",
+ "Team pings": "Segnali di squadra",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Segnala un punto alla tua squadra per 20 secondi: tocca due volte il touchpad o premi il tasto segnale dove miri (sul nemico agganciato), {Square} sulla mappa. La squadra lo vede nel mondo, sulla bussola e sulla mappa.",
+ "Ping key": "Tasto segnale",
+ "The keyboard key that pings where you aim.": "Il tasto che mette un segnale dove miri.",
+ "Ping": "Segnala"
 }

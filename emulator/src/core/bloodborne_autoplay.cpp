@@ -7,6 +7,7 @@
 #include "core/bloodborne_compass.h"
 #include "core/bloodborne_crash_dump.h"
 #include "core/bloodborne_party.h"
+#include "core/bloodborne_pings.h"
 #include "core/bloodborne_re.h"
 #include "core/bloodborne_re_internal.h"
 #include "core/bloodborne_trade.h"
@@ -1747,6 +1748,71 @@ bool AutoplayDone(const AutoplayStep&) {
     return true;
 }
 
+// ping-aim (Kaniel 2026-10-24, team pings): a ping where the camera aims (on the locked-on enemy
+// while locked on), as the pad's double tap or the ping key places it.
+bool AutoplayPingAim(const AutoplayStep&) {
+    RequestAimPing();
+    return true;
+}
+
+// ping-map <map> <x> <y> <z>: a ping on that map's spot, as the map screen's Square places it.
+bool AutoplayPingMap(const AutoplayStep& step) {
+    const auto map = ParseAutoplayTarget(step.Arg(0));
+    if (!map || *map == 0 || step.Arg(3).empty()) {
+        step.failure = "ping-map wants <map> <x> <y> <z>";
+        return false;
+    }
+    RequestMapPing(
+        *map, {float(step.Number(1, 0.0)), float(step.Number(2, 0.0)), float(step.Number(3, 0.0))});
+    return true;
+}
+
+// expect-pings <count> [<seconds> [<map> [<x> <z> [<metres>]]]] (Kaniel 2026-10-24): within
+// `seconds` (10) `count` pings are shown; with a map, one of them is on it (within `metres`, 3,
+// of x, z when given). Logs every ping shown: its sender, spot, distance and bearing here, and
+// where it is on the screen.
+bool AutoplayExpectPings(const AutoplayStep& step) {
+    PingsView view;
+    ReadPings(view);
+    std::string seen;
+    for (const PingShown& ping : view.pings) {
+        seen +=
+            fmt::format(" [{} ({}) on map {:#x} at ({:.1f}, {:.1f}, {:.1f}) enemy {:#x}{}",
+                        ping.name.empty() ? "?" : ping.name,
+                        ping.member.empty() ? "own" : ping.member, ping.map, ping.at[0], ping.at[1],
+                        ping.at[2], ping.enemy, ping.from_map ? " from the map" : "");
+        if (ping.here) {
+            seen += fmt::format(" here {:.1f} m at {:.1f} deg", ping.distance,
+                                ping.bearing * 180.0f / std::numbers::pi_v<float>);
+        }
+        if (ping.screen) {
+            seen += fmt::format(" screen ({:.2f}, {:.2f}){}", ping.screen->x, ping.screen->y,
+                                ping.screen->pinned ? " pinned" : "");
+        }
+        seen += fmt::format(" {:.1f} s left]", ping.seconds_left);
+    }
+    const std::string text = fmt::format("{}:{}", view.pings.size(), seen.empty() ? " none" : seen);
+    bool matches = view.pings.size() == static_cast<size_t>(step.Number(0, 0));
+    if (matches && !step.Arg(2).empty()) {
+        const auto map = ParseAutoplayTarget(step.Arg(2));
+        const bool spot = !step.Arg(4).empty();
+        const double x = step.Number(3, 0.0), z = step.Number(4, 0.0), metres = step.Number(5, 3.0);
+        matches = map && std::ranges::any_of(view.pings, [&](const PingShown& ping) {
+                      return ping.map == *map &&
+                             (!spot || std::hypot(ping.at[0] - x, ping.at[2] - z) <= metres);
+                  });
+    }
+    if (matches) {
+        LOG_INFO(Debug, "Bloodborne autoplay pings: {}", text);
+        return true;
+    }
+    if (step.elapsed > step.Number(1, 10.0)) {
+        step.failure = fmt::format("pings shown {}", text);
+        LOG_INFO(Debug, "Bloodborne autoplay pings: {}", text);
+    }
+    return false;
+}
+
 // The lobby's verbs (team-*) and the title's (title-press <button> [ms], title-wait <seconds>,
 // title-shot <name>: the menus before the world) run on the title screen (TickAutoplayTitle); in
 // the world they are over already.
@@ -2084,6 +2150,9 @@ constexpr auto AutoplayVerbs = std::to_array<std::pair<std::string_view, Autopla
     {"expect-others-shown", AutoplayExpectOthersShown},
     {"expect-compass", AutoplayExpectCompass},
     {"expect-stains", AutoplayExpectStains},
+    {"ping-aim", AutoplayPingAim},
+    {"ping-map", AutoplayPingMap},
+    {"expect-pings", AutoplayExpectPings},
     {"pickup-stain", AutoplayPickupStain},
     {"expect-map", AutoplayExpectMap},
     {"chapter", AutoplayChapter},

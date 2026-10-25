@@ -103,6 +103,9 @@ IOSEFKA_WAIT = "-200.0 -40.5 218.0 0.0"
 # The compass scenario's spots: the guest up that hallway, the host 5.2 m south of it.
 COMPASS_GUEST = "-200.0 -40.5 218.0"
 COMPASS_HOST = "-200.0 -40.5 212.8"
+# Kaniel 2026-10-24 (team pings): a spot on the map in the Cathedral Ward, and its x and z.
+PING_MAP_SPOT = "-150.0 -40.0 300.0"
+PING_MAP_XZ = "-150.0 300.0"
 # 7 m from ENEMY (-216.7, 178.1), on the lamp's side: close enough for it to notice a player.
 GUEST_ALONE_SPOT = "-210.0 -54.5 181.0"
 GUEST_PAIR_SPOT = "-213.0 -54.5 184.0"  # 3-4 m from GUEST_ALONE_SPOT
@@ -1764,6 +1767,40 @@ SCENARIOS = {
         "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
         "timeout": 300,
     },
+    # Kaniel 2026-10-24: team pings. The host pings where its camera aims (looking at the guest,
+    # 5 m north) and then a spot on the map in the Cathedral Ward (another area): each replaces the
+    # one before. The guest's game shows each on the right map at the right spot, the aimed one
+    # on its screen; the ping is still there 15 s on and gone by 20 s.
+    "pings": {
+        "about": "team pings: the host's aimed ping, then its map ping on another area replacing "
+                 "it, reach the guest with their maps and spots; a ping lasts 20 s",
+        "roles": {
+            "host": [START, "godmode", "wait-session 2 300", "wait 5",
+                     f"teleport {COMPASS_HOST} 3.1416", "wait 8", "ping-aim", "wait 2",
+                     f"expect-pings 1 10 {CENTRAL_YHARNAM}", "sync ping-aimed", "wait 3",
+                     f"ping-map {CATHEDRAL_WARD} {PING_MAP_SPOT}", "wait 2",
+                     f"expect-pings 1 10 {CATHEDRAL_WARD} {PING_MAP_XZ} 0.5", "sync ping-mapped",
+                     "expect-pings 0 30", "wait 5"],
+            "guest": [START, "godmode", "wait-session 2 300", "wait 5",
+                      f"teleport {COMPASS_GUEST} 0.0", "sync ping-aimed",
+                      f"expect-pings 1 10 {CENTRAL_YHARNAM}", "sync ping-mapped",
+                      f"expect-pings 1 10 {CATHEDRAL_WARD} {PING_MAP_XZ} 0.5", "wait 15",
+                      f"expect-pings 1 2 {CATHEDRAL_WARD}", "expect-pings 0 15", "wait 5"],
+        },
+        "syncs": {"ping-aimed": {"chapter": "pings", "roles": ["host", "guest"]},
+                  "ping-mapped": {"chapter": "pings", "roles": ["host", "guest"]}},
+        "expect": {"host": [r"Co-op ping: placed seq 1 on map 0x18010000 .*\(aimed\)",
+                            r"Co-op ping: placed seq 2 on map 0x18000000 .*\(on the map\)",
+                            r"Co-op ping: this player's ping seq 2 is gone"],
+                   "guest": [r"Co-op ping: from \w+ \(.*\) seq 1 on map 0x18010000",
+                             r"autoplay pings: 1: \[.* on map 0x18010000 .* here [\d.]+ m",
+                             r"Co-op ping: from \w+ \(.*\) seq 2 on map 0x18000000 at "
+                             r"\(-150\.00, -40\.00, 300\.00\) enemy 0x0 \(from the map\)",
+                             r"Co-op ping: \w+'s ping seq 2 is gone"]},
+        "forbid": {"host": SESSION_HOLDS + [r"Co-op ping: too soon"],
+                   "guest": SESSION_HOLDS + [r"Co-op ping: placed"]},
+        "timeout": 300,
+    },
     # Kaniel 2026-10-20 ("bloodstains of ours will be displayed on compass and map"; after v1.0.2:
     # "you only see your bloodstain on compass and map"): the guest (given echoes) dies by the lamp
     # and wakes there; its own stain is on its compass and map, the host's show none while it lies
@@ -3112,10 +3149,10 @@ SCENARIOS = {
                      "keys r1 r1 r1 down", "wait 2", "shot menu-effect-row",
                      "keys right", "wait 2", "shot menu-effect-changed",
                      "keys left", "wait 2",
-                     # The Display page's language row: twelve down from its first (past the
-                     # compass, bloodstain and map rows, the greyed FPS limit skipped). Auto (the
-                     # game's language), English, Russian, ...: two right is Russian.
-                     "keys l1 l1 down down down down down down down down down down down down",
+                     # The Display page's language row: fourteen down from its first (past the
+                     # compass, bloodstain, team ping and map rows, the greyed FPS limit skipped).
+                     # Auto (the game's language), English, Russian, ...: two right is Russian.
+                     "keys l1 l1 down down down down down down down down down down down down down down",
                      "wait 2", "keys right right", "wait 2",
                      "shot menu-russian", "keys left left", "wait 2",
                      # Up from a page's first row is Quit (nothing waits for a restart): its box
@@ -3135,11 +3172,11 @@ SCENARIOS = {
                  "Japanese, German, Korean, Traditional Chinese, then back to the game's",
         "settings": {"BB_LANGUAGE": "11"},
         "roles": {
-            # The Display page's language row is twelve down from its first: Auto, English,
+            # The Display page's language row is fourteen down from its first: Auto, English,
             # Russian, Japanese (3), French, Spanish, Spanish (Latin America), German (7),
             # Italian, Dutch, Portuguese, Korean (11), Traditional Chinese (12), ...
             "host": [START, "wait 5", "keys toggle", "wait 3", "shot menu-zh-cn",
-                     "keys down down down down down down down down down down down down",
+                     "keys down down down down down down down down down down down down down down",
                      "wait 2",
                      "keys right right right", "wait 3", "shot menu-ja",
                      "keys right right right right", "wait 3", "shot menu-de",
@@ -3166,7 +3203,7 @@ SCENARIOS = {
         "roles": {
             # The player's own area is drawn ahead while the screen is shut; another as it shows.
             "host": [START, "godmode", f"set-flag {CATHEDRAL_WARD_LAMP_LIT}", "wait 25", "keys map", "wait 10",
-                     "shot map-central-yharnam", "keys square", "wait 2", "shot map-centred",
+                     "shot map-central-yharnam", "keys start", "wait 2", "shot map-centred",
                      # Kaniel 2026-10-17 ("one big map"): Triangle, the whole waking world drawn so far.
                      "keys triangle", "wait 20", "shot map-world", "keys l1",
                      "wait 30", "shot map-cathedral-ward", "keys enter", "wait 2", "shot map-question",

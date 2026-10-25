@@ -383,5 +383,10 @@
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: een breder scherm (21:9, 32:9) toont meer aan de zijkanten, een hoger scherm (16:10, 4:3) meer boven en onder; de HUD gaat naar de randen van het scherm. 16:9: het beeld van de game met zwarte balken. Wordt toegepast na het herstarten van de game.",
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: een breder scherm (21:9, 32:9) toont meer aan de zijkanten, een hoger scherm (16:10, 4:3) meer boven en onder; de HUD gaat naar de randen van het scherm. 16:9: het beeld van de game met zwarte balken. Verandert vanaf het volgende beeld.",
  "Final frame": "Eindbeeld",
- "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: een breder of hoger scherm toont meer van de wereld. 16:9: het beeld van de game, zwarte balken"
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: een breder of hoger scherm toont meer van de wereld. 16:9: het beeld van de game, zwarte balken",
+ "Team pings": "Teammarkeringen",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "Markeer 20 seconden een plek voor je team: tik twee keer op de touchpad of druk op de markeertoets waar je op richt (op de vijand die je hebt vastgezet), {Square} op de kaart. Je team ziet hem in de wereld, op het kompas en op de kaart.",
+ "Ping key": "Markeertoets",
+ "The keyboard key that pings where you aim.": "De toets die markeert waar je op richt.",
+ "Ping": "Markeren"
 }

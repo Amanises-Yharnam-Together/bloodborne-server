@@ -153,6 +153,39 @@ int main() {
     }
     std::puts("PASS: compass settings");
 
+    // Kaniel 2026-10-24: team pings, on by default, and the ping key (T by default; one of the
+    // keys no default control uses), both kept in bbport.ini by name.
+    {
+        const BbSettings::Values fresh;
+        assert(fresh.team_pings);
+        assert(std::string(BbSettings::PingKeyNames[fresh.ping_key]) == "T");
+        for (int k = 0; k < BbSettings::PingKeyCount; ++k) {
+            for (const char* used : {"E", "R", "F", "Q", "C", "G", "W", "A", "S", "D", "I", "J", "K",
+                                     "L", "M", "Tab", "Space", "Escape", "Return", "Backspace"}) {
+                assert(std::string(BbSettings::PingKeyNames[k]) != used);
+            }
+        }
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int file = mkstemp(path);
+        const char text[] = "team_pings=0\nping_key=V\n";
+        assert(write(file, text, sizeof(text) - 1) == ssize_t(sizeof(text) - 1));
+        close(file);
+        setenv("BB_CONFIG", path, 1);
+        BbSettings::Load();
+        assert(!s.team_pings);
+        assert(std::string(BbSettings::PingKeyNames[s.ping_key]) == "V");
+        s.team_pings = true;
+        s.ping_key = BbSettings::PingKeyCount - 1;
+        BbSettings::Save();
+        const std::string saved = Read(path);
+        assert(saved.find("team_pings=1\n") != std::string::npos);
+        assert(saved.find(std::string("ping_key=") + BbSettings::PingKeyNames[BbSettings::PingKeyCount - 1] +
+                          "\n") != std::string::npos);
+        unlink(path);
+    }
+    std::puts("PASS: team ping settings");
+
     // Kaniel 2026-10-19 ("a setting to remove fog of war, so I will be able to see the whole map"):
     // the map's fog, on by default, kept in bbport.ini.
     {

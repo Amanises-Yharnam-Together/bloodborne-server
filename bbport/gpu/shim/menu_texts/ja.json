@@ -383,5 +383,10 @@
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "自動：横に広い画面（21:9、32:9）では左右が、縦に長い画面（16:10、4:3）では上下がより広く見え、HUDは画面の端に移動します。16:9：ゲーム本来の映像に黒帯が付きます。ゲームの再起動後に反映されます。",
  "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "自動：横に広い画面（21:9、32:9）では左右が、縦に長い画面（16:10、4:3）では上下がより広く見え、HUDは画面の端に移動します。16:9：ゲーム本来の映像に黒帯が付きます。次のフレームから変わります。",
  "Final frame": "最終画面",
- "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "自動：横長・縦長の画面では世界がより広く見えます。16:9：ゲーム本来の映像と黒帯"
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "自動：横長・縦長の画面では世界がより広く見えます。16:9：ゲーム本来の映像と黒帯",
+ "Team pings": "チームピン",
+ "Mark a spot for your team for 20 seconds: double tap the touchpad or press the ping key where you aim (on the enemy you are locked on to), {Square} on the map. Your team sees it in the world, on the compass and on the map.": "チームに20秒間、場所を知らせます。狙った場所（ロックオン中は敵）にタッチパッドをすばやく2回押すか、ピンキーを押します。マップでは{Square}。チームはワールド、コンパス、マップで見られます。",
+ "Ping key": "ピンキー",
+ "The keyboard key that pings where you aim.": "狙った場所にピンを置くキーボードのキー。",
+ "Ping": "ピン"
 }

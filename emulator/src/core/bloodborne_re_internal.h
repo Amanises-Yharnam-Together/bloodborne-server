@@ -69,6 +69,10 @@
 #include <httplib.h>
 #include "core/bloodborne_re_sites.h"
 
+namespace BloodborneCoop {
+struct TeamPing; // coop/coop_messages.h
+}
+
 namespace Core::Bloodborne {
 namespace Coop {
 extern std::atomic<u64> event_sequence;
@@ -501,6 +505,10 @@ struct AltarRecordNews {
 };
 void SendAltarRecord(s32 altar, const AltarRecord& record);
 std::vector<AltarRecordNews> TakeAltarRecords();
+// Kaniel 2026-10-24: this player's team ping to the server (it sends it on to the team), and the
+// team's as they came.
+void SendTeamPing(const BloodborneCoop::TeamPing& ping);
+std::vector<BloodborneCoop::TeamPing> TakeTeamPings();
 // Phase 8: the owner's activation pass wakes the groups around the other players too (its entry
 // adds their groups to its block's record, its end puts the record back; see WithOthersGroups).
 void PS4_SYSV_ABI WakeAroundOthers(u64, const GuestRegisterSnapshot* registers);
@@ -539,6 +547,8 @@ void TickAutoplay();
 // The rig's watch-unseen check (bloodborne_autoplay.cpp), after the co-op tick.
 void CheckAutoplayWatch();
 void TickPartyDeath();
+// Kaniel 2026-10-24: team pings (bloodborne_pings_game.cpp), each game tick.
+void TickPings();
 
 void ReopenClosedPartySession();
 void WatchSummonJoin();
