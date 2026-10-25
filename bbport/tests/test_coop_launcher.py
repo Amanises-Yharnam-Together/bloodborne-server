@@ -937,5 +937,107 @@ class LogRotationTests(unittest.TestCase):
             self.assertFalse((Path(tmp) / 'user' / 'log' / 'older').exists())
 
 
+
+class SaveBackupTests(unittest.TestCase):
+    """Kaniel 2026-10-25: players need a way back to an earlier save (the broken chalice altar of
+    2026-10-24 was mended by hand from user\\save-backups). The launcher backs the saves up before each
+    PLAY and puts a chosen backup back; the saves it replaces are kept first."""
+
+    SLOT = 'savedata/1/CUSA03173/SPRJ0005/userdata0000'
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.install = Path(self.tmp.name)
+        self.user = self.install / 'user'
+
+    def write(self, relative, text, under=None):
+        path = (under or self.user) / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding='utf-8')
+
+    def game_backup(self, name, text):
+        """One of the game's own backups (StartSaveBackups): no launcher.txt in it."""
+        self.write(self.SLOT, text, self.user / coop.SAVE_BACKUPS / name)
+
+    def test_a_backup_holds_the_saves_and_the_party_files_only(self):
+        self.write(self.SLOT, 'slot')
+        self.write('home/1000/savedata/CUSA03173/SPRJ0005/userdata0001', 'emulator slot')
+        self.write('bloodborne_party_world_slot0.txt', '2000 1')
+        self.write('log/shad_log.txt', 'not a save')
+        self.write('coop.json', '{}')
+        made = coop.back_up_saves(self.install, 'before PLAY', now=1792698000)
+        self.assertEqual(made.name, time.strftime('%Y%m%d-%H%M%S', time.localtime(1792698000)))
+        self.assertEqual(made.parent, self.user / 'save-backups')
+        self.assertEqual(set(coop.save_files(made)), {self.SLOT, 'home/1000/savedata/CUSA03173/SPRJ0005/userdata0001',
+                                                      'bloodborne_party_world_slot0.txt'})
+        self.assertEqual((made / 'launcher.txt').read_text(encoding='utf-8').strip(), 'before PLAY')
+        [listed] = coop.save_backups(self.install)
+        self.assertEqual((listed['name'], listed['note'], listed['launcher']), (made.name, 'before PLAY', True))
+
+    def test_no_saves_or_the_same_saves_make_no_backup(self):
+        self.assertIsNone(coop.back_up_saves(self.install, 'before PLAY'))
+        self.write(self.SLOT, 'one')
+        self.game_backup('20261024-231630', 'one')
+        self.assertIsNone(coop.back_up_saves(self.install, 'before PLAY'), 'the newest backup holds them')
+        self.write(self.SLOT, 'two')
+        self.assertIsNotNone(coop.back_up_saves(self.install, 'before PLAY'))
+
+    def test_backups_are_listed_newest_first_and_strangers_are_left_out(self):
+        for name in ('20261024-120000', '20261025-090000', '20261024-231630'):
+            self.game_backup(name, name)
+        (self.user / coop.SAVE_BACKUPS / 'my copy').mkdir()
+        self.write('README.txt', 'x', self.user / coop.SAVE_BACKUPS)
+        listed = coop.save_backups(self.install)
+        self.assertEqual([b['name'] for b in listed], ['20261025-090000', '20261024-231630', '20261024-120000'])
+        self.assertEqual(listed[0]['note'], '')
+        self.assertFalse(listed[0]['launcher'])
+        self.assertEqual(listed[0]['when'].tm_hour, 9)
+
+    def test_restoring_puts_the_backup_back_and_keeps_the_saves_it_replaces(self):
+        self.game_backup('20261024-231630', 'before the broken altar')
+        self.write('bloodborne_party_world_slot0.txt', 'old flags', self.user / coop.SAVE_BACKUPS / '20261024-231630')
+        self.write(self.SLOT, 'broken altar')
+        self.write('savedata/1/CUSA03173/SPRJ0006/userdata0000', 'a slot the backup does not have')
+        self.write('bloodborne_party_world_slot0.txt', 'new flags')
+        self.write('log/shad_log.txt', 'kept')
+        safety = coop.restore_saves(self.install, '20261024-231630')
+        self.assertEqual((self.user / self.SLOT).read_text(encoding='utf-8'), 'before the broken altar')
+        self.assertEqual((self.user / 'bloodborne_party_world_slot0.txt').read_text(encoding='utf-8'), 'old flags')
+        self.assertFalse((self.user / 'savedata/1/CUSA03173/SPRJ0006').exists(), 'the saves are the backup, whole')
+        self.assertTrue((self.user / 'log/shad_log.txt').exists())
+        self.assertEqual(coop.save_files(safety)[self.SLOT], b'broken altar')
+        self.assertIn('20261024-231630', (safety / 'launcher.txt').read_text(encoding='utf-8'))
+        # Undoing the restore is restoring the backup it made.
+        coop.restore_saves(self.install, safety.name)
+        self.assertEqual((self.user / self.SLOT).read_text(encoding='utf-8'), 'broken altar')
+        self.assertEqual((self.user / 'bloodborne_party_world_slot0.txt').read_text(encoding='utf-8'), 'new flags')
+
+    def test_a_missing_or_empty_backup_changes_nothing(self):
+        self.write(self.SLOT, 'mine')
+        (self.user / coop.SAVE_BACKUPS / '20261024-231630').mkdir(parents=True)
+        for name in ('20261024-231630', '20991231-000000', '..'):
+            with self.assertRaises(ValueError):
+                coop.restore_saves(self.install, name)
+        self.assertEqual((self.user / self.SLOT).read_text(encoding='utf-8'), 'mine')
+
+    def test_the_launcher_keeps_its_newest_backups_and_leaves_the_games(self):
+        self.game_backup('20261001-000000', 'the game\'s')
+        for minute in range(coop.KEPT_LAUNCHER_BACKUPS + 3):
+            self.write(self.SLOT, f'play {minute}')
+            coop.back_up_saves(self.install, 'before PLAY', now=1792698000 + 60 * minute)
+        listed = coop.save_backups(self.install)
+        self.assertEqual(sum(b['launcher'] for b in listed), coop.KEPT_LAUNCHER_BACKUPS)
+        self.assertIn('20261001-000000', [b['name'] for b in listed])
+        self.assertEqual(coop.save_files(listed[0]['path'])[self.SLOT], f'play {coop.KEPT_LAUNCHER_BACKUPS + 2}'.encode())
+
+    def test_two_backups_in_one_second_get_their_own_names(self):
+        self.write(self.SLOT, 'one')
+        first = coop.back_up_saves(self.install, 'before PLAY', now=1792698000)
+        self.write(self.SLOT, 'two')
+        second = coop.back_up_saves(self.install, 'before PLAY', now=1792698000)
+        self.assertNotEqual(first, second)
+        self.assertEqual(coop.save_files(first)[self.SLOT], b'one')
+
 if __name__ == '__main__':
     unittest.main()

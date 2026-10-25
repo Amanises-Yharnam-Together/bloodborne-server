@@ -42,6 +42,11 @@ namespace BloodborneWorld {
 using namespace BloodborneCoop;
 
 namespace {
+// The team world written with its backups (save-restore), defined further down.
+bool StoreTeamWorld(const QDir& world_dir, const bbcoop::TeamWorld& world, const QDate& today);
+} // namespace
+
+namespace {
 
 constexpr quint32 StoreVersion = 1;
 constexpr int Backups = 3;
@@ -410,6 +415,15 @@ void WorldWriter::SaveTrades(const QString& folder, bbcoop::StoredTrades trades)
     state->Push(folder, [folder, trades = std::move(trades)](State& s) {
         if (!WorldStore{folder}.SaveTrades(trades)) {
             s.Log(QStringLiteral("world store %1: the trades could not write").arg(folder));
+        }
+    });
+}
+
+void WorldWriter::SaveTeamWorld(const QString& dir, bbcoop::TeamWorld world, const QDate& today) {
+    state->Push(dir, [dir, world = std::move(world), today](State& s) {
+        QDir{}.mkpath(dir);
+        if (!StoreTeamWorld(QDir{dir}, world, today)) {
+            s.Log(QStringLiteral("could not write %1").arg(QDir{dir}.filePath(QStringLiteral("team_world.pb"))));
         }
     });
 }
@@ -1925,6 +1939,65 @@ const QString OldTeamsFile = QStringLiteral("teams.pb");
 const QString ForgottenFolder = QStringLiteral("forgotten");
 const QString KeptWorldFile = QStringLiteral("kept_world.pb");
 constexpr u32 WorldListVersion = 1;
+
+// Kaniel 2026-10-25: a team's world gets the backups a party's world.pb has (the broken chalice
+// altar of 2026-10-24 went into the team's world with no copy to take back): the last writes as
+// team_world.pb.1 to .3, and each day's first as backups/team_world-<yyyyMMdd>.pb for a week.
+std::optional<bbcoop::TeamWorld> ReadTeamWorld(const QString& path) {
+    QFile file{path};
+    if (!file.open(QIODevice::ReadOnly)) {
+        return std::nullopt;
+    }
+    const QByteArray bytes = file.readAll();
+    bbcoop::TeamWorld stored;
+    if (bytes.isEmpty() ||
+        !stored.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size())) ||
+        !stored.exists()) {
+        return std::nullopt;
+    }
+    return stored;
+}
+
+// team_world.pb in `world_dir`, else its newest backup that reads.
+std::optional<bbcoop::TeamWorld> LoadTeamWorld(const QDir& world_dir) {
+    std::optional<bbcoop::TeamWorld> stored = ReadTeamWorld(world_dir.filePath(TeamWorldFile));
+    for (int backup = 1; !stored && backup <= Backups; ++backup) {
+        stored = ReadTeamWorld(
+            world_dir.filePath(QStringLiteral("%1.%2").arg(TeamWorldFile).arg(backup)));
+    }
+    return stored;
+}
+
+bool StoreTeamWorld(const QDir& world_dir, const bbcoop::TeamWorld& world, const QDate& today) {
+    const QString path = world_dir.filePath(TeamWorldFile);
+    if (QFileInfo::exists(path)) {
+        const auto backup = [&](int number) {
+            return world_dir.filePath(QStringLiteral("%1.%2").arg(TeamWorldFile).arg(number));
+        };
+        QFile::remove(backup(Backups));
+        for (int number = Backups - 1; number >= 1; --number) {
+            QFile::rename(backup(number), backup(number + 1));
+        }
+        QFile::copy(path, backup(1));
+    }
+    QSaveFile file{path};
+    if (!file.open(QIODevice::WriteOnly) || file.write(Serialized(world)) < 0 || !file.commit()) {
+        return false;
+    }
+    const QDir backups{world_dir.filePath(QStringLiteral("backups"))};
+    const QString dated = backups.filePath(
+        QStringLiteral("team_world-%1.pb").arg(today.toString(QStringLiteral("yyyyMMdd"))));
+    if (!QFileInfo::exists(dated)) {
+        QDir{}.mkpath(backups.path());
+        QFile::copy(path, dated);
+        QStringList days =
+            backups.entryList({QStringLiteral("team_world-*.pb")}, QDir::Files, QDir::Name);
+        while (days.size() > DatedBackups) {
+            QFile::remove(backups.filePath(days.takeFirst()));
+        }
+    }
+    return true;
+}
 } // namespace
 
 const std::optional<bbcoop::TeamWorld>& Service::TeamWorldOf(PartyWorld& world) {
@@ -1934,14 +2007,7 @@ const std::optional<bbcoop::TeamWorld>& Service::TeamWorldOf(PartyWorld& world) 
             if (writer->Moving(folder, world.name)) {
                 writer->Drain(); // its folder going aside: what it holds after
             }
-            QFile file{QDir{QDir{folder}.filePath(world.name)}.filePath(TeamWorldFile)};
-            if (file.open(QIODevice::ReadOnly)) {
-                const QByteArray bytes = file.readAll();
-                bbcoop::TeamWorld stored;
-                if (stored.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()))) {
-                    world.team_world = std::move(stored);
-                }
-            }
+            world.team_world = LoadTeamWorld(QDir{QDir{folder}.filePath(world.name)});
         }
     }
     return world.team_world;
@@ -1980,8 +2046,9 @@ void Service::TakeTeamWorld(Member& member, PartyWorld& world, const bbcoop::Tea
     taken.set_version((before ? before->version() : 0) + 1);
     world.team_world = taken;
     if (writer) {
-        writer->Save(QDir{QDir{folder}.filePath(world.name)}.filePath(TeamWorldFile),
-                     Serialized(taken));
+        // On the writer's thread, with the team world's backups (StoreTeamWorld).
+        writer->SaveTeamWorld(QDir{folder}.filePath(world.name), taken,
+                              QDateTime::fromMSecsSinceEpoch(now_ms).date());
     }
     result.log.append(QStringLiteral("team world %1: %2's world taken (%3 flags on, version %4)")
                           .arg(world.name, QString::fromStdString(member.name))

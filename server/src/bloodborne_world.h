@@ -89,6 +89,9 @@ public:
     void SaveTrades(const QString& folder, bbcoop::StoredTrades trades);
     // A whole file (team_world.pb, worlds.pb), replaced at once (QSaveFile).
     void Save(const QString& path, QByteArray bytes);
+    // team_world.pb in `dir`, with the backups before it and the day's (save-restore).
+    void SaveTeamWorld(const QString& dir, bbcoop::TeamWorld world,
+                       const QDate& today = QDate::currentDate());
     // `name` in `parent` moves to `to` (in `parent`): a world's folder put aside.
     void Move(const QString& parent, const QString& name, const QString& to);
     // Whether a Move of the folder `parent`/`name` is queued (what is in it is not known yet).
