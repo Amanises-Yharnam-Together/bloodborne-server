@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "해상도, 업스케일러, 선명도, 모델 디테일(bbport)",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "장면 해상도: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "업스케일러 후 RCAS: 0 OFF, 10 가장 강함",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "최종 프레임: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
  "Frame rate in the top right corner": "오른쪽 위에 프레임 레이트 표시",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "재시작 후: 0-1 최고, 2-4 게임 기본, 5-7 낮음, 8-10 최저",
  "Highest": "최고",
@@ -377,5 +376,12 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "세로 시야각(도)입니다. 게임 카메라는 43입니다. 모든 카메라가 같은 만큼 넓어집니다. 게임을 다시 시작하면 적용됩니다.",
  "Mute in the background": "백그라운드에서 음소거",
  "The game is silent while its window is not the active one.": "게임 창이 활성 창이 아닌 동안 소리가 나지 않습니다.",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "게임이 화면에 표시하는 버튼입니다. 자동은 지금 사용하는 장치를 따릅니다. 키보드와 마우스를 쓰는 동안에는 아래에서 지정한 키를, 컨트롤러를 쓰는 동안에는 그 버튼(PlayStation, Xbox, Switch)을 보여 주며, 바꾸면 바로 바뀝니다. 여기서 바꾼 설정은 다시 시작한 뒤 적용됩니다."
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "게임이 화면에 표시하는 버튼입니다. 자동은 지금 사용하는 장치를 따릅니다. 키보드와 마우스를 쓰는 동안에는 아래에서 지정한 키를, 컨트롤러를 쓰는 동안에는 그 버튼(PlayStation, Xbox, Switch)을 보여 주며, 바꾸면 바로 바뀝니다. 여기서 바꾼 설정은 다시 시작한 뒤 적용됩니다.",
+ "Auto (the output's)": "자동 (출력에 맞춤)",
+ "16:9 (bars)": "16:9 (검은 띠)",
+ "Aspect ratio": "화면 비율",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "자동: 더 넓은 화면(21:9, 32:9)은 좌우를, 더 높은 화면(16:10, 4:3)은 위아래를 더 많이 보여 주며, HUD는 화면 가장자리로 이동합니다. 16:9: 게임 원래 화면에 검은 띠가 표시됩니다. 게임을 다시 시작한 후 적용됩니다.",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "자동: 더 넓은 화면(21:9, 32:9)은 좌우를, 더 높은 화면(16:10, 4:3)은 위아래를 더 많이 보여 주며, HUD는 화면 가장자리로 이동합니다. 16:9: 게임 원래 화면에 검은 띠가 표시됩니다. 다음 프레임부터 바뀝니다.",
+ "Final frame": "최종 화면",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "자동: 더 넓거나 높은 화면에서 세계가 더 많이 보입니다. 16:9: 게임 원래 화면, 검은 띠"
 }

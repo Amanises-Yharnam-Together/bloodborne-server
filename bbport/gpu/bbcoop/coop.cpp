@@ -580,6 +580,10 @@ extern "C" void bbcoop_map_menu(int open) {
     }
 }
 
+extern "C" void bbcoop_set_hud_shift(float dx, float dy) {
+    Core::Bloodborne::SetHudEdgeShift(dx, dy);
+}
+
 extern "C" void bbcoop_map_from_pad(void) {
     Core::Bloodborne::MapScreenView view;
     if (map_menu.load() == 0 && Core::Bloodborne::ReadMapScreen(view, false) && view.in_world) {

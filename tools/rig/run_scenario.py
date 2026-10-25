@@ -978,7 +978,14 @@ def launch(role: str, script: list[str] | None, party: str = "rig:hunters",
         script_path.write_text("\n".join(script) + "\n", encoding="utf-8", newline="\n")
     set_aside(log_path(role))
     menu_keys_path(role).unlink(missing_ok=True)  # a key the last game never took
-    ENGINE.prepare(role, backend_port=server_port(BACKEND_PORT))
+    # A scenario's "ini.<key>" settings go into the role's bbport.ini (the port only), and
+    # "rig.headless_roles" (comma separated) runs those roles headless beside a visible one.
+    settings = dict(settings or {})
+    ini = {key[4:]: settings.pop(key) for key in list(settings) if key.startswith("ini.")}
+    headless_roles = settings.pop("rig.headless_roles", "").split(",")
+    if role in headless_roles:
+        settings.update(HEADLESS)
+    ENGINE.prepare(role, backend_port=server_port(BACKEND_PORT), ini=ini)
     build_lock.refuse_if_memory_low(f"the {role} game")  # leaked memory froze the PC
     build_lock.wait_for_builds()  # beside builds unless BB_BUILD_BESIDE_GAMES=0
     env = game_environment(role, script_path, party, settings)

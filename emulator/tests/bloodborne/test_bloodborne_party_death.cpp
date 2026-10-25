@@ -469,6 +469,23 @@ TEST(BloodbornePartyHud, ThePartyListStacksUnderTheQuickItems) {
     EXPECT_LE(y2 + 20, 700) << "above the game's notices";
 }
 
+// Kaniel 2026-10-24: on a wider (taller) screen the native port moves the HUD's groups toward its
+// edges (its aspect hooks); the list follows the player's own bars, up and to the left by the
+// shift.
+TEST(BloodbornePartyHud, ThePartyListFollowsTheHudToTheScreensEdges) {
+    const auto [x0, y0] = PartyListPosition(1);
+    SetHudEdgeShift(320.0f, 0.0f); // 2560x1080
+    const auto [x1, y1] = PartyListPosition(1);
+    EXPECT_EQ(x1, x0 - 320);
+    EXPECT_EQ(y1, y0);
+    SetHudEdgeShift(0.0f, 180.0f); // 1600x1200
+    const auto [x2, y2] = PartyListPosition(1);
+    EXPECT_EQ(x2, x0);
+    EXPECT_EQ(y2, y0 - 180);
+    SetHudEdgeShift(0.0f, 0.0f);
+    EXPECT_EQ(PartyListPosition(1), std::make_pair(x0, y0)) << "16:9: where the game's HUD has it";
+}
+
 // A TagData the game's tag update takes: shown and placed, the HP gauge's values, and the role line
 // and name as game HUD strings kept out of place (our buffers).
 TEST(BloodbornePartyHud, WritesTheGamesTagData) {

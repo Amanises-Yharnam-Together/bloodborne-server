@@ -255,7 +255,6 @@
  "Resolution, upscaler, sharpness and model detail (bbport)": "Resoluutio, skaalain, terävyys ja mallien yksityiskohdat (bbport)",
  "Scene resolution: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra": "Kohtauksen resoluutio: 0-1 Native AA, 2-3 Quality, 4-6 Balanced, 7-8 Performance, 9-10 Ultra",
  "RCAS after the upscaler: 0 off, 10 strongest": "RCAS skaalaimen jälkeen: 0 pois, 10 voimakkain",
- "Final frame: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160": "Lopullinen kuva: 0-1 1280x720, 2-4 1920x1080, 5-7 2560x1440, 8-10 3840x2160",
  "Frame rate in the top right corner": "Ruudunpäivitys oikeassa yläkulmassa",
  "After a restart: 0-1 highest, 2-4 game default, 5-7 lower, 8-10 lowest": "Uudelleenkäynnistyksen jälkeen: 0-1 korkein, 2-4 pelin oletus, 5-7 matalampi, 8-10 matalin",
  "Highest": "Korkein",
@@ -377,5 +376,12 @@
  "Vertical field of view in degrees; the game's camera has 43. Every camera is widened by the same amount. Applies after restarting the game.": "Pystysuora näkökenttä asteina; pelin kamerassa on 43. Jokaista kameraa laajennetaan yhtä paljon. Tulee voimaan, kun peli käynnistetään uudelleen.",
  "Mute in the background": "Mykistä taustalla",
  "The game is silent while its window is not the active one.": "Peli on hiljaa, kun sen ikkuna ei ole aktiivinen.",
- "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Pelin ruudulla näyttämät painikkeet. Automaattinen seuraa sitä, millä pelaat: alla määritetyt näppäimet, kun käytät näppäimistöä ja hiirtä, ohjaimen omat painikkeet (PlayStation, Xbox tai Switch), kun käytät ohjainta, ja vaihtuu kesken pelin. Muutos tässä tulee voimaan uudelleenkäynnistyksen jälkeen."
+ "The buttons the game shows on screen. Automatic follows what you play with: the keys bound below while you use the keyboard and mouse, the controller's own buttons (PlayStation, Xbox or Switch) while you use one, switching as you change. A change here applies after a restart.": "Pelin ruudulla näyttämät painikkeet. Automaattinen seuraa sitä, millä pelaat: alla määritetyt näppäimet, kun käytät näppäimistöä ja hiirtä, ohjaimen omat painikkeet (PlayStation, Xbox tai Switch), kun käytät ohjainta, ja vaihtuu kesken pelin. Muutos tässä tulee voimaan uudelleenkäynnistyksen jälkeen.",
+ "Auto (the output's)": "Auto (kuten ulostulo)",
+ "16:9 (bars)": "16:9 (palkit)",
+ "Aspect ratio": "Kuvasuhde",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Applies after restarting the game.": "Auto: leveämpi näyttö (21:9, 32:9) näyttää enemmän sivuilta, korkeampi (16:10, 4:3) enemmän ylhäältä ja alhaalta; HUD siirtyy näytön reunoille. 16:9: pelin kuva mustin palkein. Tulee voimaan pelin uudelleenkäynnistyksen jälkeen.",
+ "Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) more above and below; the HUD goes to the screen's edges. 16:9: the game's picture with black bars. Changes at the next frame.": "Auto: leveämpi näyttö (21:9, 32:9) näyttää enemmän sivuilta, korkeampi (16:10, 4:3) enemmän ylhäältä ja alhaalta; HUD siirtyy näytön reunoille. 16:9: pelin kuva mustin palkein. Muuttuu seuraavasta kuvasta.",
+ "Final frame": "Valmis kuva",
+ "Auto: a wider or taller screen shows more of the world. 16:9: the game's picture, black bars": "Auto: leveämpi tai korkeampi näyttö näyttää enemmän maailmaa. 16:9: pelin kuva, mustat palkit"
 }

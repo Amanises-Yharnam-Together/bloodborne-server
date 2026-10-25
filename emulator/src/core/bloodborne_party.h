@@ -3275,6 +3275,10 @@ float SupplyNameWidth(std::string_view name);
 u32 SupplyFrame(const PartyListEntry& entry);
 // Where a tag goes on the HUD's 1920x1080 stage (its HP bar's left end).
 std::pair<s32, s32> PartyListPosition(int index);
+// The native port on another aspect ratio than 16:9 (its aspect hooks, Kaniel 2026-10-24): how far
+// the HUD's groups are moved toward the screen's edges, in the stage's pixels. The list moves with
+// the player's own bars (up and to the left by it). 0 (16:9) by default.
+void SetHudEdgeShift(float dx, float dy);
 // The TagData the tag update takes for an entry; `role` and `name` are the addresses of its UTF-16
 // strings (kept by the caller, at most 63 characters each). A game HUD string is 0x38 bytes: the
 // tag update copies it with the allocator at +0x28 (and a flag at +0x30), so each string starts as

@@ -258,14 +258,25 @@ def render_size(settings,override=''):
     return tuple(max(2,round(v/scale/2)*2) for v in OUTPUT_SIZE)
 
 
+def fit_16x9(size):
+    """The largest 16:9 size inside `size` (even): bbport.ini aspect_ratio=16:9 keeps the game's
+    picture with bars on a wider or taller output (BbOutputSizes::Fit16x9)."""
+    w,h=size
+    if w*9==h*16: return size
+    if w*9>h*16: return (max(2,round(h*16/9/2)*2),h)
+    return (w,max(2,round(w*9/16/2)*2))
+
+
 def output_size(settings):
-    """Output (UI) size from bbport.ini output_res, e.g. 3840x2160; 1920x1080 by default."""
+    """Output (UI) size from bbport.ini output_res, e.g. 3840x2160 or 2560x1080 (any size the
+    display has); 1920x1080 by default. aspect_ratio=16:9: the 16:9 part of it."""
+    size=OUTPUT_SIZE
     try:
-        w,h=(int(v) for v in settings.get('output_res','').lower().split('x'))
-        if w>0 and h>0: return (w,h)
+        w,h=(int(v) for v in settings.get('output_res','').lower().replace(' ','').split('x'))
+        if w>0 and h>0: size=(w,h)
     except ValueError:
         pass
-    return OUTPUT_SIZE
+    return fit_16x9(size) if settings.get('aspect_ratio','auto').strip()=='16:9' else size
 
 
 def scaled_sizes(settings):

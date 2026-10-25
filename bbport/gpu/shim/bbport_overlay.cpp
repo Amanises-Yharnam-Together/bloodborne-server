@@ -32,6 +32,7 @@
 #include "bbport_party_layout.h"
 #include "bbport_save_editor.h"
 #include "bbport_frame_gen_pace.h"
+#include "bbport_guest_hooks.h"
 #include "bbport_settings.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -1616,9 +1617,23 @@ void HdrRows() {
 
 void DisplayTab() {
     auto& s = BbSettings::Get();
-    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
-    Choice("output", T("Output resolution", "Разрешение вывода"), s.output_res, BbSettings::OutputCount,
-           [](int i) { return outputs[i]; }, [](int) { return true; },
+    // Kaniel 2026-10-24: the display's own resolutions, any shape (21:9, 32:9, 16:10, 4:3), and
+    // the one chosen even when the display has no such mode (another monitor, bbport.ini).
+    static std::vector<BbSettings::OutputSize> outputs;
+    static std::vector<std::string> output_names;
+    outputs = BbSettings::OutputChoices();
+    const BbSettings::OutputSize chosen = BbSettings::ChosenOutput();
+    if (std::find(outputs.begin(), outputs.end(), chosen) == outputs.end()) {
+        outputs.push_back(chosen);
+    }
+    output_names.clear();
+    for (const auto& size : outputs) {
+        const char* shape = BbOutputSizes::AspectName(size);
+        output_names.push_back(std::to_string(size.width) + " x " + std::to_string(size.height) +
+                               (shape[0] ? std::string("  (") + shape + ")" : std::string()));
+    }
+    Choice("output", T("Output resolution", "Разрешение вывода"), BbOutputSizes::Nearest(outputs, chosen),
+           int(outputs.size()), [](int i) { return output_names[i].c_str(); }, [](int) { return true; },
            BbSettings::FixedRenderSession()
                ? T("Size of the final frame and UI. The preset sets the scene size relative to "
                    "the output: 4K Performance = 1920x1080. Applies after restarting the game.",
@@ -1630,7 +1645,28 @@ void DisplayTab() {
                    "Размер готового кадра и интерфейса меняется со следующего кадра. Пресет задаёт "
                    "размер сцены относительно вывода: 4K Performance = 1920x1080. Смена сбрасывает "
                    "историю апскейлера (короткая пауза)."),
-           true, [&](int i) { Store(s.output_res, i, true); });
+           true, [&](int i) {
+               BbSettings::ChooseOutput(outputs[i]);
+               dirty = true;
+           });
+    const char* aspects[] = {T("Auto (the output's)", "Авто (как у вывода)"), T("16:9 (bars)", "16:9 (с полосами)")};
+    Choice("aspect", T("Aspect ratio", "Соотношение сторон"),
+           std::clamp(s.aspect.load(), 0, BbSettings::AspectModeCount - 1), BbSettings::AspectModeCount,
+           [&](int i) { return aspects[i]; }, [](int) { return true; },
+           BbSettings::FixedRenderSession()
+               ? T("Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) "
+                   "more above and below; the HUD goes to the screen's edges. 16:9: the game's picture "
+                   "with black bars. Applies after restarting the game.",
+                   "Авто: на широком экране (21:9, 32:9) видно больше по бокам, на высоком (16:10, 4:3) "
+                   "— сверху и снизу; интерфейс у краёв экрана. 16:9: картинка игры с чёрными "
+                   "полосами. Применяется после перезапуска игры.")
+               : T("Auto: a wider screen (21:9, 32:9) shows more to the sides, a taller one (16:10, 4:3) "
+                   "more above and below; the HUD goes to the screen's edges. 16:9: the game's picture "
+                   "with black bars. Changes at the next frame.",
+                   "Авто: на широком экране (21:9, 32:9) видно больше по бокам, на высоком (16:10, 4:3) "
+                   "— сверху и снизу; интерфейс у краёв экрана. 16:9: картинка игры с чёрными "
+                   "полосами. Меняется со следующего кадра."),
+           true, [&](int i) { Store(s.aspect, i, true); });
     const char* live_modes[] = {T("Auto (by GPU)", "Авто (по видеокарте)"), T("Off (faster)", "Выкл (быстрее)"),
                                 T("On", "Вкл")};
     Choice("live", T("Live resolution changes", "Смена разрешения на лету"), s.live_resolution + 1, 3,
@@ -1816,9 +1852,10 @@ void UpscalerTab() {
     static char preset_names[BbSettings::PresetCount][64];
     for (int i = 0; i < BbSettings::PresetCount; ++i) {
         const float scale = BbSettings::PresetScale(i);
+        const BbSettings::OutputSize output = BbSettings::CurrentOutput();
         std::snprintf(preset_names[i], sizeof(preset_names[i]), "%s  %dx%d", BbSettings::PresetName(i),
-                      int(std::lround(BbSettings::OutputWidths[s.output_res] / scale / 2) * 2),
-                      int(std::lround(BbSettings::OutputHeights[s.output_res] / scale / 2) * 2));
+                      int(std::lround(output.width / scale / 2) * 2),
+                      int(std::lround(output.height / scale / 2) * 2));
     }
     Choice("preset", T("Quality preset", "Пресет качества"), taa ? BbSettings::NativeAA : s.preset.load(),
            BbSettings::PresetCount, [](int i) { return preset_names[i]; }, [](int) { return true; },
@@ -3577,7 +3614,9 @@ void PlainScreen() {
         draw->AddText(font, size, ImVec2((display.x - extent.x) * 0.5f, y), colour, text);
     };
     centred(Team::T("The Hunt Begins", "Охота начинается"), unit * 1.6f, display.y * 0.16f, gold);
-    const float left = display.x * 0.18f, right = display.x * 0.82f;
+    // The cards across the middle 16:9 part of a wider screen (21:9, 32:9), not its whole width.
+    const float wide = std::min(display.x, display.y * 16.0f / 9.0f), side = (display.x - wide) * 0.5f;
+    const float left = side + wide * 0.18f, right = side + wide * 0.82f;
     draw->AddLine(ImVec2(left, display.y * 0.24f), ImVec2(right, display.y * 0.24f), dim, 1.0f);
     const float card_w = (right - left) / 4.0f;
     const int count = std::clamp(load.count, 1, 4);
@@ -3705,6 +3744,9 @@ namespace Party {
 bbcoop_panel panel{}; // present thread: as Visible() read it last
 bool shown = false;
 BbPartyLayout::Rect game{}; // present thread: the game's frame on screen, as Render() got it
+/// How far the game's HUD groups moved toward the frame's edges (another aspect ratio than 16:9):
+/// the list and the supplies stay beside the player's bars.
+BbPartyLayout::Shift shift{};
 
 bool Read() {
     shown = bbcoop_party_panel(&panel) != 0;
@@ -4023,9 +4065,9 @@ void SupplyCounts(ImDrawList* draw, float right, float cy, float unit, uint32_t 
 void MemberList(ImDrawList* draw, float pulse) {
     using Ui::S;
     using Ui::T;
-    const float x = BbPartyLayout::ListLeft(game, base_scale), height = S(54.0f), gap = S(10.0f),
+    const float x = BbPartyLayout::ListLeft(game, base_scale, shift), height = S(54.0f), gap = S(10.0f),
                 bar = S(240.0f);
-    float y = BbPartyLayout::ListTop(game);
+    float y = BbPartyLayout::ListTop(game, shift);
     char line[64];
     for (int i = 0; i < panel.member_count; ++i) {
         const bbcoop_panel_member& member = panel.members[i];
@@ -4225,11 +4267,13 @@ void OwnDown(ImDrawList* draw, float pulse) {
 /// prompt has its button.
 void PromptGlyph(ImDrawList* draw) {
     using namespace BbPartyLayout;
-    const float sx = game.w / 1920.0f, sy = game.h / 1080.0f;
+    // The game's prompt stays on its 16:9 screen (the middle of a wider or taller frame).
+    const Rect stage = Stage(game);
+    const float sx = stage.w / 1920.0f, sy = stage.h / 1080.0f;
     const float size = PromptGlyphStageSize * sy;
     const int input = panel.vital == BBCOOP_VITAL_DOWN ? InputCircle : InputR1;
-    const float right = game.x + PromptGlyphStageRight * sx;
-    ButtonGlyph(draw, input, ImVec2(right - ButtonGlyphWidth(input, size), game.y + PromptGlyphStageY * sy),
+    const float right = stage.x + PromptGlyphStageRight * sx;
+    ButtonGlyph(draw, input, ImVec2(right - ButtonGlyphWidth(input, size), stage.y + PromptGlyphStageY * sy),
                 size, 1.0f);
 }
 
@@ -4273,11 +4317,13 @@ void SupplyCounts(ImDrawList* draw, float right, float cy, float unit, uint32_t 
 /// member's supplies on its name's line, at its HP bar's end (the tag at (204, 330 + 95 i), its bar
 /// from x 109 to about 300 on the 1080p stage).
 void Supplies(ImDrawList* draw) {
-    const float sx = game.w / 1920.0f, sy = game.h / 1080.0f;
+    using BbPartyLayout::HudX;
+    using BbPartyLayout::HudY;
+    const float unit = BbPartyLayout::Stage(game).h / 1080.0f;
     for (int i = 0; i < panel.member_count && i < 3; ++i) {
         const float bar_y = 330.0f + 95.0f * float(i) - 0.5f;
-        SupplyCounts(draw, game.x + 300.0f * sx, game.y + (bar_y - 20.0f) * sy, sy, panel.members[i].vials,
-                     panel.members[i].bullets, 1.0f);
+        SupplyCounts(draw, HudX(game, 300.0f, shift), HudY(game, bar_y - 20.0f, shift), unit,
+                     panel.members[i].vials, panel.members[i].bullets, 1.0f);
     }
 }
 
@@ -4586,12 +4632,13 @@ void Draw() {
     std::snprintf(line, sizeof line, T("%d of %d want to skip", "%d из %d хотят пропустить"), want,
                   watching);
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
-    Party::Text(draw, sans_font, S(18.0f), ImVec2(game.x + game.w * 0.5f, game.y + game.h * 0.86f),
+    const BbPartyLayout::Rect stage = BbPartyLayout::Stage(game); // the game's 16:9 screen
+    Party::Text(draw, sans_font, S(18.0f), ImVec2(stage.x + stage.w * 0.5f, stage.y + stage.h * 0.86f),
                 Ui::Plain(0.9f), line, 0.5f);
     // Kaniel 2026-10-19: which button votes, as the game's icon.
     const Ui::Keys::Hint keys[] = {{"Options", nullptr, T("Skip", "Пропустить")}};
     ImGui::PushFont(MenuArt::Font(), 18.0f);
-    Ui::Keys::Guide(draw, keys, game.x, game.x + game.w, game.y + game.h * 0.86f + S(62.0f));
+    Ui::Keys::Guide(draw, keys, stage.x, stage.x + stage.w, stage.y + stage.h * 0.86f + S(62.0f));
     ImGui::PopFont();
 }
 
@@ -6405,8 +6452,19 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
     io.DeltaTime = ms > 0.0f && ms < 1000.0f ? ms / 1000.0f : 1.0f / 60.0f;
-    // UI scale follows the display height (1080p = 1).
-    const float scale = BbPartyLayout::Scale(float(extent.height));
+    // UI scale follows the display height (1080p = 1); on a frame of another shape than 16:9 (21:9,
+    // 4:3) the height of the game's 16:9 screen in it, as the game's own HUD is scaled.
+    const BbPartyLayout::Rect frame{float(game.offset.x), float(game.offset.y), float(game.extent.width),
+                                    float(game.extent.height)};
+    const BbPartyLayout::Rect stage = BbPartyLayout::Stage(frame);
+    const bool other_shape = game.extent.width > 0 && game.extent.height > 0 &&
+                             (stage.w != frame.w || stage.h != frame.h);
+    const float scale = BbPartyLayout::Scale(other_shape ? stage.h : float(extent.height));
+    // The game's HUD groups at the frame's edges (the aspect hooks): the party HUD follows them,
+    // here and in the game's own HUD (the native list, bloodborne_party PartyListPosition).
+    const BbGuestHooks::HudShift hud_shift = BbGuestHooks::HudEdgeShift();
+    Party::shift = {hud_shift.dx, hud_shift.dy};
+    bbcoop_set_hud_shift(hud_shift.dx, hud_shift.dy);
     if (std::abs(scale - base_scale) > 0.01f) {
         ImGuiStyle& style = ImGui::GetStyle();
         style.ScaleAllSizes(scale / base_scale);
