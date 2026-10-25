@@ -122,6 +122,11 @@ alignas(16) std::array<u64, 2> no_respawn_param_holder{};
 std::atomic<bool> party_rest_respawn_running{};
 // Which respawn runs (see RespawnsInWorldRespawn): a party rest, or the one after a wipe's trip.
 std::atomic<WorldRespawnKind> world_respawn_kind{WorldRespawnKind::PartyRest};
+// What a BroughtBack respawn brings back (see BringBackWhatTheHostBroughtBack). Each one is a
+// short freeze of the map's characters, so they come in batches: the bell-ringing woman's
+// skeletons came back every few seconds while she rang (Kaniel's chalice playtest 2026-10-25).
+std::unordered_set<u32> brought_back_handles;
+constexpr auto BringBackEvery = std::chrono::seconds{2};
 
 // A wipe's trip loads the map again, which brings back what died since this world was loaded,
 // as a solo death does: the host's and the other guests' copies of an enemy the party killed came
@@ -206,6 +211,7 @@ RespawnCandidate ReadRespawnCandidate(u64 character) {
         .disabled = IsCharacterDisabled(character),
         .hidden = ReadValue<u8>(character, 0x28) != 0,
         .changed_by_party = ChangedLikeTheHost(ReadValue<u32>(character, 0x08)),
+        .brought_back = brought_back_handles.contains(ReadValue<u32>(character, 0x08)),
     };
 }
 
@@ -894,6 +900,7 @@ void LogWorldRespawnChanges() {
         LOG_INFO(Debug, "Bloodborne world respawn state {} -> {}", last, state);
         if (state == 0) {
             HideCharactersAgain();
+            brought_back_handles.clear();
         }
         last = state;
     }
@@ -979,6 +986,37 @@ void ScheduleWipeRespawn() {
 namespace Coop {
 
 std::atomic<bool> wipe_trip_respawn_pending{};
+
+void BringBackWhatTheHostBroughtBack(std::span<const u32> handles) {
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (handles.empty() || !lamp_rest_hooks_installed || now - last < BringBackEvery) {
+        return;
+    }
+    const u64 world = ReadValue<u64>(image_base + CandidateLocalStatePointerOffset, 0);
+    if (world < 0x10000 || ReadValue<s32>(world, WorldRespawnStateOffset) != 0 ||
+        party_rest_respawn_pending.load()) {
+        return;
+    }
+    last = now;
+    brought_back_handles = {handles.begin(), handles.end()};
+    std::string which;
+    for (const u32 handle : handles) {
+        which += fmt::format(" {:#x}", handle);
+    }
+    static u32 logged = 0;
+    if (++logged <= 200) {
+        LOG_INFO(Debug,
+                 "Bloodborne party: {} enemies the host's map generator brought back are dead "
+                 "here on map {:#x}; bringing them back:{}",
+                 handles.size(), CurrentPlace().map, which);
+    }
+    world_respawn_kind.store(WorldRespawnKind::BroughtBack);
+    RememberHiddenCharacters(world);
+    party_rest_respawn_pending.store(true);
+    party_rest_respawn_running.store(true);
+    WriteValue(world, WorldRespawnStateOffset, s32{1});
+}
 
 void TickLampRest() {
     if (!lamp_rest_hooks_installed) {

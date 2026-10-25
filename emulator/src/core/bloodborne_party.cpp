@@ -4419,8 +4419,30 @@ bool RespawnsInWorldRespawn(WorldRespawnKind kind, const RespawnCandidate& chara
         return RespawnsAtPartyRest(character.hp, alive_this_visit);
     case WorldRespawnKind::AfterWipe:
         return LeftDeadByItsSave(character);
+    case WorldRespawnKind::BroughtBack:
+        return character.brought_back && character.hp <= 0;
     }
     return false;
+}
+
+std::vector<u32> BroughtBackByTheHost(std::span<const CharacterShown> host,
+                                      std::span<const DeadCopy> dead_here,
+                                      const std::unordered_set<u32>& party_kills, s64 now_ms) {
+    std::unordered_set<u32> alive_at_host;
+    for (const CharacterShown& character : host) {
+        if (!character.hidden && !character.disabled && !character.distant && !character.dead) {
+            alive_at_host.insert(character.handle);
+        }
+    }
+    std::vector<u32> back;
+    for (const DeadCopy& copy : dead_here) {
+        if (alive_at_host.contains(copy.handle) && !party_kills.contains(copy.handle) &&
+            now_ms - copy.dead_since_ms >= BringBackAfterMs) {
+            back.push_back(copy.handle);
+        }
+    }
+    std::ranges::sort(back);
+    return back;
 }
 
 bool KeepDisabledAfterRespawn(bool disabled_before, s32 hp_before) {

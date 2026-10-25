@@ -1186,6 +1186,53 @@ TEST(BloodbornePartyDeath, AWipeBringsBackWhatTheMembersSaveLeftDead) {
                                         {.hp = 0, .max_hp = 484, .death_flags = 0x06}, true));
 }
 
+// Kaniel's chalice playtest 2026-10-25 (v1.2.2): the bell-ringing woman's red skeletons stayed
+// invisible to both guests. Her generator brings the same enemies back in the host's game, the
+// kill is taken back (#289), but the guests' copies had died by the game's kill near them and
+// stayed dead: 0x1002c03d-0x1002c03f died once in Lisara's and krolebord's games and never took a
+// hit again while the host killed them over and over.
+TEST(BloodbornePartyDeath, AGuestBringsBackWhatTheHostsGeneratorBroughtBack) {
+    constexpr s64 Now = 100'000;
+    const std::vector<CharacterShown> host{
+        {.handle = 0x1002c03d},                  // back in the host's game
+        {.handle = 0x1002c03e, .dead = true},    // still dead there
+        {.handle = 0x1002c03f, .distant = true}, // far from the host: its board says little
+        {.handle = 0x1002c040, .hidden = true},
+        {.handle = 0x1002c041, .disabled = true},
+        {.handle = 0x1002c042},
+        {.handle = 0x1002c043},
+    };
+    const std::vector<DeadCopy> dead_here{
+        {0x1002c03d, Now - BringBackAfterMs},
+        {0x1002c03e, Now - 60'000},
+        {0x1002c03f, Now - 60'000},
+        {0x1002c040, Now - 60'000},
+        {0x1002c041, Now - 60'000},
+        {0x1002c042, Now - 60'000},     // a member's kill still stands: not back yet
+        {0x1002c043, Now - 1'000},      // died here just now: the host may not know yet
+        {0x1002c044, Now - 60'000},     // not on the host's board
+    };
+    EXPECT_EQ(BroughtBackByTheHost(host, dead_here, {0x1002c042}, Now),
+              std::vector<u32>{0x1002c03d});
+    EXPECT_EQ(BroughtBackByTheHost(host, dead_here, {}, Now + BringBackAfterMs),
+              (std::vector<u32>{0x1002c03d, 0x1002c042, 0x1002c043}));
+    EXPECT_TRUE(BroughtBackByTheHost({}, dead_here, {}, Now).empty());
+}
+
+// That respawn brings back only those, and only while they are still dead.
+TEST(BloodbornePartyDeath, TheHostsGeneratorRespawnTakesOnlyItsOwn) {
+    const RespawnCandidate back{.hp = 0, .max_hp = 370, .death_flags = 0x06, .brought_back = true};
+    EXPECT_TRUE(RespawnsInWorldRespawn(WorldRespawnKind::BroughtBack, back, true));
+    EXPECT_FALSE(RespawnsInWorldRespawn(WorldRespawnKind::BroughtBack,
+                                        {.hp = 0, .max_hp = 370, .death_flags = 0x06}, true));
+    EXPECT_FALSE(RespawnsInWorldRespawn(
+        WorldRespawnKind::BroughtBack,
+        {.hp = 370, .max_hp = 370, .brought_back = true}, true)); // alive again already
+    // Nor does the mark change the other two respawns.
+    EXPECT_FALSE(RespawnsInWorldRespawn(WorldRespawnKind::AfterWipe, back, true));
+    EXPECT_TRUE(RespawnsInWorldRespawn(WorldRespawnKind::PartyRest, back, true));
+}
+
 // A downed player keeps only the camera: no menu or inventory, lock-on, move, attack, roll, heal or
 // item switch until it is up.
 TEST(BloodbornePartyDeath, ADownedPlayerOnlyKeepsTheCamera) {
