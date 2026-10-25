@@ -3935,6 +3935,8 @@ class Launcher:
         self.button(holder, _('How to connect', 'Как подключиться'), self.open_coop_help).pack(side='left')
         self.button(holder, _('Bring saves from another folder…', 'Перенести сохранения из папки…'),
                     self.coop_import_saves).pack(side='left', padx=(px(8), 0))
+        self.button(holder, _('Restore saves…', 'Восстановить сохранения…'),
+                    self.open_save_backups).pack(side='left', padx=(px(8), 0))
         self.note(card, _('Make or join a team in the game: Continue, Load Game or New Game opens the team screen. '
                           'Windows asks once to let co-op through its firewall.',
                           'Команду собирают в игре: «Продолжить», «Загрузить» или «Новая игра» открывают экран '
@@ -4287,6 +4289,102 @@ class Launcher:
                                                         'Сохранений нет: выберите папку с папкой CUSA..., папку '
                                                         "shadPS4 'user' или старую папку кооператива."))
 
+    def save_backup_line(self, backup, now=None):
+        """A backup's line in Restore saves: when, how long ago, and who made it."""
+        made = time.mktime(backup['when'])
+        minutes = max(0, int(((now or time.time()) - made) // 60))
+        if minutes < 120:
+            ago = _('{} min ago').format(minutes)
+        elif minutes < 48 * 60:
+            ago = _('{} h ago').format(minutes // 60)
+        else:
+            ago = _('{} days ago').format(minutes // (24 * 60))
+        if not backup['launcher']:
+            kind = _('While playing')
+        elif backup['note'].startswith('before restoring'):
+            kind = _('Before a restore')
+        else:
+            kind = _('Before PLAY')
+        return f"{time.strftime('%Y-%m-%d %H:%M', backup['when'])}   ·   {ago}   ·   {kind}"
+
+    def open_save_backups(self):
+        """Restore saves (Kaniel 2026-10-25): the backups in user\\save-backups, newest first; the chosen one
+        goes back as the saves, after the saves as they are are copied (bbport_coop.restore_saves)."""
+        tk, px = self.tk, self.px
+        win = tk.Toplevel(self.root)
+        win.title(_('Restore saves'))
+        win.configure(bg=PANEL)
+        win.transient(self.root)
+        body = tk.Frame(win, bg=PANEL)
+        body.pack(fill='both', expand=True, padx=px(26), pady=px(22))
+        self.label(body, _('Restore saves'), 'h2', bg=PANEL).pack(anchor='w')
+        self.label(body, _('While you play, the game copies your saves every 10 minutes and keeps the newest 20; the '
+                           'launcher copies them before each PLAY and keeps the last 10. Restoring puts the chosen '
+                           'copy back for every character on this PC. Your saves as they are now are copied first, so '
+                           'you can come back to them.'), 'small', MUTED, PANEL, wraplength=px(620),
+                   justify='left').pack(anchor='w', pady=(px(4), px(14)))
+        listing = tk.Listbox(body, height=10, activestyle='none', exportselection=False, bg=CARD, fg=TEXT,
+                             selectbackground=ACCENT_DEEP, selectforeground=GOLD, highlightthickness=1,
+                             highlightbackground=LINE, highlightcolor=LINE_HI, relief='flat', bd=0,
+                             font=self.fonts['body'])
+        listing.pack(fill='both', expand=True)
+        note = self.label(body, '', 'small', MUTED, PANEL, wraplength=px(620), justify='left')
+        note.pack(anchor='w', pady=(px(10), 0))
+        backups = []
+
+        def fill():
+            backups[:] = bbport_coop.save_backups(PORT_DIR)
+            listing.delete(0, 'end')
+            for backup in backups:
+                listing.insert('end', '  ' + self.save_backup_line(backup))
+            if backups:
+                listing.selection_set(0)
+            else:
+                note.configure(text=_('No backups yet: the first one is made when you press PLAY.'), fg=MUTED)
+            picked()
+
+        def picked(*_args):
+            restore.configure(state='normal' if backups and listing.curselection() else 'disabled')
+
+        def go():
+            if self.process or getattr(self, 'coop_busy', False):
+                note.configure(text=_('Close the game first.'), fg=BAD)
+                return
+            backup = backups[listing.curselection()[0]]
+            when = time.strftime('%Y-%m-%d %H:%M', backup['when'])
+            if not self.messagebox.askyesno('Bloodborne', _('Put back the saves of {}? Your saves as they are now are '
+                                                            'copied first.').format(when), parent=win):
+                return
+            try:
+                bbport_coop.restore_saves(PORT_DIR, backup['name'])
+            except (OSError, ValueError) as error:
+                note.configure(text=_('Could not restore: {}').format(error), fg=BAD)
+                return
+            fill()
+            note.configure(text=_('Your saves are back as they were at {}.').format(when), fg=OK)
+
+        listing.bind('<<ListboxSelect>>', picked)
+        foot = tk.Frame(body, bg=PANEL)
+        foot.pack(fill='x', pady=(px(18), 0))
+        restore = self.button(foot, _('Restore'), go, 'primary', bg=PANEL)
+        restore.pack(side='right')
+        self.button(foot, _('Close', 'Закрыть'), win.destroy, bg=PANEL).pack(side='right', padx=(0, px(8)))
+        self.button(foot, _('Open folder', 'Открыть папку'),
+                    lambda: os.startfile(str(bbport_coop.save_backup_folder(PORT_DIR))), bg=PANEL).pack(side='left')
+        win.bind('<Escape>', lambda _e: win.destroy())
+        win.parts = {'listing': listing, 'restore': restore, 'note': note, 'backups': backups}
+        fill()
+        win.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - win.winfo_reqwidth()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - win.winfo_reqheight()) // 3)
+        win.geometry(f'+{x}+{y}')
+        try:
+            win.grab_set()
+        except tk.TclError:
+            pass
+        self.save_backups_dialog = win
+        return win
+
     def coop_say(self, text, color=GOLD):
         self.ui_calls.put(lambda: self.status.configure(text=text, fg=color))
 
@@ -4432,6 +4530,11 @@ class Launcher:
         failed, note, root = None, '', None
         try:
             self.coop_firewall()
+            # Kaniel 2026-10-25: the saves as this session finds them, to come back to (Restore saves).
+            try:
+                bbport_coop.back_up_saves(PORT_DIR, 'before PLAY')
+            except OSError:
+                pass  # a full disk or a locked file costs this one copy, not the game
             # No account step (phase 11): the host's server makes the player's account at its first
             # sign-in, and the game's team screen says when it cannot reach the server.
             root = bbport_coop.view_root(PORT_DIR)

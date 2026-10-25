@@ -2447,7 +2447,10 @@ std::string SaveBackupName(std::chrono::sys_seconds when);
 // writing; the next try gets them).
 std::optional<std::filesystem::path> BackUpSaves(const std::filesystem::path& user_dir,
                                                  std::string_view name);
-// Deletes all but the newest `kept` backups; returns how many went.
+// The launcher's own backups (before each PLAY, before a restore) hold this file; the game's
+// pruning leaves them to the launcher, so a long session cannot push out the save it began with.
+constexpr const char* LauncherBackupNote = "launcher.txt";
+// Deletes all but the newest `kept` of the game's backups; returns how many went.
 std::size_t PruneSaveBackups(const std::filesystem::path& user_dir, std::size_t kept);
 
 // The co-op trace (docs/WORLD_SYNC.md, Stage B): every co-op game writes

@@ -3406,9 +3406,12 @@ std::optional<fs::path> BackUpSaves(const fs::path& user_dir, std::string_view n
 }
 
 std::size_t PruneSaveBackups(const fs::path& user_dir, std::size_t kept) {
-    const auto backups = SaveBackupsIn(user_dir);
-    std::size_t removed = 0;
     std::error_code error;
+    auto backups = SaveBackupsIn(user_dir);
+    std::erase_if(backups, [&](const fs::path& backup) {
+        return fs::exists(backup / LauncherBackupNote, error);
+    });
+    std::size_t removed = 0;
     for (std::size_t index = 0; index + kept < backups.size(); ++index) {
         if (fs::remove_all(backups[index], error) > 0) {
             ++removed;

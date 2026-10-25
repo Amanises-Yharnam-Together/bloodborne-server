@@ -652,6 +652,132 @@ def import_saves(install, source):
     return None
 
 
+# --- save backups -------------------------------------------------------------------------------
+# The game copies the saves into user\save-backups\<yyyyMMdd-HHmmss> every 10 minutes and keeps its
+# newest 20 (StartSaveBackups in the co-op code). The launcher adds its own before each PLAY and before
+# a restore, marked by LAUNCHER_BACKUP_NOTE: the game's pruning leaves those, the launcher keeps its
+# newest KEPT_LAUNCHER_BACKUPS (Kaniel 2026-10-25: players need a way back to an earlier save).
+
+SAVE_BACKUPS = 'save-backups'
+LAUNCHER_BACKUP_NOTE = 'launcher.txt'
+KEPT_LAUNCHER_BACKUPS = 10
+BACKUP_NAME = re.compile(r'^\d{8}-\d{6}$')
+
+
+def save_backup_folder(install):
+    """user\\save-backups, made when missing (Open folder)."""
+    folder = Path(install) / 'user' / SAVE_BACKUPS
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def save_files(user):
+    """Every save file under a user folder (or a backup of one), by its path relative to it, with its
+    bytes: savedata, home\\<id>\\savedata and the party's bloodborne_party_*.txt, as the game backs up."""
+    user = Path(user)
+    files = {}
+
+    def add_tree(folder):
+        for path in sorted(folder.rglob('*')):
+            if path.is_file():
+                files[path.relative_to(user).as_posix()] = path.read_bytes()
+    if (user / 'savedata').is_dir():
+        add_tree(user / 'savedata')
+    if (user / 'home').is_dir():
+        for home in sorted((user / 'home').iterdir()):
+            if (home / 'savedata').is_dir():
+                add_tree(home / 'savedata')
+    if user.is_dir():
+        for path in sorted(user.glob('bloodborne_party_*.txt')):
+            if path.is_file():
+                files[path.name] = path.read_bytes()
+    return files
+
+
+def save_backups(install):
+    """The backups, newest first: dicts of name, path, when (a time.struct_time), note (what the
+    launcher wrote in it; '' for the game's own) and size in bytes."""
+    folder = Path(install) / 'user' / SAVE_BACKUPS
+    found = []
+    if not folder.is_dir():
+        return found
+    for path in folder.iterdir():
+        if not (path.is_dir() and BACKUP_NAME.match(path.name)):
+            continue
+        note_file = path / LAUNCHER_BACKUP_NOTE
+        try:
+            note = note_file.read_text(encoding='utf-8').strip() if note_file.is_file() else ''
+        except OSError:
+            note = ''
+        size = sum(f.stat().st_size for f in path.rglob('*') if f.is_file() and f.name != LAUNCHER_BACKUP_NOTE)
+        found.append({'name': path.name, 'path': path, 'when': time.strptime(path.name, '%Y%m%d-%H%M%S'),
+                      'note': note, 'size': size, 'launcher': note_file.is_file()})
+    found.sort(key=lambda backup: backup['name'], reverse=True)
+    return found
+
+
+def back_up_saves(install, note, now=None, prune=True):
+    """A launcher backup of the saves as they are, with `note` in it: its path, or None when there are no
+    saves or they are the same as the newest backup's (that one already holds them)."""
+    user = Path(install) / 'user'
+    files = save_files(user)
+    if not files:
+        return None
+    existing = save_backups(install)
+    if existing and save_files(existing[0]['path']) == files:
+        return None
+    name = time.strftime('%Y%m%d-%H%M%S', time.localtime(now))
+    while any(backup['name'] == name for backup in existing):  # two in one second: the next free second
+        name = time.strftime('%Y%m%d-%H%M%S', time.localtime(time.mktime(time.strptime(name, '%Y%m%d-%H%M%S')) + 1))
+    backup = user / SAVE_BACKUPS / name
+    try:
+        for relative, data in files.items():
+            target = backup / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        (backup / LAUNCHER_BACKUP_NOTE).write_text(note + '\n', encoding='utf-8')
+    except OSError:
+        shutil.rmtree(backup, ignore_errors=True)
+        raise
+    if prune:
+        prune_launcher_backups(install)
+    return backup
+
+
+def prune_launcher_backups(install, kept=KEPT_LAUNCHER_BACKUPS):
+    """Deletes all but the newest `kept` launcher backups (the game prunes its own); how many went."""
+    removed = 0
+    for backup in [b for b in save_backups(install) if b['launcher']][kept:]:
+        shutil.rmtree(backup['path'], ignore_errors=True)
+        removed += 1
+    return removed
+
+
+def restore_saves(install, name):
+    """Puts backup `name` back as the saves (the game must not run). The saves as they were are kept
+    first as a launcher backup, so a restore can be undone. Returns that backup's path, or None when
+    the saves were already in a backup. Raises ValueError for a backup that is missing or holds no saves."""
+    if not BACKUP_NAME.match(name):
+        raise ValueError(f'no backup {name}')
+    user = Path(install) / 'user'
+    files = save_files(user / SAVE_BACKUPS / name)
+    if not files:
+        raise ValueError(f'backup {name} holds no saves')
+    safety = back_up_saves(install, f'before restoring {name}', prune=False)
+    for folder in [user / 'savedata'] + sorted((user / 'home').glob('*/savedata')):
+        shutil.rmtree(folder, ignore_errors=True)
+    for party in user.glob('bloodborne_party_*.txt'):
+        party.unlink(missing_ok=True)
+    for relative, data in files.items():
+        target = user / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    if save_files(user) != files:
+        raise OSError(f'the saves did not come back whole from {name}')
+    prune_launcher_backups(install)
+    return safety
+
+
 # --- playing ------------------------------------------------------------------------------------
 
 def unlocked_fps(fps_mode):

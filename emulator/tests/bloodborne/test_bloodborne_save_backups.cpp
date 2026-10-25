@@ -110,6 +110,19 @@ TEST_F(SaveBackupsTest, KeepsTheNewest) {
     EXPECT_TRUE(fs::exists(user / SaveBackupsFolder / "README.txt"));
 }
 
+// The launcher's backups (a launcher.txt inside) are the launcher's to prune: hours of play do not
+// push out the save a session began with.
+TEST_F(SaveBackupsTest, LeavesTheLaunchersBackups) {
+    for (const char* name : {"20261011-140000", "20261011-150000", "20261011-160000"}) {
+        fs::create_directories(user / SaveBackupsFolder / name / "savedata");
+    }
+    Write(user / SaveBackupsFolder / "20261011-130000" / LauncherBackupNote, "before PLAY");
+    EXPECT_EQ(PruneSaveBackups(user, 1), 2u);
+    EXPECT_TRUE(fs::exists(user / SaveBackupsFolder / "20261011-130000"));
+    EXPECT_FALSE(fs::exists(user / SaveBackupsFolder / "20261011-150000"));
+    EXPECT_TRUE(fs::exists(user / SaveBackupsFolder / "20261011-160000"));
+}
+
 TEST(BloodborneSaveBackups, NamesSortByTime) {
     using namespace std::chrono;
     const sys_seconds early = sys_days{year{2026} / 10 / 11} + hours{9} + minutes{5} + seconds{7};

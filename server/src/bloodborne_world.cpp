@@ -1221,20 +1221,72 @@ const QString WorldListFile = QStringLiteral("worlds.pb");
 const QString OldTeamsFile = QStringLiteral("teams.pb");
 const QString ForgottenFolder = QStringLiteral("forgotten");
 constexpr u32 WorldListVersion = 1;
+
+// Kaniel 2026-10-25: a team's world gets the backups a party's world.pb has (the broken chalice
+// altar of 2026-10-24 went into the team's world with no copy to take back): the last writes as
+// team_world.pb.1 to .3, and each day's first as backups/team_world-<yyyyMMdd>.pb for a week.
+std::optional<bbcoop::TeamWorld> ReadTeamWorld(const QString& path) {
+    QFile file{path};
+    if (!file.open(QIODevice::ReadOnly)) {
+        return std::nullopt;
+    }
+    const QByteArray bytes = file.readAll();
+    bbcoop::TeamWorld stored;
+    if (bytes.isEmpty() ||
+        !stored.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size())) ||
+        !stored.exists()) {
+        return std::nullopt;
+    }
+    return stored;
+}
+
+// team_world.pb in `world_dir`, else its newest backup that reads.
+std::optional<bbcoop::TeamWorld> LoadTeamWorld(const QDir& world_dir) {
+    std::optional<bbcoop::TeamWorld> stored = ReadTeamWorld(world_dir.filePath(TeamWorldFile));
+    for (int backup = 1; !stored && backup <= Backups; ++backup) {
+        stored = ReadTeamWorld(
+            world_dir.filePath(QStringLiteral("%1.%2").arg(TeamWorldFile).arg(backup)));
+    }
+    return stored;
+}
+
+bool StoreTeamWorld(const QDir& world_dir, const bbcoop::TeamWorld& world, const QDate& today) {
+    const QString path = world_dir.filePath(TeamWorldFile);
+    if (QFileInfo::exists(path)) {
+        const auto backup = [&](int number) {
+            return world_dir.filePath(QStringLiteral("%1.%2").arg(TeamWorldFile).arg(number));
+        };
+        QFile::remove(backup(Backups));
+        for (int number = Backups - 1; number >= 1; --number) {
+            QFile::rename(backup(number), backup(number + 1));
+        }
+        QFile::copy(path, backup(1));
+    }
+    QSaveFile file{path};
+    if (!file.open(QIODevice::WriteOnly) || file.write(Serialized(world)) < 0 || !file.commit()) {
+        return false;
+    }
+    const QDir backups{world_dir.filePath(QStringLiteral("backups"))};
+    const QString dated = backups.filePath(
+        QStringLiteral("team_world-%1.pb").arg(today.toString(QStringLiteral("yyyyMMdd"))));
+    if (!QFileInfo::exists(dated)) {
+        QDir{}.mkpath(backups.path());
+        QFile::copy(path, dated);
+        QStringList days =
+            backups.entryList({QStringLiteral("team_world-*.pb")}, QDir::Files, QDir::Name);
+        while (days.size() > DatedBackups) {
+            QFile::remove(backups.filePath(days.takeFirst()));
+        }
+    }
+    return true;
+}
 } // namespace
 
 const std::optional<bbcoop::TeamWorld>& Service::TeamWorldOf(PartyWorld& world) {
     if (!world.team_world_read) {
         world.team_world_read = true;
         if (!folder.isEmpty()) {
-            QFile file{QDir{QDir{folder}.filePath(world.name)}.filePath(TeamWorldFile)};
-            if (file.open(QIODevice::ReadOnly)) {
-                const QByteArray bytes = file.readAll();
-                bbcoop::TeamWorld stored;
-                if (stored.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size()))) {
-                    world.team_world = std::move(stored);
-                }
-            }
+            world.team_world = LoadTeamWorld(QDir{QDir{folder}.filePath(world.name)});
         }
     }
     return world.team_world;
@@ -1275,11 +1327,9 @@ void Service::TakeTeamWorld(Member& member, PartyWorld& world, const bbcoop::Tea
     if (!folder.isEmpty()) {
         const QString path = QDir{folder}.filePath(world.name);
         QDir{}.mkpath(path);
-        QSaveFile file{QDir{path}.filePath(TeamWorldFile)};
-        if (!file.open(QIODevice::WriteOnly) || file.write(Serialized(taken)) < 0 ||
-            !file.commit()) {
+        if (!StoreTeamWorld(QDir{path}, taken, QDateTime::fromMSecsSinceEpoch(now_ms).date())) {
             result.log.append(QStringLiteral("team world %1: could not write %2")
-                                  .arg(world.name, file.fileName()));
+                                  .arg(world.name, QDir{path}.filePath(TeamWorldFile)));
         }
     }
     result.log.append(QStringLiteral("team world %1: %2's world taken (%3 flags on, version %4)")

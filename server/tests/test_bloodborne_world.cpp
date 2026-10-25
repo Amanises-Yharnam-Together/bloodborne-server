@@ -15,6 +15,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <QDate>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -1664,6 +1666,75 @@ int ATeamsWorldComesFromItsHostAndOutlivesTheServer() {
   return 0;
 }
 
+// Kaniel 2026-10-25: a team's world has backups as a party's world.pb does
+// (the broken chalice altar of 2026-10-24 went into the team's world): the
+// last writes as team_world.pb.1 to .3, a copy a day for a week, and a
+// team_world.pb that does not read gives way to its newest backup.
+int ATeamsWorldKeepsBackups() {
+  QTemporaryDir dir;
+  CHECK(dir.isValid());
+  const QByteArray team = "world:00ff00ff00ff00ff";
+  constexpr qint64 Day = 24LL * 60 * 60 * 1000;
+  qint64 now = QDateTime{QDate{2026, 10, 1}, QTime{12, 0}}.toMSecsSinceEpoch();
+  const auto report = [](Game &game, s32 flag, qint64 at) {
+    bbcoop::Envelope envelope;
+    envelope.mutable_team_world()->add_on(flag);
+    envelope.mutable_team_world()->add_blocks(1);
+    game.Send(envelope, at);
+  };
+  QString world_dir;
+  {
+    Service service{dir.path()};
+    Game host{1000, "host", 11};
+    host.Hello(now, team);
+    Pump(service, {&host}, now);
+    for (int day = 0; day < 9; ++day) {
+      for (int write = 0; write < 2; ++write) {
+        now += 1000;
+        report(host, 1000 + 10 * day + write, now);
+        Pump(service, {&host}, now);
+      }
+      now += Day;
+    }
+    for (const QString &name :
+         QDir{dir.path()}.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+      if (QFile::exists(QDir{dir.filePath(name)}.filePath("team_world.pb"))) {
+        world_dir = dir.filePath(name);
+      }
+    }
+  }
+  CHECK(!world_dir.isEmpty());
+  const QDir world{world_dir};
+  CHECK(world.exists("team_world.pb.1") && world.exists("team_world.pb.3") &&
+        !world.exists("team_world.pb.4"));
+  const QStringList days = QDir{world.filePath("backups")}.entryList(
+      {"team_world-*.pb"}, QDir::Files, QDir::Name);
+  CHECK(days.size() == 7);
+  CHECK(days.first() == "team_world-20261003.pb" &&
+        days.last() == "team_world-20261009.pb");
+  // Each day's copy is that day's first write.
+  QFile copy{QDir{world.filePath("backups")}.filePath(days.last())};
+  CHECK(copy.open(QIODevice::ReadOnly));
+  const QByteArray bytes = copy.readAll();
+  bbcoop::TeamWorld read;
+  CHECK(read.ParseFromArray(bytes.constData(), static_cast<int>(bytes.size())));
+  CHECK(read.on_size() == 1 && read.on(0) == 1080);
+
+  // team_world.pb cut short: the newest backup is the world (one write back).
+  {
+    QFile broken{world.filePath("team_world.pb")};
+    CHECK(broken.open(QIODevice::WriteOnly | QIODevice::Truncate));
+  }
+  Service service{dir.path()};
+  service.Load(now);
+  Game guest{1001, "guest", 22};
+  guest.Hello(now, team);
+  Pump(service, {&guest}, now);
+  CHECK(guest.team_world && guest.team_world->exists());
+  CHECK(guest.team_world->on_size() == 1 && guest.team_world->on(0) == 1080);
+  return 0;
+}
+
 // Kaniel 2026-10-16: a new character got the team's old world. Each world is
 // kept apart; the server's list says whose world each one is (its host's
 // reports).
@@ -2312,6 +2383,7 @@ int main() {
        ATradeGoesThroughTheServerAndOutlivesItsRestart},
       {"ATeamsWorldComesFromItsHostAndOutlivesTheServer",
        ATeamsWorldComesFromItsHostAndOutlivesTheServer},
+      {"ATeamsWorldKeepsBackups", ATeamsWorldKeepsBackups},
       {"ATeamsWorldsAreKeptApart", ATeamsWorldsAreKeptApart},
   };
   int failed = 0;
