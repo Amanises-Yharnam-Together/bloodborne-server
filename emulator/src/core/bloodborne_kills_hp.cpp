@@ -2410,11 +2410,7 @@ void KeepEnemyDeathsInStep(bool sharing) {
     size_t newly_hidden = 0;
     size_t newly_died = 0;
     const auto me = LocalPlayerPosition();
-    static constexpr std::array<u8, 6> KillPrologue{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
-    const bool can_kill = std::ranges::equal(
-        std::span<const u8>{reinterpret_cast<const u8*>(image_base + KillCharacterOffset),
-                            KillPrologue.size()},
-        KillPrologue);
+    const bool can_kill = Coop::KillCharacterCallable();
     // Copies at 0 HP without the game's death, since when (see FinishesStuckDeath).
     static std::unordered_map<u64, s64> zero_since;
     static std::unordered_set<u64> finished;

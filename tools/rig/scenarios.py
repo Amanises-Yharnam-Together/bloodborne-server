@@ -4631,3 +4631,62 @@ SCENARIOS["free-camera"] = {
                         r"the player moved 0\.\d m meanwhile"]},
     "timeout": 240,
 }
+
+# Kaniel 2026-10-25 ("if you are in the boss fight and you are died like that you should be in the
+# new spectator mode instead of respawning", "and then trigger overall death"): in Paarl's fight,
+# the game's own kill of the guest (as an arena's kill plane or pit is) while the host fights on is
+# no death: the guest spectates, in the default death mode too. The boss's death wakes it at its
+# own lamp; the host's death is the party's wipe for both. (Gascoigne's fight raised no boss bar on
+# the rig: an approach does not cross his arena's region; Paarl's does, paarl-after-wipe.)
+BOSS_HOST_IN = [*PAARL_START, "wait-session 2 300", "wait 5", *INTO_PAARL_MAP, "wait 5",
+                f"teleport {PAARL_SPOT}", "wait 8", f"hurt {PAARL} 9000", "wait 3", "sync bd-fight"]
+BOSS_GUEST_IN = [*PAARL_START, "wait-session 2 300", "wait 5", *INTO_PAARL_MAP, "wait 5",
+                 "sync bd-fight", f"approach {PAARL} 5 0", "wait 6", "godmode off", "kill self",
+                 "wait-vital spectate 20", "expect-hp self > 0"]
+BOSS_SPECTATE_OUT = r"spectate: out of the fight on map 0x17000000 \(a death in a boss fight\)"
+BOSS_FIGHT_ON = r"party death: boss fight with a teammate in it on"
+SCENARIOS["boss-death-spectate"] = {
+    "about": "in Paarl's fight (the default death mode) the game kills the guest while the host "
+             "fights on: the guest spectates instead of waking at a lamp; the host kills Paarl and "
+             "the guest wakes at its own lamp, no reload of the fight's map",
+    "settings": PARTY_DEATH,
+    "game_kill": True,  # the game's own kill of the guest in a boss fight is what it tests
+    "roles": {
+        "host": [*BOSS_HOST_IN, "wait-member-vital spectate 60", "wait 8", f"kill {PAARL}",
+                 f"wait-flag {PAARL_DEFEATED} 1 60", "wait-member-vital up 90", "wait 5",
+                 "snapshot", "expect-session 2"],
+        "guest": [*BOSS_GUEST_IN, "wait-vital up 120", "wait 5", "snapshot", "expect-hp self > 1",
+                  "expect-session 2"],
+    },
+    "syncs": {"bd-fight": {"chapter": "boss-death-spectate", "roles": ["host", "guest"]}},
+    "expect": {
+        "guest": [r"party death: the boss bars are up", BOSS_FIGHT_ON, BOSS_SPECTATE_OUT,
+                  r"spectate: the boss down wakes this player at its own lamp \d+"],
+    },
+    "forbid": {"host": SESSION_HOLDS,
+               "guest": SESSION_HOLDS + [r"party death: down \d+", r"party guest died",
+                                         r"party death: died for real"]},
+    "timeout": 600,
+}
+SCENARIOS["boss-death-wipe"] = {
+    "about": "in Paarl's fight the game kills the guest (it spectates), then the host dies too: the "
+             "party's wipe for both, the map and the boss reset",
+    "settings": PARTY_DEATH,
+    "game_kill": True,
+    "roles": {
+        "host": [*BOSS_HOST_IN, "wait-member-vital spectate 60", "wait 5", "godmode off",
+                 "kill self", "wait-vital dead 30", "wait-vital up 150", "wait-members 2 240",
+                 "wait 10", "snapshot", "expect-session 2"],
+        "guest": [*BOSS_GUEST_IN, "wait-vital dead 60", "wait-vital up 150", "wait-members 2 240",
+                  "wait 10", "snapshot", "expect-session 2"],
+    },
+    "syncs": {"bd-fight": {"chapter": "boss-death-wipe", "roles": ["host", "guest"]}},
+    "expect": {
+        "host": [r"party death: died for real on map 0x17000000 \(reset=true\)"],
+        "guest": [BOSS_FIGHT_ON, BOSS_SPECTATE_OUT,
+                  r"spectate: the party's wipe ends spectating; dies \(reset=true",
+                  r"travelling there \(reset=true, void fall=false\)"],
+    },
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS + [r"party death: down [0-9]+"]},
+    "timeout": 600,
+}

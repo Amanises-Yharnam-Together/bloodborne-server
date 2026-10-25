@@ -898,6 +898,10 @@ bool TeamMenuBackPressed();
 // The rig's team-worlds verb asked the team screen to open its world list (once).
 bool TeamWorldListAsked();
 bool TeamPlaying(bool* in_hunt);
+// Kaniel 2026-10-25: the game's KillCharacter (KillCharacterOffset) may be called: its entry as
+// the game has it (KillCharacterStart), or party death's hook over it (boss fight deaths).
+constexpr std::array<u8, 6> KillCharacterStart{0x55, 0x48, 0x89, 0xE5, 0x41, 0x57};
+bool KillCharacterCallable();
 // Kaniel 2026-10-25: the team's death mode as this game's lobby has it (TeamDeathMode).
 DeathMode TeamDeathModeNow();
 void TeamJoinHunt(const std::string& invite_team);
@@ -1053,6 +1057,7 @@ struct PartyDeathRun {
     HoldToConfirm give_up{GiveUpHoldMs};
     ReviveHits revive_hits;
     u32 seen_catches = 0;
+    u32 seen_boss_catches = 0; // Kaniel 2026-10-25: a boss fight's catches (spectate)
     u32 seen_attacks = 0;
     u32 seen_lamp_uses = 0;
     u32 handled_wipe = 0;

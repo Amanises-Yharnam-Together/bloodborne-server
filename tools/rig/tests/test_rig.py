@@ -117,11 +117,12 @@ class ScenarioTest(unittest.TestCase):
 
     def test_nothing_plays_without_party_death_or_dies_by_the_games_own_kill(self):
         # Party death is always on in the port (Kaniel 2026-10-13): a player dies by going down and
-        # giving up, by a wipe or alone on its map, never by the game's own kill of itself.
+        # giving up, by a wipe or alone on its map, never by the game's own kill of itself, unless
+        # that kill is what the scenario tests ("game_kill": a boss fight's death, Kaniel 2026-10-25).
         plays = [(name, scenario.get("settings", {}),
                   [command for script in scenario["roles"].values()
                    for command in sum(run_scenario.stages_of(script), [])])
-                 for name, scenario in scenarios.SCENARIOS.items()]
+                 for name, scenario in scenarios.SCENARIOS.items() if not scenario.get("game_kill")]
         plays += [(name, scenario["settings"],
                    [command for script in suite_scripts(scenario).values() for command in script])
                   for name, scenario in suites.SUITE_SCENARIOS.items()]

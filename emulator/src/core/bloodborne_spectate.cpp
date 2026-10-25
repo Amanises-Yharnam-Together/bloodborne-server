@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace Core::Bloodborne {
 
@@ -238,6 +239,44 @@ FreeCamera StepFreeCamera(const FreeCamera& camera, const PadInput& pad, float m
 
 bool FreeCameraHotkey(u32 before, u32 now) {
     return (now & PadL3) != 0 && (now & PadSquare) != 0 && (before & PadSquare) == 0;
+}
+
+bool BossBarsUp(std::span<const u8> gauges) {
+    for (size_t slot = 0; (slot + 1) * BossGaugeSize <= gauges.size(); ++slot) {
+        s32 handle = 0;
+        std::memcpy(&handle, gauges.data() + slot * BossGaugeSize + 4, sizeof(handle));
+        if (handle != -1 && handle != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool BossFightCatchesDeath(bool bars_up, std::span<const MemberVitals> board, std::string_view self,
+                           u32 map, const std::optional<LampPosition>& me) {
+    if (!bars_up || !me || map == 0) {
+        return false;
+    }
+    return std::ranges::any_of(board, [&](const MemberVitals& member) {
+        return member.member != self && member.map == map && member.vital == Vital::Up &&
+               std::hypot(member.at[0] - (*me)[0], member.at[1] - (*me)[1],
+                          member.at[2] - (*me)[2]) <= BossLeaveMetres;
+    });
+}
+
+DeathCatch CatchOf(NoDeadCheck check, bool armed, bool down, bool answer, bool boss_fight,
+                   bool spectating) {
+    if (answer) {
+        return DeathCatch::None;
+    }
+    if (KeepsPlayerAlive(check, armed, down, false)) {
+        return DeathCatch::Down;
+    }
+    if ((check == NoDeadCheck::Lethal || check == NoDeadCheck::Instant) &&
+        (boss_fight || spectating)) {
+        return DeathCatch::BossFight;
+    }
+    return DeathCatch::None;
 }
 
 } // namespace Core::Bloodborne
