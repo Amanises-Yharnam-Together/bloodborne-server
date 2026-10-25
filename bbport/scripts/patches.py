@@ -641,6 +641,7 @@ def main():
     groups=set(PATCH_GROUPS) if force else matching_groups(a.out/'eboot.elf',a.app_version)
     if not groups:
         (a.out/'patches.bin').write_bytes(struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,0))
+        write_build_check_names(a.out,[])
         print(f'Patches: eboot.bin is not the {a.app_version} build the patches were made for: none '
               'applied (30 FPS, no effect or resolution patches; BB_FORCE_PATCHES=1 applies them)')
         return

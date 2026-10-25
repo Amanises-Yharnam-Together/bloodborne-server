@@ -648,7 +648,9 @@ class BuildCheckNamesTests(unittest.TestCase):
         names = {m.get('Name') for m in xml.iter('Metadata')}
         self.assertLessEqual(set(patches.GAMEPLAY_PATCHES), names)
 
-    def test_main_writes_the_names_beside_patches_bin(self):
+    def run_main_on_a_blank_eboot(self, **env):
+        """patches.py's main on an eboot of zeros (no patch group's fingerprint matches it): the
+        names it wrote beside patches.bin."""
         import json
         import subprocess
         import sys
@@ -661,16 +663,28 @@ class BuildCheckNamesTests(unittest.TestCase):
             (out / 'eboot.elf').write_bytes(bytes(header) + struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, 0x6000000,
                                                                         0x6000000, 0x1000))
             (out / 'bbport.ini').write_text('cheat_no_death=1\neffect_dof=0\n', encoding='utf-8')
+            (out / 'patches-names.json').write_text('{"gameplay": ["stale"], "other": []}\n', encoding='utf-8')
             run = subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out),
                                   '--fps', '60', '--settings', str(out / 'bbport.ini'),
                                   '--game-dir', str(out), '--xml', str(XML)],
-                                 env={**os.environ, 'BB_INTEL_TONEMAP_FIX': '0'},
+                                 env={**os.environ, 'BB_INTEL_TONEMAP_FIX': '0', **env},
                                  capture_output=True, text=True, encoding='utf-8')
             self.assertEqual(run.returncode, 0, run.stderr)
-            names = json.loads((out / 'patches-names.json').read_text(encoding='utf-8'))
+            return json.loads((out / 'patches-names.json').read_text(encoding='utf-8'))
+
+    def test_main_writes_the_names_beside_patches_bin(self):
+        # BB_FORCE_PATCHES: the blank eboot matches no group's fingerprint (eboot check per patch
+        # group, #388), and the names are those of the patches applied.
+        names = self.run_main_on_a_blank_eboot(BB_FORCE_PATCHES='1')
         self.assertEqual(names['gameplay'], ['no death'])
         self.assertIn('60 FPS++', names['other'])
         self.assertIn('Disable DoF', names['other'])
+
+    def test_an_eboot_no_patch_fits_names_none(self):
+        # No group fits, so none is applied: the build check must not tell the server about a
+        # cheat this game does not have (nor keep the names of an earlier run).
+        names = self.run_main_on_a_blank_eboot(BB_FORCE_PATCHES='')
+        self.assertEqual(names, {'gameplay': [], 'other': []})
 
 
 if __name__ == '__main__':
