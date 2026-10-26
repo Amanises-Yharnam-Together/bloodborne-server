@@ -3080,6 +3080,11 @@ bool KeepsPlayerAlive(NoDeadCheck check, bool armed, bool down, bool answer);
 enum class Vital : u8 { Off, Up, Down, Dead, Spectate };
 std::string_view VitalName(Vital vital);
 std::optional<Vital> ParseVital(std::string_view name);
+// Whether IsNoDead's hook watches the local player now: standing (or not playing party death) in
+// the session, down or spectating anywhere, and never while a real death plays out (Dead): a hit
+// on the dying body, caught as a lethal hit with a teammate standing, kept it at 1 HP and the
+// death never finished (rig 2026-10-26: a guest that gave up beside an enemy never got up).
+bool PartyDeathWatches(bool in_session, Vital vital);
 // What this member posts on the vitals board, for the log on change only (the rig checks
 // SessionArrival by it: a summoned guest goes from "off" to "up" once it arrived).
 class VitalsPostLog {

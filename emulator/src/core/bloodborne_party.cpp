@@ -4979,6 +4979,13 @@ NoDeadCheck NoDeadCheckAt(NoDeadCheck check, s32 hp) {
     return hp <= 0 ? NoDeadCheck::Lethal : NoDeadCheck::Other;
 }
 
+bool PartyDeathWatches(bool in_session, Vital vital) {
+    if (vital == Vital::Dead) {
+        return false;
+    }
+    return in_session || vital == Vital::Down || vital == Vital::Spectate;
+}
+
 bool KeepsPlayerAlive(NoDeadCheck check, bool armed, bool down, bool answer) {
     return (check == NoDeadCheck::Lethal && (armed || down)) || answer;
 }
