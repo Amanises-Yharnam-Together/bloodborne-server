@@ -974,12 +974,34 @@ def migrate_display_settings(ini, lines, app):
         ini['hdr'] = '1' if app.get('hdr') else '0'
 
 
+def migrate_old_output(ini, lines, desktop):
+    """Kaniel 2026-10-26: before every resolution of the monitor was offered (#387) the launcher wrote one
+    of its four 16:9 sizes and no aspect_ratio, whatever the monitor; players on 21:9 kept 1920x1080 after
+    updating. On a desktop of another shape that size is no choice: the desktop's shape at its height (at
+    most the desktop's) and aspect_ratio=auto, written once (BbOutputSizes::OldLauncherRefit, patches.py)."""
+    present = {line.split('=', 1)[0].strip() for line in lines if '=' in line and not line.lstrip().startswith('#')}
+    if ('aspect_ratio' in present or 'output_res' not in present or not desktop or desktop[1] <= 0
+            or abs(desktop[0] / desktop[1] - 16 / 9) < 0.02):  # 16:9 as patches.is_16x9 has it
+        return
+    try:
+        w, h = (int(v) for v in ini.get('output_res', '').lower().replace(' ', '').split('x'))
+    except ValueError:
+        return
+    if (w, h) not in STANDARD_OUTPUTS:
+        return
+    h = min(h, desktop[1])
+    ini['output_res'] = '%dx%d' % (min(max(2, round(h * desktop[0] / desktop[1] / 2) * 2), MAX_OUTPUT[0]), h)
+    ini['aspect_ratio'] = 'auto'
+
+
 def launcher_ini(app):
-    """(ini, saved) as the launcher opens: bbport.ini with the old display switches moved in, and what
-    the file held for the keys the launcher writes (collect writes only what differs from it)."""
+    """(ini, saved) as the launcher opens: bbport.ini with the old display switches and the old launcher's
+    16:9 output moved in, and what the file held for the keys the launcher writes (collect writes only what
+    differs from it)."""
     ini, lines = load_ini()
     saved = ini_values(ini)
     migrate_display_settings(ini, lines, app)
+    migrate_old_output(ini, lines, display_modes()[1])
     return ini, saved
 
 

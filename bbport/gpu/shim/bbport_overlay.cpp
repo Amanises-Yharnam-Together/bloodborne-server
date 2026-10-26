@@ -3436,9 +3436,12 @@ void Screen() {
         MenuArt::Cover(draw, MenuArt::Wall, ImVec2(0, 0), display, 1.0f);
         MenuArt::Vignette(draw, ImVec2(0, 0), display, 0.75f);
     }
-    const ImVec2 size(std::min(S(1600.0f), display.x - S(80.0f)), display.y - S(40.0f));
+    // The sizes the narrow-window scale is made from (BbPartyLayout::TeamScreenScale).
+    using BbPartyLayout::TeamWindowInset;
+    const ImVec2 size(std::min(S(BbPartyLayout::TeamWindowWidth), display.x - S(BbPartyLayout::TeamWindowMargin)),
+                      display.y - S(40.0f));
     const ImVec2 win((display.x - size.x) * 0.5f, (display.y - size.y) * 0.5f);
-    const float x0 = win.x + S(24.0f), x1 = win.x + size.x - S(24.0f);
+    const float x0 = win.x + S(TeamWindowInset), x1 = win.x + size.x - S(TeamWindowInset);
     Divider(draw, x0, x1, win.y + S(14.0f));
     Divider(draw, x0, x1, win.y + size.y - S(14.0f));
     if (bbcoop_team_world_list_asked() && CanPickWorld()) {
@@ -3489,7 +3492,7 @@ void Screen() {
     ImGui::PopFont();
 
     // The four places.
-    const float card_w = S(290.0f), card_h = S(270.0f), gap = S(24.0f);
+    const float card_w = S(BbPartyLayout::TeamCardWidth), card_h = S(270.0f), gap = S(BbPartyLayout::TeamGap);
     const float cards_x = win.x + (size.x - (4 * card_w + 3 * gap)) * 0.5f,
                 header_y = win.y + S(MenuArt::Has(MenuArt::HeaderOrnament) ? 140.0f : 128.0f);
     // Full screen: the cards and the two lists (five rows) as one block, in the middle of the room
@@ -3611,7 +3614,7 @@ void Screen() {
 
     // The buttons: the team, Begin the hunt, the world.
     ImGui::PushFont(MenuArt::Font(), 24.0f);
-    const float bw = S(260.0f), bh = S(54.0f);
+    const float bw = S(BbPartyLayout::TeamButtonWidth), bh = S(54.0f);
     // Kaniel 2026-10-19: high enough for the line under them and the key guide over the ornament.
     const float by = win.y + size.y - S(180.0f);
     // Kaniel 2026-10-25: over the game a fourth, the team's duel; the death mode the last.
@@ -7310,7 +7313,11 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, v
     const BbPartyLayout::Rect stage = BbPartyLayout::Stage(frame);
     const bool other_shape = game.extent.width > 0 && game.extent.height > 0 &&
                              (stage.w != frame.w || stage.h != frame.h);
-    const float scale = BbPartyLayout::Scale(other_shape ? stage.h : float(extent.height));
+    float scale = BbPartyLayout::Scale(other_shape ? stage.h : float(extent.height));
+    // A team screen over the whole frame fits its width too (4:3 and 16:10 windows).
+    if (Team::open) {
+        scale = BbPartyLayout::TeamScreenScale(scale, float(extent.width));
+    }
     // The game's HUD groups at the frame's edges (the aspect hooks): the party HUD follows them,
     // here and in the game's own HUD (the native list, bloodborne_party PartyListPosition).
     const BbGuestHooks::HudShift hud_shift = BbGuestHooks::HudEdgeShift();

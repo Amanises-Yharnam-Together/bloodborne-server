@@ -61,5 +61,23 @@ int main() {
     assert(std::abs(ListTop(tall, up) - std::round(0.225f * 900.0f)) < 1.0f);
     assert(std::abs(RevivePromptY(tall) - (150.0f + std::round(0.74f * 900.0f))) < 1.0f);
     assert(Stage({0, 0, 1920, 1080}).x == 0.0f && Stage({0, 0, 1280, 720}).w == 1280.0f);
-    std::puts("Party layout: PASS (1080p, 4K, 720p, small window, letterboxed, pillarboxed, 21:9, 4:3)");
+
+    // Kaniel 2026-10-26: the team screen in a narrow window (4:3 960x720, 16:10 1152x720: the overlay's
+    // scale stops at 0.75) ran off both sides; it scales down to the width. Its cards, its button row
+    // and its window fit; wider frames keep the overlay's scale.
+    for (const Rect frame : {Rect{0, 0, 960, 720}, Rect{0, 0, 1152, 720}, Rect{0, 0, 1024, 768},
+                             Rect{0, 0, 960, 540}, Rect{0, 0, 1280, 720}, Rect{0, 0, 1920, 1080},
+                             Rect{0, 0, 2560, 720}, Rect{0, 0, 1440, 1080}}) {
+        const float overlay = Scale(Stage(frame).h);
+        const float s = TeamScreenScale(overlay, frame.w);
+        assert(s <= overlay && s > 0.0f);
+        const float window = TeamWindowWidth * s;
+        assert(window <= frame.w - TeamWindowMargin * s + 0.01f);
+        assert(TeamButtonsWidth * s <= window - 2 * TeamWindowInset * s);
+        assert(TeamCardsWidth * s <= window - 2 * TeamWindowInset * s);
+    }
+    assert(TeamScreenScale(1.0f, 1920.0f) == 1.0f && TeamScreenScale(0.75f, 1280.0f) == 0.75f);
+    assert(TeamScreenScale(0.75f, 960.0f) < 0.75f);
+    std::puts("Party layout: PASS (1080p, 4K, 720p, small window, letterboxed, pillarboxed, 21:9, 4:3, "
+              "narrow team screen)");
 }

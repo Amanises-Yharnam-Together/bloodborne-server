@@ -4767,6 +4767,29 @@ SCENARIOS["aspect-hud-16x9"] = {
     "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
     "timeout": 300,
 }
+# Kaniel 2026-10-26: at 4:3 960x720 the team screen ran off both sides (the overlay's scale stops at
+# 0.75); it scales down to the window's width. The Insert menu's Co-op Team row (its rows end Co-op
+# Team, Map, Quit) opens it over the game, Circle closes it. Run visible (the guest is headless).
+SCENARIOS["aspect-team-43"] = {
+    "about": "a 4:3 output (960x720): the team screen opened from the Insert menu fits the window "
+             "(pictures), Circle closes it back to the game; the start's resolution line",
+    "settings": {"ini.output_res": "960x720", "ini.aspect_ratio": "auto", "rig.headless_roles": "guest"},
+    "roles": {
+        "host": [START, "godmode", "wait-session 2 300", "wait 25", "shot host-hud",
+                 "keys toggle up up up enter", "wait 3", "shot host-team", "keys circle", "wait 3",
+                 "shot host-team-closed", "expect-session 2", "sync aspect-shots"],
+        "guest": ASPECT_HUD_GUEST,
+    },
+    "syncs": {"aspect-shots": {"chapter": "aspect-hud", "roles": ["host", "guest"]}},
+    "expect": {"host": [r"Co-op team menu: the team screen is open from the port's Insert menu",
+                        r"Co-op team menu: the team screen is closed"]},
+    "console_expect": {"host": [r"Display: aspect ratio 1\.333 \(taller",
+                                r"Resolution: ini 960x720, window windowed, desktop \d+x\d+ -> output 960x720, "
+                                r"scene 960x720 \(startup patch\), aspect 1\.333",
+                                r"Resolution at start: ini 960x720, window windowed"]},
+    "forbid": {"host": SESSION_HOLDS, "guest": SESSION_HOLDS},
+    "timeout": 300,
+}
 
 # Kaniel 2026-10-25: frame generation to look at (#395: the generated frames wait for the GPU,
 # the status says what really runs). One visible host with frame generation on (FSR 3, x2),

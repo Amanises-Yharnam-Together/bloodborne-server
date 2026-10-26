@@ -267,23 +267,81 @@ def fit_16x9(size):
     return (w,max(2,round(w*9/16/2)*2))
 
 
-def output_size(settings):
-    """Output (UI) size from bbport.ini output_res, e.g. 3840x2160 or 2560x1080 (any size the
-    display has); 1920x1080 by default. aspect_ratio=16:9: the 16:9 part of it."""
-    size=OUTPUT_SIZE
+# The launcher's four outputs before every resolution of the monitor was offered (#387,
+# BbOutputSizes::Standard): it wrote one of them, with no aspect_ratio key, whatever the monitor.
+OLD_LAUNCHER_OUTPUTS=((1280,720),(1920,1080),(2560,1440),(3840,2160))
+MAX_OUTPUT=(7680,4320)
+
+
+def chosen_output(settings):
+    """bbport.ini output_res as (w, h), None when unset or not a size."""
     try:
         w,h=(int(v) for v in settings.get('output_res','').lower().replace(' ','').split('x'))
-        if w>0 and h>0: size=(w,h)
     except ValueError:
-        pass
+        return None
+    return (w,h) if w>0 and h>0 else None
+
+
+def parse_size(text):
+    """'2560x1080' as (2560, 1080); None for '' or not a size."""
+    return chosen_output({'output_res':text or ''})
+
+
+def is_16x9(size):
+    return abs(size[0]/size[1]-16/9)<0.02
+
+
+def old_launcher_output(settings,desktop):
+    """The old launcher's 16:9 size on a desktop of another shape (BbOutputSizes::OldLauncherOutput):
+    not the player's choice, so the game's default for the desktop applies (Kaniel 2026-10-26: players
+    on 21:9 kept 1920x1080 after updating and got no wider scene)."""
+    return (bool(desktop) and 'aspect_ratio' not in settings and chosen_output(settings) in OLD_LAUNCHER_OUTPUTS
+            and not is_16x9(desktop))
+
+
+def default_output(desktop):
+    """The output before one is chosen: the game's 1080 lines in the desktop's shape
+    (BbOutputSizes::DefaultOutput); 1920x1080 while the desktop is unknown."""
+    if not desktop: return OUTPUT_SIZE
+    return (min(max(2,round(1080*desktop[0]/desktop[1]/2)*2),MAX_OUTPUT[0]),1080)
+
+
+def fit_window(size,window):
+    """`size` in the shape of `window`, the height kept on a wider one, the width on a taller one
+    (BbOutputSizes::FitWindow: borderless shows the desktop's shape)."""
+    if size[0]*window[1]==size[1]*window[0]: return size
+    ratio=window[0]/window[1]
+    if size[0]/size[1]<ratio: return (min(max(2,round(size[1]*ratio/2)*2),MAX_OUTPUT[0]),size[1])
+    return (size[0],min(max(2,round(size[0]/ratio/2)*2),MAX_OUTPUT[1]))
+
+
+def old_launcher_refit(size,desktop):
+    """The old launcher's 16:9 size in the desktop's shape at its height (at most the desktop's):
+    1920x1080 on 21:9 is the game's default 2560x1080, 2560x1440 on 3440x1440 the desktop itself
+    (BbOutputSizes::OldLauncherRefit)."""
+    h=min(size[1],desktop[1])
+    return (min(max(2,round(h*desktop[0]/desktop[1]/2)*2),MAX_OUTPUT[0]),h)
+
+
+def output_size(settings,desktop=None,window_mode=None):
+    """The game's output (BbSettings::ResolveOutput) from bbport.ini output_res, e.g. 3840x2160 or
+    2560x1080 (any size the display has): unset (or the old launcher's 16:9 size on another shape),
+    1080 lines in the desktop's shape (1920x1080 while it is unknown); borderless refits it to the
+    desktop's shape; aspect_ratio=16:9, the 16:9 part of it. window_mode: the game's (run.py: the
+    ini's, BB_FULLSCREEN, BB_WINDOW_MODE), else the ini's."""
+    size=chosen_output(settings)
+    if not size: size=default_output(desktop)
+    elif old_launcher_output(settings,desktop): size=old_launcher_refit(size,desktop)
+    mode=window_mode or settings.get('window_mode','windowed').strip()
+    if mode=='borderless' and desktop: size=fit_window(size,desktop)
     return fit_16x9(size) if settings.get('aspect_ratio','auto').strip()=='16:9' else size
 
 
-def scaled_sizes(settings):
+def scaled_sizes(settings,desktop=None,window_mode=None):
     """(render, output) for an output other than 1080p (above it, or 720p for the Steam Deck):
     the game renders at output / preset scale (or at the output size without upscaler) and the
     upscaler fills the output. None at 1080p and for TAA (native, live host targets only)."""
-    out=output_size(settings)
+    out=output_size(settings,desktop,window_mode)
     if out==OUTPUT_SIZE or settings.get('upscaler')=='taa': return None
     scale=1.0
     if settings.get('upscaler','fsr3')!='off':
@@ -601,6 +659,9 @@ def main():
     p.add_argument('--output-res',default='',help='output resolution WxH (the upscaler\'s; the UI stays 1920x1080)')
     p.add_argument('--print-scaled',action='store_true',
                    help='print "RENDER OUTPUT" (WxH) when bbport.ini selects an output other than 1080p')
+    p.add_argument('--desktop',default='',help="the game display's desktop WxH (run.py: --print-scaled as the game resolves its output)")
+    p.add_argument('--window-mode',default='',help="the game's window mode (windowed, borderless, fullscreen) for --print-scaled")
+    p.add_argument('--print-output',action='store_true',help="print the game's output WxH (with --desktop and --window-mode)")
     p.add_argument('--print-patched',action='store_true',
                    help='print "patched" or "unpatched" for the version of --game-dir (run.sh asks this)')
     p.add_argument('--print-fingerprint',action='store_true',
@@ -615,8 +676,12 @@ def main():
         print('patched' if game_is_patched(game_app_version(a.game_dir),os.environ,a.app_version) else 'unpatched')
         return
     if a.print_scaled:
-        sizes=scaled_sizes(read_settings(a.settings))
+        sizes=scaled_sizes(read_settings(a.settings),parse_size(a.desktop),a.window_mode or None)
         if sizes: print(f'{sizes[0][0]}x{sizes[0][1]} {sizes[1][0]}x{sizes[1][1]}')
+        return
+    if a.print_output:
+        size=output_size(read_settings(a.settings),parse_size(a.desktop),a.window_mode or None)
+        print(f'{size[0]}x{size[1]}')
         return
     if a.print_preset_size:
         settings=read_settings(a.settings)

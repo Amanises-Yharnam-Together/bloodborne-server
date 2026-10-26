@@ -249,6 +249,50 @@ def low_vram_mb(env, caps):
     return vram if discrete and 0 < vram <= LOW_VRAM_MB else 0
 
 
+def choose_desktop(displays, wanted):
+    """The desktop (w, h) of the game's display in `bb-gpu-capabilities --displays` output: BB_DISPLAY
+    `wanted` by number or a part of its name, else the primary one (gpu/shim/window.cpp ChooseDisplay);
+    None when unknown."""
+    rows = [parts for parts in (line.split('\t') for line in displays.splitlines()) if len(parts) >= 5]
+    wanted = (wanted or '').strip()
+    chosen = None
+    if wanted.isdigit():
+        chosen = next((row for row in rows if row[0] == str(int(wanted))), None)
+    elif wanted:
+        chosen = next((row for row in rows if wanted.lower() in row[1].lower()), None)
+    chosen = chosen or next((row for row in rows if row[4].strip() == '1'), None)
+    if not chosen:
+        return None
+    try:
+        w, h = (int(v) for v in chosen[2].lower().split('x'))
+    except ValueError:
+        return None
+    return (w, h) if w > 0 and h > 0 else None
+
+
+def game_desktop(env, caps):
+    """The game display's desktop size as "WxH", '' when unknown. BB_DESKTOP overrides it (tests)."""
+    if env.get('BB_DESKTOP'):
+        return env['BB_DESKTOP']
+    try:
+        result = subprocess.run([str(caps), '--displays'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, encoding='utf-8', errors='replace',
+                                timeout=20, creationflags=no_console())
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    size = choose_desktop(result.stdout, env.get('BB_DISPLAY', ''))
+    return f'{size[0]}x{size[1]}' if size else ''
+
+
+def game_window_mode(config, env):
+    """The window mode the game starts in (BbSettings::Load): bbport.ini window_mode, else the
+    launcher's BB_FULLSCREEN switch; BB_WINDOW_MODE over both."""
+    mode = ini_value(config, 'window_mode')
+    if mode is None:
+        mode = 'borderless' if env.get('BB_FULLSCREEN', '').startswith('1') else 'windowed'
+    return (env.get('BB_WINDOW_MODE') or mode).strip()
+
+
 def low_vram_budget_mb(vram):
     """The texture cache's budget (BB_GC_BUDGET_MB) on a low-VRAM card."""
     return max(2048, vram - VRAM_RESERVE_MB)
@@ -443,15 +487,21 @@ def main():
                   'packets at the 60 FPS rates')
         env['BB_FPS_PRESET'] = fps  # for the co-op log's header line (bbcoop/coop.cpp)
         scaled_render = scaled_output = None
-        if not env.get('BB_RENDER_RES'):
-            printed = run_script('patches.py', '--print-scaled', '--settings', config, capture=True).split()
+        # The output as the game resolves it (BbSettings::ResolveOutput): its display's desktop and its
+        # window mode (borderless takes the desktop's shape), so the scene patch has the game's shape.
+        caps = probe.parent / 'bb-gpu-capabilities.exe'
+        desktop = game_desktop(env, caps)
+        window_mode = game_window_mode(config, env)
+        shape = ('--desktop', desktop, '--window-mode', window_mode)
+        explicit_render = env.get('BB_RENDER_RES')
+        if not explicit_render:
+            printed = run_script('patches.py', '--print-scaled', '--settings', config, *shape, capture=True).split()
             if len(printed) == 2:
                 scaled_render, scaled_output = printed
         live = '0'
         if scaled_output:
             live = env.get('BB_LIVE_RES') or ini_value(config, 'live_resolution') or '0'
             if live == 'auto':
-                caps = probe.parent / 'bb-gpu-capabilities.exe'
                 result = subprocess.run([str(caps), '--live-resolution'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                         text=True, encoding='utf-8', errors='replace', creationflags=no_console())
                 live = result.stdout.strip() if result.returncode == 0 else '0'
@@ -462,6 +512,13 @@ def main():
         if scaled:
             env.update(BB_RENDER_RES=scaled_render, BB_OUTPUT_RES=scaled_output, BB_AUTO_RENDER_RES='1')
             env.setdefault('BB_DMEM_MB', HIGH_RESOLUTION_DMEM_MB)
+        # One line with the whole chain, for players' logs (the game logs its own "Resolution:" too).
+        output = scaled_output or (run_script('patches.py', '--print-output', '--settings', config, *shape,
+                                              capture=True, optional=True) or '?').strip()
+        scene = (f'{scaled_render} (startup patch)' if scaled else 'live' if live == '1'
+                 else f'{explicit_render} (BB_RENDER_RES)' if explicit_render else "1920x1080 (the game's)")
+        print(f'Resolution at start: ini {ini_value(config, "output_res") or "unset"}, window {window_mode}, '
+              f'desktop {desktop or "unknown"} -> output {output}, scene {scene}')
         # Above 1080p (the scaled path above, or an explicit BB_RENDER_RES: the launcher, a test)
         # patches.py grows the graphics heap: the direct memory has to follow, also over a smaller
         # BB_DMEM_MB (the rig's 5056), or the game stops at start (exit 139, or a write to 0 at guest
