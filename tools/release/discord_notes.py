@@ -45,12 +45,28 @@ def to_discord(markdown: str) -> str:
 SECTION = re.compile(r"^(?:#{1,6}\s+|\*\*)(what's new|what’s new|fixed in|what's in this release)(.*?)(?:\*\*)?\s*$", re.I)
 
 
+# A bold line on its own inside a change section: a sub-heading.
+SUBHEADING = re.compile(r"^\*\*[^*]+\*\*$")
+
+
 def changes(markdown: str) -> str:
-    """Just the release's change list: each change section's heading and its bullets."""
+    """Just the release's change list: each change section's heading and its bullets, with any
+    sub-headings ("**Team duels**", "**Fixed**") and the lines that open them."""
     lines = (markdown or "").replace("\r\n", "\n").split("\n")
-    out, inside = [], False
-    for line in lines:
-        match = SECTION.match(line.strip())
+
+    def bullet(line: str) -> bool:
+        return line.lstrip().startswith(("- ", "* ")) or (line.startswith("  ") and bool(line.strip()))
+
+    def next_text(i: int) -> str:
+        for later in lines[i + 1:]:
+            if later.strip():
+                return later
+        return ""
+
+    out, inside, opening = [], False, False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        match = SECTION.match(stripped)
         if match:
             title = match.group(1)[0].upper() + match.group(1)[1:]
             rest = match.group(2).strip()
@@ -59,11 +75,22 @@ def changes(markdown: str) -> str:
             if out:
                 out.append("")
             out.append(f"**{title}**")
-            inside = True
-        elif inside and (line.lstrip().startswith(("- ", "* ")) or (line.startswith("  ") and line.strip())):
+            inside, opening = True, True
+        elif not inside:
+            continue
+        elif bullet(line):
             out.append(line.rstrip())
-        elif inside and out and out[-1].startswith("**") and not line.strip():
-            continue  # a blank line between the heading and its first bullet
+            opening = False
+        elif SUBHEADING.match(stripped):
+            out.extend(["", stripped])
+            opening = True
+        elif not stripped:
+            # A blank line goes on only into more of the section (a bullet or a sub-heading).
+            following = next_text(i)
+            if not (opening or bullet(following) or SUBHEADING.match(following.strip())):
+                inside = False
+        elif opening:
+            out.append(stripped)  # a sub-heading's opening lines
         else:
             inside = False
     return "\n".join(out)

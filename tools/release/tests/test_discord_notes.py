@@ -76,7 +76,36 @@ Built from 2a89c38f1e3f (main).
 """
 
 
+V130 = """**What's new since v1.2.2**
+
+**Team duels**
+Fight your teammates. Press **Duel**.
+- A killing blow puts you out of the duel.
+
+**New**
+- Team death mode.
+
+**Fixed**
+- Forbidden Woods textures.
+
+Frame generation adds input delay.
+
+Everyone must update to v1.3.0.
+
+---
+
+Seamless co-op for Bloodborne.
+"""
+
+
 class ChangesTest(unittest.TestCase):
+    def test_sub_headings_and_their_opening_lines_stay(self):
+        """v1.3.0: sub-headings under "What's new" (Discord got the heading alone)."""
+        self.assertEqual(tool.changes(V130),
+                         "**What's new**\n\n**Team duels**\nFight your teammates. Press **Duel**.\n"
+                         "- A killing blow puts you out of the duel.\n\n**New**\n- Team death mode.\n\n"
+                         "**Fixed**\n- Forbidden Woods textures.")
+
     def test_only_the_change_list_stays(self):
         self.assertEqual(tool.changes(V114),
                          "**What's new**\n- The Impurity rune now works in co-op.\n- Fog walls are off on every map.")
