@@ -101,6 +101,38 @@ class KeepSettingsTests(unittest.TestCase):
             self.assertIn(f'{key}={value}' if key not in ('window_mode', 'hdr') else key, '\n'.join(text))
         self.assertFalse([line for line in text if line.startswith(('key.', 'pad.'))])  # defaults: no lines
 
+    def test_the_old_launchers_16x9_output_becomes_the_monitors_shape_once(self):
+        # Kaniel 2026-10-26: before #387 the launcher wrote one of four 16:9 sizes and no aspect_ratio;
+        # players on 21:9 kept 1920x1080 after updating. On a monitor of another shape that is not a
+        # choice: the monitor's shape at the old size's height (at most the monitor's) is written once.
+        for desktop, old, new in (((2560, 1080), '1920x1080', '2560x1080'), ((3440, 1440), '1920x1080', '2580x1080'),
+                                  ((3440, 1440), '2560x1440', '3440x1440'), ((5120, 1440), '1920x1080', '3840x1080'),
+                                  ((1920, 1200), '1920x1080', '1728x1080')):
+            with self.subTest(desktop=desktop, old=old), \
+                    mock.patch.object(launcher, 'display_modes', lambda desktop=desktop: ([desktop], desktop)):
+                self.path.write_text(f'output_res={old}\npad.cross=b\n', encoding='utf-8')
+                window = self.opened()
+                self.assertEqual(window.ini['output_res'], new)
+                launcher.Launcher.collect(window)
+                text = self.lines()
+                self.assertIn(f'output_res={new}', text)
+                self.assertIn('aspect_ratio=auto', text)
+                self.assertIn('pad.cross=b', text)
+                # Written once: the next start keeps it, also a 16:9 size chosen after it.
+                self.path.write_text('output_res=1920x1080\naspect_ratio=auto\n', encoding='utf-8')
+                self.assertEqual(self.opened().ini['output_res'], '1920x1080')
+
+    def test_a_16x9_monitor_or_a_size_the_old_launcher_never_offered_stays(self):
+        with mock.patch.object(launcher, 'display_modes', lambda: ([(3840, 2160)], (3840, 2160))):
+            self.path.write_text('output_res=1920x1080\n', encoding='utf-8')
+            self.assertEqual(self.opened().ini['output_res'], '1920x1080')
+        with mock.patch.object(launcher, 'display_modes', lambda: ([(2560, 1080)], (2560, 1080))):
+            self.path.write_text('output_res=1720x720\n', encoding='utf-8')
+            self.assertEqual(self.opened().ini['output_res'], '1720x720')
+        with mock.patch.object(launcher, 'display_modes', lambda: ([], None)):
+            self.path.write_text('output_res=1920x1080\n', encoding='utf-8')
+            self.assertEqual(self.opened().ini['output_res'], '1920x1080')
+
     def test_a_missing_setting_is_added_without_touching_the_controls(self):
         self.path.write_text('pad.cross=b\n', encoding='utf-8')
         window = self.opened()

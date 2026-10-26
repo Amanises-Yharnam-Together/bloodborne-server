@@ -187,6 +187,10 @@ struct Values {
     /// The chosen output (BbOutputSizes::Pack; bbport.ini output_res), 0 until one is chosen
     /// (ChosenOutput: the game's 1080 lines in the desktop's shape).
     std::atomic<std::uint32_t> output_res{0};
+    /// bbport.ini had output_res and no aspect_ratio (the old launcher's file): one of its 16:9 sizes
+    /// on a desktop of another shape is no choice (BbOutputSizes::OldLauncherOutput); a menu's choice
+    /// clears it.
+    std::atomic<bool> output_from_old_file{false};
     std::atomic<int> aspect{AspectAuto}; ///< AspectMode
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
@@ -302,6 +306,9 @@ OutputSize CurrentOutput();
 void ChooseOutput(OutputSize size);
 /// Borderless: a chosen output of another shape than the desktop is refitted (and saved).
 void FitChosenOutputToDesktop();
+/// The start's resolution chain in one line (BbOutputSizes::ResolutionText): the ini's size, the window
+/// mode, the desktop, the output, the scene (the startup patch's BB_RENDER_RES, live, or the game's).
+std::string ResolutionLine();
 
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
 bool FixedRenderSession();

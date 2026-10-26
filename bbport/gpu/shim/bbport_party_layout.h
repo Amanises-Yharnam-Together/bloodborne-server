@@ -21,6 +21,19 @@ inline float Scale(float display_h) {
     return std::max(display_h / 1080.0f, 0.75f);
 }
 
+/// The team screen at scale 1 (bbport_overlay.cpp Team::Draw): its window and the margin beside it,
+/// the inset of its contents, its button row (five buttons over the game) and its four cards.
+inline constexpr float TeamWindowWidth = 1600.0f, TeamWindowMargin = 80.0f, TeamWindowInset = 24.0f;
+inline constexpr float TeamButtonWidth = 260.0f, TeamCardWidth = 290.0f, TeamGap = 24.0f;
+inline constexpr float TeamButtonsWidth = 5 * TeamButtonWidth + 4 * TeamGap;
+inline constexpr float TeamCardsWidth = 4 * TeamCardWidth + 3 * TeamGap;
+
+/// Kaniel 2026-10-26: in a narrow window (4:3 960x720, 16:10 1152x720) the overlay's scale stops at
+/// 0.75 and the team screen ran off both sides: while it is open the overlay scales down to the width.
+inline float TeamScreenScale(float scale, float display_w) {
+    return std::min(scale, display_w / (TeamWindowWidth + TeamWindowMargin));
+}
+
 /// Kaniel 2026-10-24: the game's 16:9 screen inside a frame of another shape (21:9, 32:9, 16:10, 4:3):
 /// its middle, as high as a wider frame and as wide as a taller one; the frame itself at 16:9. The
 /// game's UI coordinates (its 1920x1080 stage) map onto it, the same scale both ways.

@@ -203,6 +203,8 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     }
     ApplyWindowMode(BbSettings::Get().window_mode.load());
     applied_output = BbOutputSizes::Pack(BbSettings::CurrentOutput());
+    // Kaniel 2026-10-26: the whole chain in one line, so a player's log answers it.
+    std::printf("%s\n", BbSettings::ResolutionLine().c_str());
     UpdateHdrState();
     int w = 0, h = 0;
     SDL_GetWindowSizeInPixels(window, &w, &h);

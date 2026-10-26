@@ -341,6 +341,10 @@ void Load() {
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
     }
+    {
+        std::scoped_lock lock{lines_mutex};
+        v.output_from_old_file = file_lines.contains("output_res") && !file_lines.contains("aspect_ratio");
+    }
     // Environment overrides (scripts, A/B tests).
     if (const char* env = std::getenv("BB_UPSCALER")) {
         v.upscaler = UpscalerOff;
@@ -556,8 +560,17 @@ std::vector<OutputSize> OutputChoices() {
 }
 
 OutputSize ChosenOutput() {
-    const OutputSize chosen = BbOutputSizes::Unpack(Get().output_res.load(std::memory_order_relaxed));
-    return chosen.Valid() ? chosen : BbOutputSizes::DefaultOutput(Desktop());
+    const auto& v = Get();
+    const OutputSize chosen = BbOutputSizes::Unpack(v.output_res.load(std::memory_order_relaxed));
+    if (!chosen.Valid()) {
+        return BbOutputSizes::DefaultOutput(Desktop());
+    }
+    // The old launcher's 16:9 size on a desktop of another shape (Kaniel 2026-10-26).
+    if (BbOutputSizes::OldLauncherOutput(chosen, !v.output_from_old_file.load(std::memory_order_relaxed),
+                                         Desktop())) {
+        return BbOutputSizes::OldLauncherRefit(chosen, Desktop());
+    }
+    return chosen;
 }
 
 OutputSize ResolveOutput(OutputSize chosen, int aspect, int window_mode, OutputSize desktop) {
@@ -581,15 +594,16 @@ void ChooseOutput(OutputSize size) {
     }
     if (size.Valid()) {
         v.output_res = BbOutputSizes::Pack(size);
+        v.output_from_old_file = false; // the player's choice
     }
 }
 
 void FitChosenOutputToDesktop() {
     auto& v = Get();
-    const OutputSize chosen = BbOutputSizes::Unpack(v.output_res.load());
-    if (v.window_mode != Borderless || !chosen.Valid()) {
+    if (v.window_mode != Borderless || !BbOutputSizes::Unpack(v.output_res.load()).Valid()) {
         return;
     }
+    const OutputSize chosen = ChosenOutput(); // the old launcher's size already in the desktop's shape
     const OutputSize fitted = BbOutputSizes::FitWindow(chosen, Desktop());
     if (fitted != chosen) {
         std::printf("Output: %s for the borderless window (%s chosen, desktop %s)\n",
@@ -598,6 +612,20 @@ void FitChosenOutputToDesktop() {
         v.output_res = BbOutputSizes::Pack(fitted);
         Save();
     }
+}
+
+std::string ResolutionLine() {
+    const auto& v = Get();
+    const OutputSize ini = BbOutputSizes::Unpack(v.output_res.load(std::memory_order_relaxed));
+    const bool old = ini.Valid() && BbOutputSizes::OldLauncherOutput(ini, !v.output_from_old_file.load(), Desktop());
+    const char* size = std::getenv("BB_RENDER_RES");
+    // Without the startup patch the scene is live (run.py's "Resolution at start" line says which) or
+    // the game's own 1920x1080.
+    const std::string scene = FixedRenderSession() ? std::string(size) + " (startup patch)"
+                                                   : std::string("not patched at start (live or the game's 1920x1080)");
+    return BbOutputSizes::ResolutionText(
+        ini, old, WindowModeNames[std::clamp(v.window_mode.load(), 0, WindowModeCount - 1)], Desktop(),
+        CurrentOutput(), scene);
 }
 
 bool FixedRenderSession() {

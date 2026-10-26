@@ -104,6 +104,61 @@ class NativeUiTests(unittest.TestCase):
                          ((2560, 1080), (2560, 1080)))
 
 
+class StartupOutputTests(unittest.TestCase):
+    """The startup patch's output is the game's (BbSettings::ResolveOutput): borderless refits the chosen
+    size to the desktop's shape, an unset one is 1080 lines in that shape, and a bbport.ini of the old
+    launcher (one of its four 16:9 sizes, no aspect_ratio key) on a desktop of another shape counts as
+    not chosen (Kaniel 2026-10-26: players on 21:9 kept 1920x1080 and their scene was not patched)."""
+
+    def sizes(self, settings, desktop, mode=None):
+        return scaled_sizes({'preset': '0', **settings}, desktop=desktop, window_mode=mode)
+
+    def test_borderless_takes_the_desktops_shape(self):
+        old = {'output_res': '1920x1080', 'aspect_ratio': 'auto'}
+        for desktop, output in [((2560, 1080), (2560, 1080)), ((3440, 1440), (2580, 1080)),
+                                ((5120, 1440), (3840, 1080)), ((1920, 1200), (1920, 1200))]:
+            with self.subTest(desktop=desktop):
+                self.assertEqual(self.sizes(old, desktop, 'borderless'), (output, output))
+                self.assertEqual(self.sizes({**old, 'window_mode': 'borderless'}, desktop), (output, output))
+                # Windowed and exclusive fullscreen keep the chosen size (the display switches to it).
+                self.assertIsNone(self.sizes(old, desktop, 'windowed'))
+                self.assertIsNone(self.sizes(old, desktop, 'fullscreen'))
+
+    def test_the_old_launchers_16x9_size_is_not_a_choice_on_another_shape(self):
+        old = {'output_res': '1920x1080'}  # no aspect_ratio: written before every resolution was offered
+        for desktop, output in [((2560, 1080), (2560, 1080)), ((3440, 1440), (2580, 1080)),
+                                ((5120, 1440), (3840, 1080)), ((1920, 1200), (1728, 1080))]:
+            with self.subTest(desktop=desktop):
+                for mode in ('windowed', 'fullscreen', 'borderless'):
+                    self.assertEqual(self.sizes(old, desktop, mode), (output, output))
+        self.assertEqual(patches.output_size({'output_res': '2560x1440'}, (3440, 1440)), (3440, 1440))
+        # On a 16:9 desktop, a size the old launcher did not offer, or with aspect_ratio set: the choice.
+        self.assertIsNone(self.sizes(old, (3840, 2160)))
+        self.assertEqual(patches.output_size({'output_res': '1720x720'}, (2560, 1080)), (1720, 720))
+        self.assertIsNone(self.sizes({'output_res': '1920x1080', 'aspect_ratio': 'auto'}, (2560, 1080)))
+        self.assertTrue(patches.old_launcher_output({'output_res': '1920x1080'}, (2560, 1080)))
+        self.assertFalse(patches.old_launcher_output({'output_res': '1920x1080'}, None))
+
+    def test_unset_is_1080_lines_in_the_desktops_shape(self):
+        self.assertEqual(self.sizes({}, (2560, 1080)), ((2560, 1080), (2560, 1080)))
+        self.assertIsNone(self.sizes({}, (3840, 2160)))
+        self.assertIsNone(self.sizes({}, None))  # unknown desktop: the game's own size
+        # 16:9 last: the game's picture with bars.
+        self.assertIsNone(self.sizes({'aspect_ratio': '16:9'}, (2560, 1080), 'borderless'))
+
+    def test_print_scaled_takes_the_desktop_and_window_mode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ini = Path(folder) / 'bbport.ini'
+            ini.write_text('output_res=1920x1080\naspect_ratio=auto\nupscaler=off\n', encoding='utf-8')
+            import subprocess, sys
+            run = lambda *extra: subprocess.run(
+                [sys.executable, str(ROOT / 'scripts/patches.py'), '--print-scaled', '--settings', str(ini), *extra],
+                capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(run(), '')
+            self.assertEqual(run('--desktop', '2560x1080', '--window-mode', 'borderless'), '2560x1080 2560x1080')
+            self.assertEqual(run('--desktop', '2560x1080', '--window-mode', 'windowed'), '')
+
+
 class FpsListTests(unittest.TestCase):
     """The FPS++ lists follow shadps4-emu/ps4_cheats of 2026-10-02 (timesteps, foliage wind)."""
 

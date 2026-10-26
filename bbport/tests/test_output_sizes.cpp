@@ -83,6 +83,31 @@ int main() {
     assert(std::string(AspectName({1024, 768})) == "4:3");
     assert(std::string(AspectName({1366, 768})) == "16:9");
     assert(std::string(AspectName({1920, 1080})) == "16:9");
+
+    // Kaniel 2026-10-26: the old launcher's 16:9 sizes (written with no aspect_ratio key) on a desktop
+    // of another shape are no choice: that shape at their height, at most the desktop's (patches.py,
+    // the launcher's migrate_old_output). A key, a 16:9 desktop or another size: the player's choice.
+    assert(OldLauncherOutput({1920, 1080}, false, {2560, 1080}));
+    assert(OldLauncherOutput({3840, 2160}, false, {1920, 1200}));
+    assert(!OldLauncherOutput({1920, 1080}, true, {2560, 1080}));
+    assert(!OldLauncherOutput({1920, 1080}, false, {3840, 2160}));
+    assert(!OldLauncherOutput({1920, 1080}, false, {1366, 768}));
+    assert(!OldLauncherOutput({1920, 1080}, false, {}));
+    assert(!OldLauncherOutput({1720, 720}, false, {2560, 1080}));
+    assert(OldLauncherRefit({1920, 1080}, {2560, 1080}) == (Size{2560, 1080}));
+    assert(OldLauncherRefit({1920, 1080}, {3440, 1440}) == (Size{2580, 1080}));
+    assert(OldLauncherRefit({2560, 1440}, {3440, 1440}) == (Size{3440, 1440}));
+    assert(OldLauncherRefit({3840, 2160}, {3440, 1440}) == (Size{3440, 1440}));
+    assert(OldLauncherRefit({1920, 1080}, {5120, 1440}) == (Size{3840, 1080}));
+    assert(OldLauncherRefit({1920, 1080}, {1920, 1200}) == (Size{1728, 1080}));
+
+    // The game's start, one line in the log (players' reports answer it directly).
+    assert(ResolutionText({1920, 1080}, true, "borderless", {2560, 1080}, {2560, 1080}, "2560x1080 (startup patch)") ==
+           "Resolution: ini 1920x1080 (the old launcher's 16:9 size: the desktop's shape), window borderless, "
+           "desktop 2560x1080 -> output 2560x1080, scene 2560x1080 (startup patch), aspect 2.370");
+    assert(ResolutionText({}, false, "windowed", {}, {1920, 1080}, "1920x1080 (the game's)") ==
+           "Resolution: ini unset, window windowed, desktop unknown -> output 1920x1080, scene 1920x1080 "
+           "(the game's), aspect 1.778");
     std::printf("output sizes: all checks passed\n");
     return 0;
 }

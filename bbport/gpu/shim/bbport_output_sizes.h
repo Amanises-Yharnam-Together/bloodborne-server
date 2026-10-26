@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -103,6 +104,40 @@ inline Size DefaultOutput(Size desktop) {
     if (!desktop.Valid()) return Game;
     return {std::min(Even(Game.height * double(desktop.width) / double(desktop.height)), Max.width),
             Game.height};
+}
+
+/// 16:9 within 0.02 (1366x768 and 1360x768 too), as patches.py's is_16x9.
+inline bool Is16x9(Size s) {
+    return s.Valid() && std::abs(double(s.width) / double(s.height) - 16.0 / 9.0) < 0.02;
+}
+
+/// Kaniel 2026-10-26: before every resolution of the monitor was offered the launcher wrote one of the
+/// four Standard sizes and no aspect_ratio key, whatever the monitor; players on 21:9 kept 1920x1080
+/// after updating. Such a size on a desktop of another shape is no choice (patches.py
+/// old_launcher_output, the launcher's migrate_old_output).
+inline bool OldLauncherOutput(Size chosen, bool aspect_key, Size desktop) {
+    return !aspect_key && desktop.Valid() && !Is16x9(desktop) &&
+           std::find(std::begin(Standard), std::end(Standard), chosen) != std::end(Standard);
+}
+
+/// That size in the desktop's shape at its height, at most the desktop's: 1920x1080 on 21:9 is the
+/// default 2560x1080, 2560x1440 on 3440x1440 the desktop itself.
+inline Size OldLauncherRefit(Size chosen, Size desktop) {
+    const int h = std::min(chosen.height, desktop.height);
+    return {std::min(Even(h * double(desktop.width) / double(desktop.height)), Max.width), h};
+}
+
+/// The game's start in one log line: the ini's size (unset: invalid), the window mode, the desktop
+/// (unknown: invalid), the output that makes, the scene (how it is drawn) and the output's aspect ratio.
+inline std::string ResolutionText(Size ini, bool old_launcher, const char* window, Size desktop, Size output,
+                                  const std::string& scene) {
+    char aspect[32];
+    std::snprintf(aspect, sizeof(aspect), "%.3f",
+                  output.Valid() ? double(output.width) / double(output.height) : 0.0);
+    return "Resolution: ini " + (ini.Valid() ? Text(ini) : std::string("unset")) +
+           (old_launcher ? " (the old launcher's 16:9 size: the desktop's shape)" : "") + ", window " + window +
+           ", desktop " + (desktop.Valid() ? Text(desktop) : std::string("unknown")) + " -> output " +
+           Text(output) + ", scene " + scene + ", aspect " + aspect;
 }
 
 /// The sizes the menus offer: the display's modes (each size once, Min..Max), its desktop size,

@@ -611,4 +611,57 @@ int main() {
         unlink(path);
     }
     std::puts("PASS: output resolutions from the display, aspect ratio");
+
+    // Kaniel 2026-10-26: a bbport.ini of the old launcher (one of its four 16:9 sizes, no aspect_ratio
+    // key) on a 21:9 desktop: not the player's choice, the desktop's shape at its height; a choice made
+    // in the menu, or a file with the key, is kept. Saving writes the new size and the key.
+    {
+        using BbSettings::OutputSize;
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/bbport-settings-test-XXXXXX", temp && temp[0] ? temp : "/tmp");
+        const int file = mkstemp(path);
+        close(file);
+        setenv("BB_CONFIG", path, 1);
+        const auto write = [&](const char* text) {
+            FILE* f = std::fopen(path, "w");
+            std::fputs(text, f);
+            std::fclose(f);
+        };
+        write("output_res=1920x1080\nwindow_mode=windowed\n");
+        BbSettings::SetDisplay({}, {});
+        BbSettings::Load();
+        assert(BbSettings::ChosenOutput() == (OutputSize{1920, 1080})); // the desktop not known yet
+        BbSettings::SetDisplay({{2560, 1080}, {1920, 1080}}, {2560, 1080});
+        assert(BbSettings::ChosenOutput() == (OutputSize{2560, 1080}));
+        assert(BbSettings::CurrentOutput() == (OutputSize{2560, 1080}));
+        BbSettings::SetDisplay({}, {3840, 2160}); // the same file on a 16:9 desktop: the choice
+        assert(BbSettings::ChosenOutput() == (OutputSize{1920, 1080}));
+        BbSettings::SetDisplay({}, {3440, 1440});
+        assert(BbSettings::ChosenOutput() == (OutputSize{2580, 1080}));
+        BbSettings::Save();
+        const std::string saved = Read(path);
+        assert(saved.find("output_res=2580x1080\n") != std::string::npos);
+        assert(saved.find("aspect_ratio=auto\n") != std::string::npos);
+        // With the key, the old size is a choice; a size chosen in the menu too.
+        write("output_res=1920x1080\naspect_ratio=auto\n");
+        BbSettings::Load();
+        assert(BbSettings::ChosenOutput() == (OutputSize{1920, 1080}));
+        write("output_res=1920x1080\n");
+        BbSettings::Load();
+        BbSettings::ChooseOutput({1920, 1080});
+        assert(BbSettings::ChosenOutput() == (OutputSize{1920, 1080}));
+        BbSettings::Load();
+        assert(BbSettings::ChosenOutput() == (OutputSize{2580, 1080}));
+
+        // The start's line: the whole chain (window.cpp logs it once the window is up).
+        s.window_mode = BbSettings::Borderless;
+        const std::string line = BbSettings::ResolutionLine();
+        assert(line.find("Resolution: ini 1920x1080 (the old launcher's 16:9 size: the desktop's shape), window "
+                         "borderless, desktop 3440x1440 -> output 2580x1080, scene ") == 0);
+        assert(line.find(", aspect 2.389") != std::string::npos);
+        s.window_mode = BbSettings::Windowed;
+        BbSettings::SetDisplay({}, {});
+        unlink(path);
+    }
+    std::puts("PASS: the old launcher's 16:9 output on another desktop");
 }
