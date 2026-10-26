@@ -258,11 +258,12 @@ def valid_harder(value):
 
 def harder_value(hp, damage, poise):
     """The setting for the player's own multipliers (Kaniel 2026-10-21: the presets were too specific),
-    each held to what the game takes; 'off' when they make the normal game."""
+    each held to what the game takes; 'off' when they make the normal game. A decimal comma counts as a
+    point (players typed 1,5 and got 1: Custom looked unsaved, Kaniel 2026-10-26)."""
     rates = []
     for rate in (hp, damage, poise):
         try:
-            rate = float(rate)
+            rate = float(str(rate).strip().replace(',', '.'))
         except (TypeError, ValueError):
             rate = HARDER_LOWEST
         rate = min(max(rate, HARDER_LOWEST), HARDER_HIGHEST) if rate == rate else HARDER_LOWEST

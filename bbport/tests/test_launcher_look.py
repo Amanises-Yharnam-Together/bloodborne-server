@@ -531,6 +531,29 @@ class CoopSettingsTests(unittest.TestCase):
         self.assertFalse(self.app.coop_custom.winfo_ismapped())
         self.assertEqual(self.app.coop['harder'], 'off')
 
+    def test_custom_enemies_are_kept_as_typed(self):
+        """Kaniel 2026-10-26: players said Custom was not saved between sessions: a 1,5 typed became 1, a 15
+        became 10 without the fields saying so, and a change typed right before Done or closing was lost."""
+        self.app.coop_vars['game'].set(str(self.game))
+        self.app.coop_vars['host_ip'].set('26.1.2.3')
+        self.settle()
+        self.app.coop_go(1)
+        self.settle()
+        box = self.app.coop_enemies
+        box.current([v for v, _t in launcher.HARDER_CHOICES].index('custom'))
+        box.event_generate('<<ComboboxSelected>>')
+        self.settle()
+        for v, rate in zip(self.app.coop_custom_vars, ('1,5', '15', '2')):
+            v.set(rate)
+        self.app.coop_flush()
+        self.assertEqual(self.saved[-1]['harder'], '1.5,10,2', 'saved at once')
+        self.app.coop_custom_tidy()
+        self.assertEqual([v.get() for v in self.app.coop_custom_vars], ['1.5', '10', '2'], 'the fields show it')
+        self.app.coop_custom_vars[0].set('4')
+        with mock.patch.object(self.app, 'collect'), mock.patch.object(self.app.root, 'destroy'):
+            self.app.close()
+        self.assertEqual(self.saved[-1]['harder'], '4,10,2', 'closing right after typing keeps it')
+
     def test_host_rules_are_switches_off_by_default(self):
         """Kaniel 2026-10-25: the host rules in the co-op card, each off at first; the vote only goes with
         travelling together; what is switched on is saved."""
