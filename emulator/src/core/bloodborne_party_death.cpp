@@ -1397,6 +1397,7 @@ void GetUp(PartyDeathRun& run, u64 data, s64 now_ms) {
 // Whether the game's kill ran.
 bool KillLocalPlayer(u64 player, u64 data) {
     const bool killed = IsCharacter(player, "DieFromDown kill") && Coop::KillCharacterCallable();
+    party_death_data.store(0); // a real death from here: the body is the game's (PartyDeathWatches)
     party_death_own_kill.store(true);
     if (killed) {
         reinterpret_cast<void PS4_SYSV_ABI (*)(u64 character)>(image_base +
@@ -2003,10 +2004,8 @@ void TickPartyDeath() {
     tick.armed = tick.in_session && !tick.view.member.empty() &&
                  SomeoneElseStands(tick.board, tick.view.member, tick.map);
     party_death_armed.store(tick.armed);
-    party_death_data.store(tick.in_session || run.downed.Current() == Vital::Down ||
-                                   run.downed.Current() == Vital::Spectate
-                               ? tick.data
-                               : 0);
+    party_death_data.store(PartyDeathWatches(tick.in_session, run.downed.Current()) ? tick.data
+                                                                                    : 0);
     // Kaniel 2026-10-25: a boss fight with a teammate in it (its deaths spectate).
     {
         const u64 holder = ReadValue<u64>(image_base + BossGaugesPointerOffset, 0);

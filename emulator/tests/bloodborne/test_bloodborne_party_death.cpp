@@ -1824,3 +1824,18 @@ TEST(BloodborneSpectate, ADirectLineKeepsTheBoardsLampCount) {
     const VitalsBoard merged = MergeDirectVitals(board, std::span{&direct, 1});
     EXPECT_EQ(merged.members[0].lamp_uses, 6u);
 }
+
+// Rig 2026-10-26 (crashes, deaths: 1 run in 8 the guest that gave up beside an enemy never got up):
+// while a real death plays out, IsNoDead's hook must leave the body to the game. A hit on the
+// dying body, caught as a lethal hit with a teammate standing, kept it at 1 HP and the death never
+// finished (no return to the world, no revive). It watches a standing player in the session, a
+// downed or spectating one anywhere, and never a dead one.
+TEST(BloodbornePartyDeath, TheHookLeavesADyingBodyToTheGame) {
+    EXPECT_TRUE(PartyDeathWatches(true, Vital::Up));
+    EXPECT_FALSE(PartyDeathWatches(false, Vital::Up));
+    EXPECT_TRUE(PartyDeathWatches(false, Vital::Down));
+    EXPECT_TRUE(PartyDeathWatches(false, Vital::Spectate));
+    EXPECT_FALSE(PartyDeathWatches(true, Vital::Dead)) << "giving up outside a boss fight";
+    EXPECT_FALSE(PartyDeathWatches(false, Vital::Dead));
+    EXPECT_TRUE(PartyDeathWatches(true, Vital::Off));
+}
