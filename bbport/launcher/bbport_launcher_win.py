@@ -4130,6 +4130,7 @@ class Launcher:
     def coop_go(self, step):
         """Shows a step of the co-op setup; a later one only once the ones before it lack nothing."""
         step = max(0, min(step, len(self.coop_steps) - 1))
+        self.coop_custom_tidy()
         if getattr(self, 'coop_change_job', None):
             self.root.after_cancel(self.coop_change_job)
         self.coop_changed()  # what was just typed counts
@@ -4173,12 +4174,29 @@ class Launcher:
                                                          padx=(0 if column == 0 else px(8), 0))
             v = tk.StringVar(value=rate)
             v.trace_add('write', lambda *_a: self.coop_custom_changed())
-            ttk.Spinbox(frame, textvariable=v, from_=bbport_coop.HARDER_LOWEST, to=bbport_coop.HARDER_HIGHEST,
-                        increment=0.25, width=6).grid(row=1, column=column, sticky='we',
-                                                      padx=(0 if column == 0 else px(8), 0), pady=(px(2), 0))
+            box = ttk.Spinbox(frame, textvariable=v, from_=bbport_coop.HARDER_LOWEST, to=bbport_coop.HARDER_HIGHEST,
+                              increment=0.25, width=6)
+            box.grid(row=1, column=column, sticky='we', padx=(0 if column == 0 else px(8), 0), pady=(px(2), 0))
+            box.bind('<FocusOut>', self.coop_custom_tidy, add='+')
             self.coop_custom_vars.append(v)
         self.label(frame, _('Each from 1 to 10; 1 is the normal game.', 'Каждое от 1 до 10; 1 — обычная игра.'),
                    'small', MUTED).grid(row=2, column=0, columnspan=3, sticky='w', pady=(px(4), 0))
+
+    def coop_custom_tidy(self, _event=None):
+        """The Custom fields show the multipliers taken, not the text typed (Kaniel 2026-10-26: a 15 typed
+        came back as 10 at the next start, and Custom looked unsaved)."""
+        if not hasattr(self, 'coop_custom_vars') or self.coop_enemies_choice() != 'custom':
+            return
+        value = bbport_coop.harder_value(*(v.get() for v in self.coop_custom_vars))
+        for v, rate in zip(self.coop_custom_vars, value.split(',') if value != 'off' else ['1'] * 3):
+            if v.get().strip() != rate:
+                v.set(rate)
+
+    def coop_flush(self):
+        """Saves a change still waiting for typing to pause (Done or closing the launcher right after typing)."""
+        if getattr(self, 'coop_change_job', None):
+            self.root.after_cancel(self.coop_change_job)
+            self.coop_changed()
 
     def coop_enemies_choice(self):
         index = self.coop_enemies.current()
@@ -4359,6 +4377,8 @@ class Launcher:
         self.coop_go(0)
 
     def close_coop(self):
+        self.coop_custom_tidy()
+        self.coop_flush()
         if self.coop_ready():
             return
         self.coop['confirmed'] = '1'
@@ -6808,6 +6828,10 @@ class Launcher:
                              'shortcuts.vdf сохранён как shortcuts.vdf.bak.').format(added, len(done) - added))
 
     def close(self):
+        try:
+            self.coop_flush()
+        except Exception:  # never keep the window open over a settings problem
+            pass
         try:
             self.collect()
         except Exception:  # never keep the window open over a settings problem

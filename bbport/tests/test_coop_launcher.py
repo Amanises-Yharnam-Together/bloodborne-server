@@ -63,6 +63,7 @@ class AnswersTests(unittest.TestCase):
         self.assertEqual(coop.harder_value(1, 1, 1), 'off')
         self.assertEqual(coop.harder_value('25', '0.5', 'x'), '10,1,1', 'held to what the game takes')
         self.assertEqual(coop.harder_value(1.333, 2, 2), '1.33,2,2')
+        self.assertEqual(coop.harder_value('1,5', ' 2 ', '2,25'), '1.5,2,2.25', 'a decimal comma is a point')
         for preset in (coop.HARDER_BIT, coop.HARDER_ON, coop.HARDER_MUCH):
             self.assertTrue(coop.valid_harder(preset), preset)
         self.assertFalse(coop.valid_harder('11,1,1'), 'the game drops a multiplier above 10')
